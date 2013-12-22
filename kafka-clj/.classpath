@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+  <classpathentry kind="src" path="src"/>
+  <classpathentry kind="lib" path="/Users/gvanvuuren/checkouts/kafka-fast/kafka-clj/target/classes"/>
+  <classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/clojure-complete/clojure-complete/0.2.3/clojure-complete-0.2.3.jar"/>
+  <classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/clojure/tools.nrepl/0.2.3/tools.nrepl-0.2.3.jar"/>
+  <classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/clojure/clojure/1.5.1/clojure-1.5.1.jar"/>
+  <classpathentry kind="src" path="test"/>
+  <classpathentry kind="src" path="resources"/>
+  <classpathentry path="org.eclipse.jdt.launching.JRE_CONTAINER" kind="con"/>
+  <classpathentry kind="output" path="target/classes"/>
+</classpath>
