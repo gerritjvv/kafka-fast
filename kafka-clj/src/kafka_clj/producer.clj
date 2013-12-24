@@ -1,51 +1,87 @@
 (ns kafka-clj.producer
-  
-  (:import 
-           [io.netty.buffer ByteBuf]))
+  (:require [kafka-clj.codec :refer [get-compress-out get-codec-int crc32-int]]
+            [clojure.core.reducers :as r]
+            [clj-tcp.client :refer [client write!]]
+            [fmap-clojure.core :refer [>>=*]])
+   (:import [java.io DataOutputStream ByteArrayOutputStream]
+           [io.netty.buffer ByteBuf Unpooled]
+           [kafka_clj.util Util]))
 
+;(defrecord Client [group channel-f write-ch read-ch error-ch ^AtomicInteger reconnect-count ^AtomicBoolean closed])
+(defrecord Producer [client host port])
+
+(defonce ^:constant MAGIC_BYTE (int 0))
+(defonce ^:constant compression-code-mask 0x03)
 
 (defn ^ByteBuf inc-capacity [^ByteBuf bytebuf l]
-  (.capacity bytebuf (int (+ (.capacity bytebuf) (int l)))))
+  (let [len (+ (.capacity bytebuf) (int l))]
+    (if (> len (.maxCapacity bytebuf))
+      (.capacity bytebuf len))
+    bytebuf))
 
-(defn ^ByteBuf write-short-string [^ByteBuf buff s]
-  (if 
-    (.writeShort buff (short -1))
-    (let [encoded-string (.getBytes (str s) "UTF-8")
-          len (count encoded-string)]
-      (if (> len Short/MAX_VALUE)
-        (throw (RuntimeException. (str "String exceeds the maximum size of " Short/MAX_VALUE)))
-        (doto buff 
-          (.writeShort len) (.writeBytes encoded-string)))))
-  buff) 
+(defn ^ByteBuf write-message [^ByteBuf buff codec-int ^bytes bts]
+  "Write the message format
+   crc32 int
+   magic byte
+   attributes byte"
+  (-> ^ByteBuf buff 
+    (Util/writeUnsignedInt (crc32-int bts))
+    (.writeByte (int MAGIC_BYTE))
+    (.writeByte (int (bit-or (byte 0) (bit-and compression-code-mask codec-int))))
+    (.writeInt (int -1))
+    (.writeBytes bts)))
 
-(defn ^ByteBuf write-to-buff! [^ByteBuf bytebuf version-id correlation-id client-id required-acks ack-timeout-ms msgs]
-  "Writes the messages to the bytebuf, note that this function mutates the bytebuf
-   msgs is a list of maps/records that contain the values [:topic string-topic-name] [:partition int-partition] [:bts byte-array] 
-  "
-  (let [grouped-msg (group-by :topic msgs)
-			  byte-buf1 (-> (inc-capacity bytebuf (+ 18 (count client-id)))
-									    (.writeShort (short version-id))
-									    (.writeInt (int correlation-id))
-									    (write-short-string client-id)
-									    (.writeShort (short required-acks))
-									    (.writeInt (int ack-timeout-ms)))]
-    (loop [topic-msgs grouped-msg byte-buf2 byte-buf1]
-        (if-let [[topic msgs] (first topic-msgs)]
-				      (recur
-                    (rest topic-msgs)
-				            (loop [msgs-1 msgs byte-buf3 (-> (inc-capacity byte-buf2 (+ 6 (count topic))) (write-short-string topic) (.writeInt (count msgs)))]
-								        (if-let [msg (first msgs-1)]
-								          (recur (rest msgs-1)
-								                 (-> (inc-capacity byte-buf3 (+ 8 (count (:bts msg))))
-								                   (.writeInt (int (:partition msg)))
-								                   (.writeInt (int (count (:bts msg))))
-								                   (.writeBytes ^bytes (:bts msg))))
-								          byte-buf3)))
-              byte-buf2))))
-		                  
-		      
-      
-		    
-      
-      
-      
+(defn ^ByteBuf write-message-set [^ByteBuf buff codec-int bts]
+  "A message set is simply a message with headers"
+  (inc-capacity buff (+ 22 (count bts)))
+  (.writeLong buff 0) ;the offset is not used during produce requests
+  (let [len-writer-index (.writerIndex buff)]
+    (.writeInt buff (int -1))
+	  (if bts
+	     (do 
+	       (write-message buff codec-int bts)
+	       (let [len (- (.readableBytes buff) len-writer-index 4)]
+		       (.setInt buff (int len-writer-index) (int len))
+	         )))
+	    buff))
+		     
+(defn pack-messages [^ByteBuf buff codec-int msgs]
+  "Pack a list of messages 
+   if the codec-int is 1 or 2, then the messages is compressed
+   and the compressed bytes written again as a message set"
+  (let [^ByteBuf msgs-buff (r/fold (fn ([] (Unpooled/buffer 1024))
+                                ([^ByteBuf buff1 msg]
+                                   (write-message-set buff1 0 (:bts msg)))) msgs)]
+    (if (= codec-int 0)
+      (.writeBytes buff msgs-buff)
+      (write-message-set buff codec-int (.array msgs-buff)))
+    
+    buff))
+ 
+(defn ^ByteBuf write-produce-request [^ByteBuf buff codec partition msgs {:keys [acks timeout] :or {acks 2 timeout 500}}]
+  "Write out the produce request to the buff"
+	  (doto buff
+	    (.writeShort (short acks))
+	    (.writeInt (int timeout))
+	    (.writeInt (int partition)))
+	  
+    (let [codec-int (get-codec-int codec)
+          len-writer-index (.writerIndex buff)]
+	    (.writeInt buff (int -1))
+	    (pack-messages buff codec-int msgs)
+	    (let [len (- (.readableBytes buff) len-writer-index 4)]
+       (.setInt buff (int len-writer-index) (int len))))
+    buff)
+    
+  
+(defn send-message [{:keys [client]} {:keys [bts]}]
+  (write! client bts))
+  
+  
+(defn producer [host port]
+  (let [c (client host port {:reuse-client true})]
+    (->Producer c host port)))
+  
+    
+  
+

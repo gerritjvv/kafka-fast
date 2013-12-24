@@ -1,0 +1,37 @@
+(ns kafka-clj.codec
+  
+  (:import [java.io DataOutputStream ByteArrayOutputStream OutputStream]
+           [java.util.zip GZIPOutputStream]
+           [org.iq80.snappy SnappyOutputStream]
+           [kafka_clj.util Util]))
+
+
+(defonce SNAPPY "snappy")
+(defonce GZIP "gzip")
+
+(defn crc32-int
+  "CRC for byte array."
+  [^bytes ba]
+  (Util/crc32 ba))
+
+(defn get-codec-int [codec]
+  (cond 
+    (= codec "gzip") 1
+    (= codec "snappy") 2
+    (= codec "none") 0
+    :else (throw (RuntimeException. (str "Codec " codec " not supported")))))
+
+(defn- gzip-out []
+  (let [out (ByteArrayOutputStream.)]
+    [(DataOutputStream. (GZIPOutputStream. out)) out] ))
+
+(defn- snappy-out []
+  (let [out (ByteArrayOutputStream.)]
+    [(DataOutputStream. (SnappyOutputStream. out)) out] ))
+
+
+(defn get-compress-out [codec]
+  (cond 
+    (= codec GZIP) (gzip-out)
+    (= codec SNAPPY) (snappy-out)
+    :else (throw (RuntimeException. (str "Codec " codec " not supported please use none, gzip or snappy") ))))
