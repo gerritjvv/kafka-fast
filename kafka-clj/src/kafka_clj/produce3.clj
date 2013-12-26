@@ -1,12 +1,27 @@
 (ns kafka-clj.produce3
-  (:require [kafka-clj.codec :refer [crc32-int get-compress-out compress]])
-  (:import [java.nio ByteBuffer]
+  (:require [kafka-clj.codec :refer [crc32-int get-compress-out compress]]
+            [clj-tcp.client :refer [client write!]])
+  (:import [java.net InetAddress]
+           [java.nio ByteBuffer]
            [io.netty.buffer ByteBuf Unpooled]
            [java.nio.channels SocketChannel]
            [java.net InetSocketAddress]
            [kafka_clj.util Util]))
 
+(defrecord Producer [client host port])
+
+(defonce ^:constant API_KEY_PRODUCE_REQUEST (short 0))
+(defonce ^:constant API_VERSION (short 0))
+
+(defonce ^:constant MAGIC_BYTE (int 0))
 (defonce ^:constant compression-code-mask 0x03)
+
+(defn ^ByteBuf inc-capacity [^ByteBuf bytebuf l]
+  (let [len (+ (.capacity bytebuf) (int l))]
+    (if (> len (.maxCapacity bytebuf))
+      (.capacity bytebuf len))
+    bytebuf))
+
 
 (defn put-short-string [^ByteBuf buff s]
   (-> buff 
@@ -64,14 +79,15 @@
 	        )))))
 	    
     
-(defn write-request [^ByteBuf buff codec msgs]
+(defn write-request [^ByteBuf buff {:keys [correlation-id client-id codec acks timeout] :or {correlation-id 1 client-id "1" codec 0 acks 1 timeout 1000}}
+                     msgs]
     (-> buff
-      (.writeShort (short 0))   ;api-key
-      (.writeShort (short 0))   ;version api
-      (.writeInt (int 1))       ;correlation id
-      (put-short-string "cid")  ;short + client-id bytes
-      (.writeShort (short 1))   ;acks
-      (.writeInt (int 1000)))    ;timeout
+      (.writeShort  (short API_KEY_PRODUCE_REQUEST))   ;api-key
+      (.writeShort  (short API_VERSION))   ;version api
+      (.writeInt (int correlation-id))       ;correlation id
+      (put-short-string client-id)  ;short + client-id bytes
+      (.writeShort (short acks))   ;acks
+      (.writeInt (int timeout)))    ;timeout
     
       (let [topic-group (group-by :topic msgs)]
         (.writeInt buff (int (count topic-group))) ;topic count
@@ -89,19 +105,17 @@
       )
   
        
+(defn send-messages [{:keys [client]} 
+                     conf
+                     msgs]
+  (write! client (fn [^ByteBuf buff] 
+                   (with-size buff write-request conf msgs)
+                   )))
 
-(defn send-msg [topic partition codec msgs]
+  
+(defn producer [host port]
   (try 
-		  (let [
-		        buff (with-size (Unpooled/buffer 1024) write-request codec msgs)
-		        
-		        read-buff (ByteBuffer/allocate 1024)
-		        ch (SocketChannel/open (InetSocketAddress. "localhost" (int 9092)))
-		        write-int (.write ch (.nioBuffer buff))
-		        read-int (try (.read ch read-buff) (catch Exception e (do (prn e) -1)))
-		        ]
-		    (prn "Read int " read-int)
-		    (prn (java.util.Arrays/toString (-> read-buff .array)))
-		    )
-    (catch Exception e (.printStackTrace e))))
-		  
+  (let [c (client host port {:reuse-client true})]
+    (->Producer c host port))
+  (catch Exception e (.printStackTrace e))))
+  
