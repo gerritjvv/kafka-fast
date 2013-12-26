@@ -17,7 +17,11 @@ public class Util {
 		crc.update(bts);
 		return crc.getValue();
 	}
-	
+
+	public static final ByteBuf setUnsignedInt(ByteBuf buff, int pos, long v){
+		return buff.setInt(pos, (int)(v & 0xffffffffL));
+	}	
+
 	public static final ByteBuf writeUnsignedInt(ByteBuf buff, long v){
 		return buff.writeInt((int)(v & 0xffffffffL));
 	}	

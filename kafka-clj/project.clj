@@ -1,4 +1,4 @@
-(defproject kafka-clj "0.1.0-SNAPSHOT"
+(defproject kafka-clj "0.1.4-SNAPSHOT"
   :description "FIXME: write description"
   :url "http://example.com/FIXME"
   :license {:name "Eclipse Public License"
@@ -16,10 +16,10 @@
            ]
   :dependencies [
                  [midje "1.6.0" :scope "test"]
-		 [biscuit "1.0.0"] 
+                 [org.clojure/tools.trace "0.7.6"]
                  [org.iq80.snappy/snappy "0.3"]
                  [org.clojure/tools.logging "0.2.6"]
-                 [clj-tcp "0.1.0-SNAPSHOT"]
+                 [clj-tcp "0.1.5-SNAPSHOT"]
                  [fmap-clojure "0.1.1"]
                  [com.lmax/disruptor "3.2.0"]
                  [clj-json "0.5.3"]
