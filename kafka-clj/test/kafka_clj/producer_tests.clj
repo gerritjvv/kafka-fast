@@ -1,5 +1,5 @@
 (ns kafka-clj.producer-tests
-  (:require [kafka-clj.producer :refer [write-request  read-produce-request write-produce-request]]
+  (:require [kafka-clj.producer :refer [send-messages producer]]
             [clojure.pprint :refer [pprint]])
   (:use midje.sweet)
   (:import [io.netty.buffer Unpooled ByteBufUtil]))
@@ -8,16 +8,14 @@
 (facts "Test producer"
        ;[^ByteBuf bytebuf version-id correlation-id client-id required-acks ack-timeout-ms msgs]
        (fact "test write to"
-             (let [buff (Unpooled/buffer 100 (Integer/MAX_VALUE))
-                   
-                  ; (defn ^ByteBuf write-produce-request [^ByteBuf buff codec partition msgs {:keys [acks timeout] :or {acks 2 timeout 500}}]
-
-                  ;(defn ^ByteBuf write-request [^ByteBuf buff correlation-id client-id codec partition request-msg-f conf msgs]
-                  ;write-reques[^ByteBuf buff correlation-id client-id codec partition request-msg-f conf msgs]
-                   buff2 (write-request buff 1 "client" "none" 1 write-produce-request {} [{:topic "abc" :partition 1 :bts (.getBytes "msg1") } {:topic "b" :partition 0 :bts (.getBytes "msg2")}])]
+             (let [
+                   p (producer "localhost" 9092)
+                   d [{:topic "data" :partition 0 :bts (.getBytes "HI1")} {:topic "data" :partition 0 :bts (.getBytes "ho4")}] ]
                
-               (pprint (read-produce-request buff2))
+               (send-messages p {:acks 1 :codec 1} d)
+               (send-messages p {:acks 1 :codec 2} d)
+               (send-messages p {:acks 1 :codec 0} d)
                
-               1 => 1
                
-             )))
+               )))
+             
