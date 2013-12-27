@@ -1,5 +1,6 @@
 (ns kafka-clj.produce
   (:require [kafka-clj.codec :refer [crc32-int get-compress-out compress]]
+            [kafka-clj.response :refer [produce-response-decoder]]
             [clj-tcp.client :refer [client write! read! handlers]]
             [clj-tcp.codec :refer [default-encoder]])
   (:import [java.net InetAddress]
@@ -120,7 +121,7 @@
   
 (defn producer [host port]
   (try 
-  (let [c (client host port {:reuse-client true})]
+  (let [c (client host port {:reuse-client true :handlers [default-encoder produce-response-decoder]})]
     (->Producer c host port))
   (catch Exception e (.printStackTrace e))))
   
