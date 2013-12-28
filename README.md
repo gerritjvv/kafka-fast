@@ -15,6 +15,8 @@ Please note that this library is still under development, any contributions are 
 
 (def d [{:topic "data" :partition 0 :bts (.getBytes "HI1")} {:topic "data" :partition 0 :bts (.getBytes "ho4")}] )
 ;; each message must have the keys :topic :partition :bts, there is a message record type that can be created using the (message topic partition bts) function
+(def d [(message "data" 0 (.getBytes "HI1")) (message "data" 0 (.getBytes "ho4"))])
+;; this creates the same as above but using the Message record
 
 (def p (producer "localhost" 9092))
 ;; creates a producer, the function takes the arguments host and port
