@@ -11,12 +11,16 @@
            [kafka_clj.util Util]))
 
 (defrecord Producer [client host port])
+(defrecord Message [topic partition ^bytes bts])
 
 (defonce ^:constant API_KEY_PRODUCE_REQUEST (short 0))
 (defonce ^:constant API_VERSION (short 0))
 
 (defonce ^:constant MAGIC_BYTE (int 0))
 (defonce ^:constant compression-code-mask 0x03)
+
+(defn message [topic partition ^bytes bts]
+  (->Message topic partition bts))
 
 (defn ^ByteBuf inc-capacity [^ByteBuf bytebuf l]
   (let [len (+ (.capacity bytebuf) (int l))]

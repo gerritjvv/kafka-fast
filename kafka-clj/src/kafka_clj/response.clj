@@ -58,7 +58,7 @@
       (let [msg (let [size (.readInt in)                                ;request size int
 				              correlation-id (.readInt in)                      ;correlation id int
 				              topic-count (.readInt in)]                        ;topic array count int
-				          (doall 
+				          (doall ;we must force the operation here
 				              (for [i (range topic-count)]                   
 						            (let [topic (read-short-string in)]                 ;topic name has len=short string bytes
 						              {:topic topic
