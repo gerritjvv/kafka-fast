@@ -1,11 +1,10 @@
 (ns kafka-clj.produce
   (:require [kafka-clj.codec :refer [crc32-int get-compress-out compress]]
-            [kafka-clj.response :refer [produce-response-decoder]]
-            [clj-tcp.client :refer [client write! read! handlers]]
+            [kafka-clj.response :refer [produce-response-decoder lengthfield-frame-decoder]]
+            [clj-tcp.client :refer [client write! read!]]
             [clj-tcp.codec :refer [default-encoder]])
   (:import [java.net InetAddress]
            [java.nio ByteBuffer]
-           [io.netty.handler.codec ReplayingDecoder]
            [io.netty.buffer ByteBuf Unpooled]
            [java.nio.channels SocketChannel]
            [java.net InetSocketAddress]
@@ -26,7 +25,7 @@
     bytebuf))
 
 
-(defn put-short-string [^ByteBuf buff s]
+(defn ^ByteBuf put-short-string [^ByteBuf buff s]
   (-> buff 
     (.writeShort (short (count s)))
     (.writeBytes (.getBytes (str s) "UTF-8"))))
@@ -121,7 +120,11 @@
   
 (defn producer [host port]
   (try 
-  (let [c (client host port {:reuse-client true :handlers [default-encoder produce-response-decoder]})]
+  (let [c (client host port {:reuse-client true :handlers [
+                                                           produce-response-decoder
+                                                           default-encoder 
+                                                           
+                                                           ]})]
     (->Producer c host port))
   (catch Exception e (.printStackTrace e))))
   

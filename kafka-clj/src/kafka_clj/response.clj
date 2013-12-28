@@ -1,6 +1,7 @@
 (ns kafka-clj.response
+  (:require [clojure.tools.logging :refer [info error]])
   (:import 
-           [io.netty.handler.codec ReplayingDecoder]
+           [io.netty.handler.codec ByteToMessageDecoder ReplayingDecoder]
            [io.netty.buffer ByteBuf]
            [java.util List]
            ))
@@ -53,20 +54,23 @@
   (proxy [ReplayingDecoder]
     ;decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out)
     []
-    (decode [ctx ^ByteBuf in ^List out]
-      (.add out
-	        (let [state (proxy-super state)]
-		        (let [size (.readInt in)                                ;request size int
-		              correlation-id (.readInt in)                      ;correlation id int
-		              topic-count (.readInt in)]                        ;topic array count int
-		          (for [i (range topic-count)]                   
-		            (let [topic (read-short-string in)]                 ;topic name has len=short string bytes
-		              {:topic topic
-		               :partitions (let [partition-count (.readInt in)] ;read partition array count int
-		                             (for [q (range partition-count)]
-		                               {:partition (.readInt in)        ;read partition int
-		                                :error-code (.readShort in)     ;read error code short
-		                                :offset (.readLong in)}))       ;read offset long
-		               }))))))))
-	                   
+    (decode [ctx ^ByteBuf in ^List out] 
+      (let [msg (let [size (.readInt in)                                ;request size int
+				              correlation-id (.readInt in)                      ;correlation id int
+				              topic-count (.readInt in)]                        ;topic array count int
+				          (doall 
+				              (for [i (range topic-count)]                   
+						            (let [topic (read-short-string in)]                 ;topic name has len=short string bytes
+						              {:topic topic
+						               :partitions (let [partition-count (.readInt in)] ;read partition array count int
+						                             (for [q (range partition-count)]
+						                               {:partition (.readInt in)        ;read partition int
+						                                :error-code (.readShort in)     ;read error code short
+						                                :offset (.readLong in)}))       ;read offset long
+						               }))))]
+      
+			      (.add out
+					        msg))
+        )))
+			                   
           

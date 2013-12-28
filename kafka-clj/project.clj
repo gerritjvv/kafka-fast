@@ -19,7 +19,7 @@
                  [org.clojure/tools.trace "0.7.6"]
                  [org.iq80.snappy/snappy "0.3"]
                  [org.clojure/tools.logging "0.2.6"]
-                 [clj-tcp "0.1.5-SNAPSHOT"]
+                 [clj-tcp "0.1.6-SNAPSHOT"]
                  [fmap-clojure "0.1.1"]
                  [com.lmax/disruptor "3.2.0"]
                  [clj-json "0.5.3"]
