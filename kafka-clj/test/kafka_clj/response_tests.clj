@@ -1,6 +1,6 @@
 (ns kafka-clj.response-tests
   (:require [kafka-clj.response :refer :all]
-           
+            [clj-tuple :refer [tuple]]
             [kafka-clj.metadata :refer [convert-metadata-response]]
             [clojure.pprint :refer [pprint]])
   (:import [java.net InetAddress]
@@ -94,10 +94,14 @@
                 
                   ;;test convert
                   (prn "Convert")
-                  (pprint (convert-metadata-response msg))
-                  (let [d (diff (convert-metadata-response msg) {"p" [{:host "a" :port 9092}]})]
-                    (first d) => nil
-                    (second d) => nil)
+                  (prn (convert-metadata-response msg))
+                  
+                  (let [d (convert-metadata-response msg)]
+                    ; {"p" (tuple {:host "a" :port 9092})}
+                    (nil? (get d "p")) => false
+                    (let [{:keys [host port]} (first (get d "p"))]
+                      host => "a"
+                      port => 9092))
                 
                 )
 												                

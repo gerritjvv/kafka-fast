@@ -1,5 +1,6 @@
 (ns kafka-clj.metadata
   (:require 
+            [clj-tuple :refer [tuple]]
             [clj-tcp.client :refer [close-all]]
             [kafka-clj.produce :refer [metadata-request-producer send-metadata-request shutdown]]
             [fun-utils.core :refer [fixdelay]]
@@ -32,7 +33,7 @@
                 ;convert the response message to a map {topic-name {partition {:host host :port port}}}
                 (into {} 
 			                 (for [topic (:topics resp) :when (= (:error-code topic) 0)]
-			                      [(:topic topic) (into [] (vals (apply sorted-map (flatten
+			                      [(:topic topic) (apply tuple (vals (apply sorted-map (flatten
 																																	                  (for [partition (:partitions topic)
 																																	                         :when (= (:partition-error-code partition) 0) 
 																			                                                     :let [broker (get brokers-by-node (:leader partition))]
