@@ -157,17 +157,19 @@
       (.writeShort  (short API_VERSION))                ;version api
       (.writeInt (int correlation-id))                  ;correlation id
       (put-short-string client-id)                      ;short + client-id bytes
-      (.writeInt (int -1))))                            ;write empty topic list to receive metadata on all topics
+      (.writeInt (int 0))))                            ;write empty topic, dont use -1 (this means nil), list to receive metadata on all topics
       
       
 (defn send-metadata-request [{:keys [client]} conf]
   "Writes out a metadata request to the producer's client"
+      (prn "write! using " client)
       (write! client (fn [^ByteBuf buff] 
                        (with-size buff write-metadata-request conf)
                    )))
 
 (defn metadata-request-producer [host port]
   "Returns a producer with a metadata-response-decoder set"
+  (prn "try metadata producer " host ":" port)
   (try 
   (let [c (client host port {:reuse-client true :handlers [
                                                            metadata-response-decoder
@@ -175,5 +177,7 @@
                                                            ]})]
     (->Producer c host port))
   
-  (catch Exception e (.printStackTrace e))))  
+  (catch Exception e (do 
+                       (.printStackTrace e)
+                       (throw e)))))  
       

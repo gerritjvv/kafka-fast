@@ -95,7 +95,7 @@
                   ;;test convert
                   (prn "Convert")
                   (pprint (convert-metadata-response msg))
-                  (let [d (diff (convert-metadata-response msg) {"p" {0 {:host "a" :port 9092}}})]
+                  (let [d (diff (convert-metadata-response msg) {"p" [{:host "a" :port 9092}]})]
                     (first d) => nil
                     (second d) => nil)
                 
