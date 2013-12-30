@@ -13,7 +13,8 @@
 
 (defn convert-metadata-response [resp]
   ;; transform the resp into a map
-  ;; {topic-name { partition-n :host {:host host :port port} } }
+  ;; {topic-name [{:host host :port port} ] }
+  ;; the index of the vector (value of the topic-name) is sorted by partition number 
   ;; here topic-name:String and partition-n:Integer are keys but not keywords
   ;;{:correlation-id 2,
 	;;											 :brokers [{:node-id 0, :host a, :port 9092}],
