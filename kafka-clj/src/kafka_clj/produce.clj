@@ -1,7 +1,7 @@
 (ns kafka-clj.produce
   (:require [kafka-clj.codec :refer [crc32-int get-compress-out compress]]
-            [kafka-clj.response :refer [produce-response-decoder lengthfield-frame-decoder]]
-            [clj-tcp.client :refer [client write! read!]]
+            [kafka-clj.response :refer [produce-response-decoder metadata-response-decoder]]
+            [clj-tcp.client :refer [client write! read! close-all]]
             [clj-tcp.codec :refer [default-encoder]])
   (:import [java.net InetAddress]
            [java.nio ByteBuffer]
@@ -14,10 +14,16 @@
 (defrecord Message [topic partition ^bytes bts])
 
 (defonce ^:constant API_KEY_PRODUCE_REQUEST (short 0))
+(defonce ^:constant API_KEY_METADATA_REQUEST (short 3))
+
 (defonce ^:constant API_VERSION (short 0))
 
 (defonce ^:constant MAGIC_BYTE (int 0))
 (defonce ^:constant compression-code-mask 0x03)
+
+(defn shutdown [{:keys [client]}]
+  (if client
+    (close-all client)))
 
 (defn message [topic partition ^bytes bts]
   (->Message topic partition bts))
@@ -121,8 +127,8 @@
                    )))
 
 
-  
 (defn producer [host port]
+  "returns a producer for sending messages, the decoder is a producer-response-decoder"
   (try 
   (let [c (client host port {:reuse-client true :handlers [
                                                            produce-response-decoder
@@ -132,3 +138,42 @@
     (->Producer c host port))
   (catch Exception e (.printStackTrace e))))
   
+
+
+;; ------- METADATA REQUEST API
+
+(defn write-metadata-request [^ByteBuf buff {:keys [correlation-id client-id] :or {correlation-id 1 client-id "1"}}]
+  "
+   RequestMessage => ApiKey ApiVersion CorrelationId ClientId RequestMessage
+    ApiKey => int16
+    ApiVersion => int16
+    CorrelationId => int32
+    ClientId => string
+    MetadataRequest => [TopicName]
+       TopicName => string
+   "
+    (-> buff
+      (.writeShort  (short API_KEY_METADATA_REQUEST))   ;api-key
+      (.writeShort  (short API_VERSION))                ;version api
+      (.writeInt (int correlation-id))                  ;correlation id
+      (put-short-string client-id)                      ;short + client-id bytes
+      (.writeInt (int -1))))                            ;write empty topic list to receive metadata on all topics
+      
+      
+(defn send-metadata-request [{:keys [client]} conf]
+  "Writes out a metadata request to the producer's client"
+      (write! client (fn [^ByteBuf buff] 
+                       (with-size buff write-metadata-request conf)
+                   )))
+
+(defn metadata-request-producer [host port]
+  "Returns a producer with a metadata-response-decoder set"
+  (try 
+  (let [c (client host port {:reuse-client true :handlers [
+                                                           metadata-response-decoder
+                                                           default-encoder 
+                                                           ]})]
+    (->Producer c host port))
+  
+  (catch Exception e (.printStackTrace e))))  
+      

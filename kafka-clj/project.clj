@@ -21,7 +21,7 @@
                  [org.clojure/tools.logging "0.2.6"]
                  [clj-tcp "0.1.7-SNAPSHOT"]
                  [fmap-clojure "0.1.1"]
-                 [com.lmax/disruptor "3.2.0"]
+                 [fun-utils "0.2.1"]
                  [clj-json "0.5.3"]
                  [com.netflix.curator/curator-framework "1.3.3"]
                  [org.clojure/clojure "1.5.1"]])

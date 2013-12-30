@@ -34,11 +34,9 @@
     (String. arr "UTF-8")))
 
 
-(defn produce-response-decoder []
+(defn read-produce-response [^ByteBuf in]
   "
-   A handler that reads produce responses
-   
-   RequestOrResponse => Size (RequestMessage | ResponseMessage)
+  RequestOrResponse => Size (RequestMessage | ResponseMessage)
     Size => int32
 
    Response => CorrelationId ResponseMessage
@@ -50,12 +48,8 @@
 	  Partition => int32
 	  ErrorCode => int16
 	  Offset => int64
-   "
-  (proxy [ReplayingDecoder]
-    ;decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out)
-    []
-    (decode [ctx ^ByteBuf in ^List out] 
-      (let [msg (let [size (.readInt in)                                ;request size int
+  "
+  (let [size (.readInt in)                                ;request size int
 				              correlation-id (.readInt in)                      ;correlation id int
 				              topic-count (.readInt in)]                        ;topic array count int
 				          (doall ;we must force the operation here
@@ -67,10 +61,82 @@
 						                               {:partition (.readInt in)        ;read partition int
 						                                :error-code (.readShort in)     ;read error code short
 						                                :offset (.readLong in)}))       ;read offset long
-						               }))))]
-      
+						               })))))
+
+(defn read-metadata-response [^ByteBuf in]
+  "
+		RequestOrResponse => Size (RequestMessage | ResponseMessage)
+		    Size => int32
+
+	   Response => CorrelationId ResponseMessage
+	    CorrelationId => int32
+
+		MetadataResponse => [Broker][TopicMetadata]
+		  Broker => NodeId Host Port
+		  NodeId => int32
+		  Host => string
+		  Port => int32
+		  TopicMetadata => TopicErrorCode TopicName [PartitionMetadata]
+		  TopicErrorCode => int16
+		  PartitionMetadata => PartitionErrorCode PartitionId Leader Replicas Isr
+		  PartitionErrorCode => int16
+		  PartitionId => int32
+		  Leader => int32
+		  Replicas => [int32]
+		  Isr => [int32]
+		"
+  (let [size (.readInt in)                     ;request size
+        correlation-id (.readInt in)           ;correlation id
+        broker-count (.readInt in)             ;broker array len
+        brokers (doall 
+                  (for [i (range broker-count)]
+                    {:node-id (.readInt in)
+                     :host (read-short-string in)
+                     :port (.readInt in)}))
+        topic-metadata-count (.readInt in)
+        topics (doall
+                 (for [i (range topic-metadata-count)]
+                   {:error-code (.readShort in)
+                    :topic (read-short-string in)
+                    :partitions 
+                               (let [partition-metadata-count (.readInt in)]
+                                 (doall 
+                                   (for [i (range partition-metadata-count)]
+                                    {:partition-error-code (.readShort in)
+                                     :partition-id (.readInt in)
+                                     :leader (.readInt in)
+                                     :replicas  
+                                               (doall (for [i (range (.readInt in))] (.readInt in)))
+                                     :isr      (doall (for [i (range (.readInt in))] (.readInt in)))})))
+                               }))]
+           {:correlation-id correlation-id :brokers brokers :topics topics}))
+                                                     
+        
+(defn metadata-response-decoder []
+  "
+   A handler that reads metadata request responses
+ 
+   "
+  (proxy [ReplayingDecoder]
+    ;decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out)
+    []
+    (decode [ctx ^ByteBuf in ^List out] 
 			      (.add out
-					        msg))
+					        (read-metadata-response in))
+        )))
+			        
+
+(defn produce-response-decoder []
+  "
+   A handler that reads produce responses
+ 
+   "
+  (proxy [ReplayingDecoder]
+    ;decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out)
+    []
+    (decode [ctx ^ByteBuf in ^List out] 
+			      (.add out
+					        (read-produce-response in))
         )))
 			                   
           
