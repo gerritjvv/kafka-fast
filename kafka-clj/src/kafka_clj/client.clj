@@ -92,7 +92,7 @@
 (defn close [{:keys [producers-ref]}]
   "Close all producers and channels created for the connected"
   (doseq [{:keys [producer ch-source]} producers-ref]
-    (async/close ch-source)
+    (async/close! ch-source)
     (shutdown producer)))
    
 (defn create-connector [bootstrap-brokers conf]
