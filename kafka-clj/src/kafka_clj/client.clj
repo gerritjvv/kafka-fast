@@ -1,8 +1,9 @@
 (ns kafka-clj.client
-  
+  (:gen-class)
   (:require [fun-utils.core :refer [star-channel buffered-chan]]
             [kafka-clj.produce :refer [producer send-messages message shutdown]]
             [kafka-clj.metadata :refer [track-broker-partitions]]
+            [reply.main]
             [clojure.core.async :refer [chan >! >!! go-loop] :as async])
   (:import [java.util.concurrent.atomic AtomicInteger]))
 
@@ -117,3 +118,9 @@
      :state state}
     ))
  
+
+(defn -main [& args]
+  (let [[options _ _] (reply.main/parse-args args)]
+     (reply.main/launch-nrepl options)))
+
+

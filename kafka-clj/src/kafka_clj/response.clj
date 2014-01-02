@@ -28,10 +28,11 @@
 
     
 (defn read-short-string [^ByteBuf buff]
-  (let [size (.readShort buff)
-        arr  (byte-array size)]
-    (.readBytes buff arr)
-    (String. arr "UTF-8")))
+  (let [size (.readShort buff)]
+    (if (pos? size)
+      (let [arr  (byte-array size)]
+		    (.readBytes buff arr)
+		    (String. arr "UTF-8")))))
 
 
 (defn read-produce-response [^ByteBuf in]
@@ -96,19 +97,23 @@
         topic-metadata-count (.readInt in)
         topics (doall
                  (for [i (range topic-metadata-count)]
-                   {:error-code (.readShort in)
-                    :topic (read-short-string in)
-                    :partitions 
-                               (let [partition-metadata-count (.readInt in)]
-                                 (doall 
-                                   (for [i (range partition-metadata-count)]
-                                    {:partition-error-code (.readShort in)
-                                     :partition-id (.readInt in)
-                                     :leader (.readInt in)
-                                     :replicas  
-                                               (doall (for [i (range (.readInt in))] (.readInt in)))
-                                     :isr      (doall (for [i (range (.readInt in))] (.readInt in)))})))
-                               }))]
+                   (let [error-code (.readShort in) 
+                         topic (read-short-string in)]
+	                   (if topic
+		                   {:error-code error-code
+		                    :topic topic
+		                    :partitions
+		                                (let [partition-metadata-count (.readInt in)]
+		                                 (doall 
+		                                   (for [i (range partition-metadata-count)]
+		                                    {:partition-error-code (.readShort in)
+		                                     :partition-id (.readInt in)
+		                                     :leader (.readInt in)
+		                                     :replicas  
+		                                               (doall (for [i (range (.readInt in))] (.readInt in)))
+		                                     :isr      (doall (for [i (range (.readInt in))] (.readInt in)))})))
+		                               }
+                         {:error-code error-code}))))]
            {:correlation-id correlation-id :brokers brokers :topics topics}))
                                                      
         

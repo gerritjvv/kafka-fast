@@ -48,3 +48,30 @@ One producer will be created per topic partition combination, each with its own 
 ;; ({:topic "data", :partitions ({:partition 0, :error-code 0, :offset 2131})})
 ;; read-response takes p and a timeout in milliseconds on timeout nil is returned
 ```
+
+
+# Benchmark Producer
+
+Environment:
+
+Network: 10 gigbit
+Brokers: 4
+CPU: 24 (12 core hyper threaded)
+RAM: 72 gig (each kafka broker has 8 gig assigned)
+DISKS: 12 Sata 7200 RPM (each broker has 12 network threads and 40 io threads assigned)
+Topics: 8
+
+Client: (using the lein uberjar command and then running the client as java -XX:MaxDirectMemorySize=2048M -XX:+UseCompressedOops -XX:+UseG1GC -Xmx4g -Xms4g  -jar kafka-clj-0.1.4-SNAPSHOT-standalone.jar)
+
+
+Results:
+1 kb messag (generated using (def msg1kb (.getBytes (clojure.string/join "," (range 278)))) )
+
+```clojure
+(time (doseq [i (range 1000000)] (send-msg c "data" msg1kb)))
+;;"Elapsed time: 5209.614983 msecs"
+```
+
+191975 K messages per second.
+
+

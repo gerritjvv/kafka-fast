@@ -9,6 +9,8 @@
   :global-vars {*warn-on-reflection* true
                 *assert* false}
 
+  :aot [kafka-clj.client]
+  :main kafka-clj.client
   :java-source-paths ["java"]   
   :plugins [
          [lein-rpm "0.0.5"] [lein-midje "3.0.1"] [lein-marginalia "0.7.1"] 
@@ -16,6 +18,7 @@
            ]
   :dependencies [
                  [midje "1.6.0" :scope "test"]
+                 [reply "0.3.0" :scope "provided"]
                  [org.clojure/tools.trace "0.7.6"]
                  [org.iq80.snappy/snappy "0.3"]
                  [org.clojure/tools.logging "0.2.6"]
