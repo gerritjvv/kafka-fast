@@ -130,6 +130,7 @@
 (defn producer [host port]
   "returns a producer for sending messages, the decoder is a producer-response-decoder"
   (try 
+    (prn "NEW PRODUCER !!!!!!")
   (let [c (client host port {:reuse-client true :handlers [
                                                            produce-response-decoder
                                                            default-encoder 
@@ -162,7 +163,6 @@
       
 (defn send-metadata-request [{:keys [client]} conf]
   "Writes out a metadata request to the producer's client"
-      (prn "write! using " client)
       (write! client (fn [^ByteBuf buff] 
                        (with-size buff write-metadata-request conf)
                    )))

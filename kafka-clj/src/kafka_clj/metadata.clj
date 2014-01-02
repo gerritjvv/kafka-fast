@@ -71,7 +71,6 @@
           (go 
             (loop [local-client (:client p)]
               (let [resp (<! (:read-ch local-client))]
-                (prn "Metadata response from " p " " resp)
                 (cond (instance? Poison resp)
                       (prn "Shutdown metadata response")
                       (instance? Reconnected resp)
@@ -83,7 +82,6 @@
                   :else 
                      (if resp
 		                    (do
-		                      (prn "Doing commute")
 		                      (dosync (commute partition-ref (fn [x] 
 		                                               (try (convert-metadata-response resp)
 		                                                 (catch Exception e (do (.printStackTrace e) (error e e) x))))))
@@ -98,7 +96,7 @@
 		                (if-let [[_ p] (first ps)]
 		                  (let [x (try
                                 
-						                     (do (prn "Sending metadata request producer: " p)
+						                     (do 
                                      (send-metadata-request p {}) nil)
 						                     (catch Exception e (do
 						                                          (error (str "Error contacting " p) e)
