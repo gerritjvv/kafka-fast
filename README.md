@@ -10,6 +10,26 @@ fast kafka send library implemented in clojure
 
 Please note that this library is still under development, any contributions are welcome
 
+## Multi Producer
+
+The ```kafka-clien.client``` namespace contains a ```create-connector``` function that returns a async multi threaded thread safe connector.
+One producer will be created per topic partition combination, each with its own buffer and timeout, such that compression can be maximised.
+
+
+```clojure
+
+(use 'kafka-clj.client :reload)
+
+(def msg1kb (.getBytes (clojure.string/join "," (range 278))))
+(def msg4kb (.getBytes (clojure.string/join "," (range 10000))))
+
+(def c (create-connector [{:host "localhost" :port 9092}] {}))
+
+(time (doseq [i (range 100000)] (send-msg c "data" msg1kb)))
+
+```
+
+## Single Producer 
 ```clojure
 (use 'kafka-clj.produce :reload)
 
