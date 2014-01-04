@@ -1,11 +1,12 @@
 (ns kafka-clj.produce
   (:require [kafka-clj.codec :refer [crc32-int get-compress-out compress]]
             [kafka-clj.response :refer [produce-response-decoder metadata-response-decoder]]
-            [clj-tcp.client :refer [client write! read! close-all]]
-            [clj-tcp.codec :refer [default-encoder]])
+            [clj-tcp.client :refer [client write! read! close-all ALLOCATOR]]
+            [clj-tcp.codec :refer [default-encoder]]
+            [kafka-clj.buff-utils :refer [write-short-string with-size]])
   (:import [java.net InetAddress]
            [java.nio ByteBuffer]
-           [io.netty.buffer ByteBuf Unpooled]
+           [io.netty.buffer ByteBuf Unpooled PooledByteBufAllocator]
            [java.nio.channels SocketChannel]
            [java.net InetSocketAddress]
            [kafka_clj.util Util]))
@@ -14,6 +15,7 @@
 (defrecord Message [topic partition ^bytes bts])
 
 (defonce ^:constant API_KEY_PRODUCE_REQUEST (short 0))
+(defonce ^:constant API_KEY_FETCH_REQUEST (short 1))
 (defonce ^:constant API_KEY_METADATA_REQUEST (short 3))
 
 (defonce ^:constant API_VERSION (short 0))
@@ -34,18 +36,6 @@
       (.capacity bytebuf len))
     bytebuf))
 
-
-(defn ^ByteBuf put-short-string [^ByteBuf buff s]
-  (-> buff 
-    (.writeShort (short (count s)))
-    (.writeBytes (.getBytes (str s) "UTF-8"))))
-
-(defn with-size [^ByteBuf buff f & args]
-  (let [pos (.writerIndex buff)]
-    (.writeInt buff (int -1))
-    (apply f buff args)
-    (.setInt buff (int pos) (- (.writerIndex buff) pos 4))))
-      
       
 (defn write-message [^ByteBuf buff codec ^bytes bts]
   (let [
@@ -97,14 +87,14 @@
       (.writeShort  (short API_KEY_PRODUCE_REQUEST))   ;api-key
       (.writeShort  (short API_VERSION))   ;version api
       (.writeInt (int correlation-id))       ;correlation id
-      (put-short-string client-id)  ;short + client-id bytes
+      (write-short-string client-id)  ;short + client-id bytes
       (.writeShort (short acks))   ;acks
       (.writeInt (int timeout)))    ;timeout
     
       (let [topic-group (group-by :topic msgs)]
         (.writeInt buff (int (count topic-group))) ;topic count
         (doseq [[topic topic-msgs] topic-group]
-         (put-short-string buff topic) ;short + topic bytes
+         (write-short-string buff topic) ;short + topic bytes
          (let [partition-group (group-by :partition topic-msgs)]
            (.writeInt buff (int (count partition-group)))  ;partition count
 				   (doseq [[partition partition-msgs] partition-group]
@@ -127,15 +117,26 @@
                    )))
 
 
-(defn producer [host port]
+(defn producer [host port conf]
   "returns a producer for sending messages, the decoder is a producer-response-decoder"
   (try 
-    (prn "NEW PRODUCER !!!!!!")
-  (let [c (client host port {:reuse-client true :handlers [
-                                                           produce-response-decoder
-                                                           default-encoder 
-                                                           
-                                                           ]})]
+    (prn "NEW PRODUCER 1 !!!!!!")
+  (let [c (client host port (merge  
+                                   ;;parameters that can be over written
+			                             {:max-concurrent-writes 4000
+			                             :reuse-client true 
+                                   :write-buff 100
+                                   }
+                                   ;merge conf
+                                   conf
+                                   ;parameters tha cannot be overwritten
+                                   {
+			                             ;:channel-options [[ALLOCATOR (PooledByteBufAllocator. false)]]
+			                             :handlers [
+			                                                           produce-response-decoder
+			                                                           default-encoder 
+			                                                           
+			                                                           ]}))]
     (->Producer c host port))
   (catch Exception e (.printStackTrace e))))
   
@@ -157,7 +158,7 @@
       (.writeShort  (short API_KEY_METADATA_REQUEST))   ;api-key
       (.writeShort  (short API_VERSION))                ;version api
       (.writeInt (int correlation-id))                  ;correlation id
-      (put-short-string client-id)                      ;short + client-id bytes
+      (write-short-string client-id)                      ;short + client-id bytes
       (.writeInt (int 0))))                            ;write empty topic, dont use -1 (this means nil), list to receive metadata on all topics
       
       

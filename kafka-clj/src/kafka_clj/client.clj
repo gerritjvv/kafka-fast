@@ -50,10 +50,10 @@
   (>!! ch-source msg))
 
 (defn create-producer-buffer [topic partition {:keys [host port]} {:keys [batch-num-messages queue-buffering-max-ms] :or 
-                                                                   {batch-num-messages 100 queue-buffering-max-ms 1000}}]
+                                                                   {batch-num-messages 100 queue-buffering-max-ms 1000} :as conf}]
   "Creates a producer and buffered-chan with a go loop that will read off the buffered chan and send to the producer.
    A map with keys :producer ch-source and buff-ch is returned"
-  (let [producer (producer host port)
+  (let [producer (producer host port conf)
         ch-source (chan 100)
         buff-ch (buffered-chan ch-source batch-num-messages queue-buffering-max-ms 10)]
     (go-loop []
@@ -101,7 +101,7 @@
         state {:producers-ref (ref {})
                :brokers-metadata brokers-metadata
                :topic-partition-ref (ref {})
-               :conf {}}]
+               :conf conf}]
     ;start metadata scanning
     (track-broker-partitions bootstrap-brokers brokers-metadata 5000 conf)
     ;block till some data appears in the brokers-metadata
@@ -109,7 +109,7 @@
       (if (>= 0 (count @brokers-metadata))
         (if (> i 0)
             (do 
-              (Thread/sleep 500)
+              (Thread/sleep 1000)
               (recur (dec i)))
             (throw (RuntimeException. "No metadata for brokers found")))))
          

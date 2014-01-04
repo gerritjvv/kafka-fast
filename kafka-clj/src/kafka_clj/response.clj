@@ -1,5 +1,6 @@
 (ns kafka-clj.response
-  (:require [clojure.tools.logging :refer [info error]])
+  (:require [clojure.tools.logging :refer [info error]]
+            [kafka-clj.buff-utils :refer [read-short-string]])
   (:import 
            [io.netty.handler.codec ByteToMessageDecoder ReplayingDecoder]
            [io.netty.buffer ByteBuf]
@@ -27,13 +28,6 @@
 	                        })
 
     
-(defn read-short-string [^ByteBuf buff]
-  (let [size (.readShort buff)]
-    (if (pos? size)
-      (let [arr  (byte-array size)]
-		    (.readBytes buff arr)
-		    (String. arr "UTF-8")))))
-
 
 (defn read-produce-response [^ByteBuf in]
   "

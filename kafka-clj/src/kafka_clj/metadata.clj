@@ -53,7 +53,6 @@
    freq-ms a long value
    "
    (let [producers (into #{} (map-indexed vector (map (fn [{:keys [host port]}] (metadata-request-producer host (int port))) brokers)))]
-
      (doseq [[k p] producers]
        
           ;; read errors from the producer at position k, the next producer is at position k+1
