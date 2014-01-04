@@ -98,7 +98,6 @@
   "Read all the messages till the number of bytes message-set-size have been read"
   (let [reader-start (.readerIndex buff)]
 		  (loop [msgs []]
-        (prn  " " (.readerIndex buff) " diff < messsage-set-size " (< (- (.readerIndex buff) reader-start)  message-set-size))
 		    (if (< (- (.readerIndex buff) reader-start)  message-set-size)
           (recur (conj msgs (read-message-set buff)))
           msgs))))
