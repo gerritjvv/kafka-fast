@@ -1,5 +1,7 @@
 (ns kafka-clj.fetch
-  (:require [kafka-clj.buff-utils :refer [write-short-string with-size]]
+  (:require [clj-tuple :refer [tuple]]
+            [kafka-clj.codec :refer [uncompress]]
+            [kafka-clj.buff-utils :refer [write-short-string with-size read-short-string read-byte-array codec-from-attributes]]
             [kafka-clj.produce :refer [API_KEY_FETCH_REQUEST API_VERSION MAGIC_BYTE]])
   (:import [io.netty.buffer ByteBuf Unpooled PooledByteBufAllocator]))
 
@@ -47,6 +49,102 @@
     (with-size buff write-fetch-request-header state))
 
 
+(declare read-message-set)
+(declare read-messages0)
+
+(defn read-message [^ByteBuf buff]
+  "Message => Crc MagicByte Attributes Key Value
+  Crc => int32
+  MagicByte => int8
+  Attributes => int8
+  Key => bytes
+  Value => bytes"
+  (let [crc (.readInt buff)
+        magic-byte (.readByte buff)
+        attributes (.readByte buff)
+        codec (codec-from-attributes attributes)
+        key-arr (read-byte-array buff)
+        val-arr (read-byte-array buff)]
+    ;check attributes, if the message is compressed, uncompress and read messages
+    ;else return as is
+    
+    (if (> codec 0)
+      (let [ ^"[B" ubytes (uncompress codec val-arr)
+             ubuff (Unpooled/wrappedBuffer ubytes)
+             ]
+          (doall 
+            ;read the messages inside of this compressed message
+            (mapcat flatten (map :message (read-messages0 ubuff (count ubytes))))))
+      (tuple {:crc crc :key key-arr :bts val-arr}))))
+    
+        
+   
+(defn read-message-set [^ByteBuf buff]
+  "MessageSet => [Offset MessageSize Message]
+  Offset => int64
+  MessageSize => int32
+  Message => Crc MagicByte Attributes Key Value
+  Crc => int32
+  MagicByte => int8
+  Attributes => int8
+  Key => bytes
+  Value => bytes"
+  
+        {:offset (.readLong buff)
+         :message-size (.readInt buff)
+         :message (read-message buff)})
+
+(defn read-messages0 [^ByteBuf buff message-set-size]
+  "Read all the messages till the number of bytes message-set-size have been read"
+  (let [reader-start (.readerIndex buff)]
+		  (loop [msgs []]
+        (prn  " " (.readerIndex buff) " diff < messsage-set-size " (< (- (.readerIndex buff) reader-start)  message-set-size))
+		    (if (< (- (.readerIndex buff) reader-start)  message-set-size)
+          (recur (conj msgs (read-message-set buff)))
+          msgs))))
+
+(defn read-messages [^ByteBuf buff]
+  "Read all the messages till the number of bytes message-set-size have been read"
+  (let [message-set-size (.readInt buff)]
+    (read-messages0 buff message-set-size)))
+            
+        
+
+(defn read-fecth-response [^ByteBuf buff]
+  "
+	Response => CorrelationId ResponseMessage
+	CorrelationId => int32
+	ResponseMessage
+
+  FetchResponse => [TopicName [Partition ErrorCode HighwaterMarkOffset MessageSetSize MessageSet]]
+  TopicName => string
+  Partition => int32
+  ErrorCode => int16
+  HighwaterMarkOffset => int64
+  MessageSetSize => int32
+  MessageSet => [Offset MessageSize Message]
+  Offset => int64
+  MessageSize => int32
+  Message => Crc MagicByte Attributes Key Value
+  Crc => int32
+  MagicByte => int8
+  Attributes => int8
+  Key => bytes
+  Value => bytes"
+
+  (let [size (.readInt buff)
+        correlation-id (.readInt buff)
+        topic-count (.readInt buff)]
+    (doall
+	      (for [i (range topic-count)
+	          :let [topic-name (read-short-string buff)
+	                partition-count (.readInt buff)]]
+	          
+	          (for [q (range (partition-count))]
+	            {:partition (.readInt buff)
+	             :error-codec (.readShort buff)
+	             :high-water-mark-offset (.readLong buff)
+	             :messages (read-messages buff)})))))
 
   
   

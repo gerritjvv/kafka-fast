@@ -3,7 +3,7 @@
             [kafka-clj.response :refer [produce-response-decoder metadata-response-decoder]]
             [clj-tcp.client :refer [client write! read! close-all ALLOCATOR]]
             [clj-tcp.codec :refer [default-encoder]]
-            [kafka-clj.buff-utils :refer [write-short-string with-size]])
+            [kafka-clj.buff-utils :refer [write-short-string with-size compression-code-mask]])
   (:import [java.net InetAddress]
            [java.nio ByteBuffer]
            [io.netty.buffer ByteBuf Unpooled PooledByteBufAllocator]
@@ -21,7 +21,6 @@
 (defonce ^:constant API_VERSION (short 0))
 
 (defonce ^:constant MAGIC_BYTE (int 0))
-(defonce ^:constant compression-code-mask 0x03)
 
 (defn shutdown [{:keys [client]}]
   (if client
@@ -59,6 +58,7 @@
   
 (defn write-message-set [^ByteBuf buff codec msgs]
 	  (doseq [msg msgs]
+      (prn "Writing message msg " (String. (:bts msg)))
 	    (-> buff
 	     
 	      (.writeLong 0)       ;offset

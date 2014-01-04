@@ -1,7 +1,7 @@
 (ns kafka-clj.codec
   
-  (:import [java.io DataOutputStream ByteArrayOutputStream OutputStream]
-           [java.util.zip GZIPOutputStream]
+  (:import [java.io DataOutputStream ByteArrayOutputStream OutputStream ByteArrayInputStream]
+           [java.util.zip GZIPOutputStream GZIPInputStream]
            [org.iq80.snappy SnappyOutputStream Snappy]
            [kafka_clj.util Util]))
 
@@ -39,8 +39,15 @@
     (= codec 2) (Snappy/compress bts)))
                 
 
+(defn ^"[B" uncompress [codec ^"[B" bts]
+  (cond 
+    (= codec 1) (Util/deflateGzip bts)
+    (= codec 2)(Snappy/uncompress bts 0 (count bts))))
+
 (defn get-compress-out [codec]
   (cond 
     (= codec 1) (gzip-out)
     (= codec 2) (snappy-out)
     :else (throw (RuntimeException. (str "Codec " codec " not supported please use none, gzip or snappy") ))))
+
+

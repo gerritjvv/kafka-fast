@@ -1,5 +1,6 @@
 (ns kafka-clj.fetch-tests
-  (:require [kafka-clj.fetch :refer [write-fetch-request]]
+  (:require [kafka-clj.fetch :refer [write-fetch-request read-messages]]
+            [kafka-clj.produce :as produce]
             [kafka-clj.buff-utils :refer [read-short-string]])
   (:import [io.netty.buffer ByteBuf Unpooled])
   (:use midje.sweet))
@@ -7,7 +8,7 @@
 
 (facts "Test write fetch request"
        
-       (fact "Test write fetch request"
+      (fact "Test write fetch request"
              (let [buff (Unpooled/buffer 1024)]
                (write-fetch-request buff {:topics {"a" [{:partition 1 :offset 100}]}})
                
@@ -44,4 +45,68 @@
                
                )
              
+             )
+       
+       (fact "Read fetch request response from the message-set start"
+             (let [buff (Unpooled/buffer 1024)]
+               ;(defn write-request [^ByteBuf buff {:keys [correlation-id client-id codec acks timeout] :or {correlation-id 1 client-id "1" codec 0 acks 1 timeout 1000}}
+                    ; msgs]
+               (produce/write-request buff {:codec 0} [{:topic "mytopic" :partition 0 :bts (.getBytes "Hi")} {:topic "mytopic" :partition 0 :bts (.getBytes "Hi")}])
+               
+               (doto buff
+                 (.readShort) ;api key produce
+                 (.readShort) ;api version
+                 (.readInt)   ;read correlation id
+                 (read-short-string) ;read client id
+                 (.readShort) ;acks
+                 (.readInt)   ;timeout
+                 )
+               
+               "ProduceRequest => RequiredAcks Timeout [TopicName [Partition MessageSetSize MessageSet]]"
+               (prn "Done")
+               (prn "Topic count " (.readInt buff))
+               (prn "Topic " (read-short-string buff))
+               (prn "Partition count " (.readInt buff))
+               (prn "Size " (.readInt buff))
+               (let [msgs (read-messages buff)]
+                 (count msgs) => 2
+                 (doseq [{:keys [offset message-size message]} msgs]
+                        (doseq [{:keys [crc key bts]} message]
+                          (String. bts) => "Hi")))
+                          
+                          
+                                      
              ))
+       
+       (fact "Read fetch request response from the message-set start with compressed messages"
+             (let [buff (Unpooled/buffer 1024)]
+               (produce/write-request buff {:codec 1} [{:topic "mytopic" :partition 0 :bts (.getBytes "Hi")} {:topic "mytopic" :partition 0 :bts (.getBytes "Ho")}])
+               (prn "Writer index " (.writerIndex buff))
+               
+               (doto buff
+                 (.readShort) ;api key produce
+                 (.readShort) ;api version
+                 (.readInt)   ;read correlation id
+                 (read-short-string) ;read client id
+                 (.readShort) ;acks
+                 (.readInt)   ;timeout
+                 )
+               
+               "ProduceRequest => RequiredAcks Timeout [TopicName [Partition MessageSetSize MessageSet]]"
+               (prn "Done")
+               (prn "Topic count " (.readInt buff))
+               (prn "Topic " (read-short-string buff))
+               (prn "Partition count " (.readInt buff))
+               (prn "Size " (.readInt buff))
+               (let [msgs (read-messages buff)]
+                 (prn "msgs " msgs)
+                 (count msgs) => 1
+                 (doseq [{:keys [offset message-size message]} msgs]
+                   (doseq [{:keys [crc key bts]} message]
+                     (String. bts) => (fn [x] (or (= x "Hi") (= x "Ho")))
+                        ))
+                 
+                 )
+               
+                                      
+             )))

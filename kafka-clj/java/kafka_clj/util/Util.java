@@ -1,7 +1,13 @@
 package kafka_clj.util;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.zip.CRC32;
+import java.util.zip.GZIPInputStream;
+
+
 import io.netty.buffer.ByteBuf;
 
 public class Util {
@@ -26,4 +32,15 @@ public class Util {
 		return buff.writeInt((int)(v & 0xffffffffL));
 	}	
 
+	public static final byte[] deflateGzip(byte[] bts) throws IOException{
+		GZIPInputStream in = new GZIPInputStream(new ByteArrayInputStream(bts));
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		int i = -1;
+		
+		while( (i = in.read()) != -1)
+			out.write(i);
+		
+		return out.toByteArray();
+	}
+	
 }
