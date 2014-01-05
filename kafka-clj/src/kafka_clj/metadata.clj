@@ -90,6 +90,7 @@
 		     ;;if one fails we send another
 		     ;;the error handling here is redundent somewhat but done for completeness
 		     ;;the connection and recover error handling is done in the go loops above 
+         
 			   (fixdelay freq-ms
 		              (loop [ps producers]
 		                (if-let [[_ p] (first ps)]

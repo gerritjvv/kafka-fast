@@ -2,8 +2,9 @@
   
   (:import [java.io DataOutputStream ByteArrayOutputStream OutputStream ByteArrayInputStream]
            [java.util.zip GZIPOutputStream GZIPInputStream]
-           [org.iq80.snappy SnappyOutputStream Snappy]
-           [kafka_clj.util Util]))
+           [org.iq80.snappy SnappyOutputStream SnappyInputStream Snappy]
+           [kafka_clj.util Util]
+           [java.util Arrays]))
 
 
 (defonce SNAPPY "snappy")
@@ -25,11 +26,8 @@
   (let [out (ByteArrayOutputStream.)]
     [(DataOutputStream. (GZIPOutputStream. out)) out] ))
 
-(defn snappy-out []
-  (let [out (ByteArrayOutputStream.)]
-    [(DataOutputStream. (SnappyOutputStream. out)) out] ))
 
-(defn ^bytes compress [codec ^bytes bts]
+(defn ^"[B" compress [codec ^bytes bts]
   (cond 
     (= codec 1) (let [[^DataOutputStream dout ^ByteArrayOutputStream bout] (gzip-out)]
                   (.write dout bts (int 0) (int (count bts)))
@@ -42,12 +40,7 @@
 (defn ^"[B" uncompress [codec ^"[B" bts]
   (cond 
     (= codec 1) (Util/deflateGzip bts)
-    (= codec 2)(Snappy/uncompress bts 0 (count bts))))
+    (= codec 2) (Util/deflateSnappy bts))) ;skip the snappy header which is 8 bytes
 
-(defn get-compress-out [codec]
-  (cond 
-    (= codec 1) (gzip-out)
-    (= codec 2) (snappy-out)
-    :else (throw (RuntimeException. (str "Codec " codec " not supported please use none, gzip or snappy") ))))
 
 

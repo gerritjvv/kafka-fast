@@ -1,9 +1,9 @@
 (ns kafka-clj.produce
-  (:require [kafka-clj.codec :refer [crc32-int get-compress-out compress]]
+  (:require [kafka-clj.codec :refer [crc32-int compress]]
             [kafka-clj.response :refer [produce-response-decoder metadata-response-decoder]]
             [clj-tcp.client :refer [client write! read! close-all ALLOCATOR]]
             [clj-tcp.codec :refer [default-encoder]]
-            [kafka-clj.buff-utils :refer [write-short-string with-size compression-code-mask]])
+            [kafka-clj.buff-utils :refer [inc-capacity write-short-string with-size compression-code-mask]])
   (:import [java.net InetAddress]
            [java.nio ByteBuffer]
            [io.netty.buffer ByteBuf Unpooled PooledByteBufAllocator]
@@ -16,7 +16,9 @@
 
 (defonce ^:constant API_KEY_PRODUCE_REQUEST (short 0))
 (defonce ^:constant API_KEY_FETCH_REQUEST (short 1))
+(defonce ^:constant API_KEY_OFFSET_REQUEST (short 2))
 (defonce ^:constant API_KEY_METADATA_REQUEST (short 3))
+
 
 (defonce ^:constant API_VERSION (short 0))
 
@@ -29,17 +31,12 @@
 (defn message [topic partition ^bytes bts]
   (->Message topic partition bts))
 
-(defn ^ByteBuf inc-capacity [^ByteBuf bytebuf l]
-  (let [len (+ (.capacity bytebuf) (int l))]
-    (if (> len (.maxCapacity bytebuf))
-      (.capacity bytebuf len))
-    bytebuf))
-
       
 (defn write-message [^ByteBuf buff codec ^bytes bts]
   (let [
         pos (.writerIndex buff)
         ]
+    ;(inc-capacity buff (+ 14 (count bts)))
     (-> buff
       (.writeInt (int -1)) ;crc32
       (.writeByte (byte 0))               ;magic
@@ -57,8 +54,9 @@
       
   
 (defn write-message-set [^ByteBuf buff codec msgs]
+    ;(inc-capacity buff (* 8 (count msgs)))
+    
 	  (doseq [msg msgs]
-      (prn "Writing message msg " (String. (:bts msg)))
 	    (-> buff
 	     
 	      (.writeLong 0)       ;offset
@@ -73,7 +71,7 @@
     (write-message-set msg-buff 0 msgs) ;write msgs to msg-buff
     (let [arr (byte-array (- (.writerIndex msg-buff) (.readerIndex msg-buff) ))]
       (.readBytes msg-buff arr)
-      
+      (prn "Compress out " (String. (compress codec arr)))
 	    (-> buff
 	      (.writeLong 0) ;offset
 	      (with-size write-message codec 

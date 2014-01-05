@@ -19,8 +19,8 @@
 								ClientId => string"
                
                (.readInt buff) => 54 ;size
-               (.readInt buff) => 1  ;api
-               (.readInt buff) => 0  ;version
+               (.readShort buff) => 1  ;api
+               (.readShort buff) => 0  ;version
                (.readInt buff) => 1  ;default is 1 correlation id
                (read-short-string buff) => "1" ;client id
                

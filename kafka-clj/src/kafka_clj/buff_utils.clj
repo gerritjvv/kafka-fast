@@ -4,6 +4,13 @@
 
 (defonce ^:constant compression-code-mask 0x03)
 
+
+(defn ^ByteBuf inc-capacity [^ByteBuf bytebuf l]
+  (let [len (+ (.capacity bytebuf) (int l))]
+    (if (> len (.maxCapacity bytebuf))
+      (.capacity bytebuf len))
+    bytebuf))
+
 (defn read-short-string [^ByteBuf buff]
   (let [size (.readShort buff)]
     (if (pos? size)
