@@ -75,3 +75,16 @@ Results:
 191975 K messages per second.
 
 
+# Consumer
+Note: this is still very experimental
+
+```clojure
+
+(use 'kafka-clj.fetch :reload)
+(def c (consumer [{:host "localhost" :port 9092}] ["ping"] {}))
+
+(while true (let [m (read-msg c)] (try (prn (String. (:bts m))) (catch Exception e (do)) (finally (mark-msg-processed c m)))))
+
+```
+
+
