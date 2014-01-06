@@ -16,7 +16,7 @@
            [kafka_clj.util Util]))
 
 (defn ^ByteBuf write-fecth-request-message [^ByteBuf buff {:keys [max-wait-time min-bytes topics max-bytes]
-                                          :or { max-wait-time 1000 min-bytes 1 max-bytes 524288000}}]
+                                          :or { max-wait-time 1000 min-bytes 1 max-bytes 1048576}}]
   "FetchRequest => ReplicaId MaxWaitTime MinBytes [TopicName [Partition FetchOffset MaxBytes]]  ReplicaId => int32  MaxWaitTime => int32  MinBytes => int32  TopicName => string  Partition => int32  FetchOffset => int64  MaxBytes => int32"
   (-> buff
     (.writeInt (int -1))
@@ -151,7 +151,7 @@
                       partition-count (.readInt in)]
                       [topic 
                        (doall
-                        (for [p (range topic-count)]
+                         (for [p (range topic-count)]
                           {:partition (.readInt in)
                            :error-code (.readShort in)
                            :high-water-mark-offset (.readLong in)
@@ -272,6 +272,9 @@
   )
 
 
+(defn flip-sent-state [consumer-state-ref topic partition]
+  (dosync (alter consumer-state-ref (fn [m] (merge-with (partial merge-with merge) m {topic {partition {:sent-request true}}})))))
+
 (defn start-fetch-updater [consumer topic partition consumer-state-ref {:keys [fetch-update-freq] :or {fetch-update-freq 5000}}]
   "Sets a background loop that every n  milliseconds sends a consume offset, but only if the partition-info 
    extracted from consume-state-ref has (>= (:current-offset partition-info) (:fetch-water-mark partition-info))"
@@ -281,7 +284,8 @@
               (if-let [partition-info (-> @consumer-state-ref (get topic) (get partition))]
                     (if (and (>= (:current-offset partition-info) (:fetch-water-mark partition-info)) (not (true? (:sent-request partition-info))))
                       (do
-                           (dosync (alter consumer-state-ref (fn [m] (merge-with (partial merge-with merge) m {topic {partition {:sent-request true}}}))))
+                           (prn "Send fetch request " topic " " partition)
+                           (flip-sent-state consumer-state-ref topic partition)
 			                     (send-fetch consumer [[topic [{:partition partition :offset (inc (:fetch-water-mark partition-info)) }]]]))
                        )
 		                
@@ -291,6 +295,17 @@
                                    (prn "Error reading " (-> @consumer-state-ref (get topic) (get partition)))
                                    (error e (str "Error reading " (-> @consumer-state-ref (get topic) (get partition)) )))))))
   
+(defn set-offsets-state [consumer-state-ref topic partition offsets]
+  (dosync 
+    (alter consumer-state-ref (fn [m] 
+		                                                   (if (-> m (get topic) (get partition))
+		                                                    m
+		                                                    (do
+                                                           (prn "offsets " offsets)
+                                                           (merge-with (partial merge-with merge)  m 
+                                                                                                  {topic {partition {:current-offset (first offsets)
+		                                                                                                :fetch-water-mark (first offsets) } } } )))))))
+
 (defn topic-offset-consumer [host port consumer-state-ref conf]
 	(let [c (client host port (merge  
 	                                   ;;parameters that can be over written
@@ -315,24 +330,28 @@
         (while true
           (let [v (<! (:read-ch c))]
             ;type of data expected: ({:topic "ping", :partitions ({:partition 0, :error-code 0, :offsets (0)})})
-		           (dosync
                     (doseq [{:keys [topic partitions]} v]
 		                  (doseq [{:keys [partition error-code offsets]} partitions]
 		                    (if (= error-code 0)
-                          (commute consumer-state-ref (fn [m] 
-		                                                   (if (-> m (get topic) (get partition))
-		                                                    m
-		                                                    (do
-                                                           (merge-with (partial merge-with merge) m {topic {partition {:current-offset (first offsets) :high-water-mark-offset 0
-		                                                                                                :fetch-water-mark (first offsets) } } } )))))
+                          (set-offsets-state consumer-state-ref topic partition offsets)
 		                      (error "Partition offset fetch error " topic " " partition " returned error " error-code)
-		                       )))))))
+		                       ))))))
        
 	     {:client c
         :conf conf}
 	
 	  ))
 
+(defn flip-sent-state2 [consumer-state-ref topic partition]
+  (dosync (alter consumer-state-ref (fn [m] (merge-with (partial merge-with merge) m {topic {partition {:sent-request false}}})))))
+
+(defn set-water-mark [consumer-state-ref high-water-mark-offset topic partition messages]
+  (dosync
+						                     (if-let [fetch-water-mark (->> messages (sort-by :offset) last :offset)]
+														           (do ;(prn "setting fetch-water-mark " fetch-water-mark)
+                                           (alter consumer-state-ref (fn [m]
+														                                         (merge-with (partial merge-with merge) m {topic {partition {:high-water-mark-offset high-water-mark-offset
+			                                                                                                                :fetch-water-mark fetch-water-mark} } })))))))
 (defn topic-consumer [host port consumer-state-ref message-ch conf]
    (let [c (client host port (merge  
                                    ;;parameters that can be over written
@@ -363,13 +382,8 @@
 					           (doseq [{:keys [partition error-code high-water-mark-offset messages]} partitions]
 					             (if (= error-code 0)
 						             (do
-                           (dosync
-						                     (if-let [fetch-water-mark (->> messages (sort-by :offset) last :offset)]
-														           (do ;(prn "setting fetch-water-mark " fetch-water-mark)
-                                           (commute consumer-state-ref (fn [m]
-														                                         (merge-with (partial merge-with merge) m {topic {partition {:high-water-mark-offset high-water-mark-offset
-			                                                                                                                :fetch-water-mark fetch-water-mark} } }))))))
-                                                      (doseq [{:keys [offset message]} messages]
+                           (set-water-mark consumer-state-ref high-water-mark-offset topic partition messages)
+                            (doseq [{:keys [offset message]} messages]
                                 
                                 (if (coll? message)
                                   (doseq [message-item message]
@@ -377,8 +391,8 @@
                                   (>! message-ch (assoc message :topic topic :partition partition :offset offset)))))
                    
 					              (error "Fetch error " topic " " partition))
-                        ;reset send flag
-                        (dosync (alter consumer-state-ref (fn [m] (merge-with (partial merge-with merge) m {topic {partition {:sent-request false}}}))))
+                        ;reset send flag flip-sent-state2 [consumer-state-ref topic partition]
+                        (flip-sent-state2 consumer-state-ref topic partition)
                         )))))
 			         
      ;(read-print-in c)
