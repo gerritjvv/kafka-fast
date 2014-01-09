@@ -83,11 +83,11 @@
   (let [size (.readInt in)                     ;request size
         correlation-id (.readInt in)           ;correlation id
         broker-count (.readInt in)             ;broker array len
-        brokers (doall 
-                  (for [i (range broker-count)]
-                    {:node-id (.readInt in)
-                     :host (read-short-string in)
-                     :port (.readInt in)}))
+        brokers   (doall 
+	                  (for [i (range broker-count)]
+	                    {:node-id (.readInt in)
+	                     :host (read-short-string in)
+	                     :port (.readInt in)}))
         topic-metadata-count (.readInt in)
         topics (doall
                  (for [i (range topic-metadata-count)]
@@ -120,8 +120,11 @@
     ;decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out)
     []
     (decode [ctx ^ByteBuf in ^List out] 
-			      (.add out
-					        (read-metadata-response in))
+            ;(info "read metadata response")
+            (try
+             (let [resp (read-metadata-response in)]
+			         (.add out resp))
+             (catch Exception e (error e e)))
         )))
 			        
 

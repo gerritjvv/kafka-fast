@@ -1,11 +1,10 @@
 (ns kafka-clj.metadata
   (:require 
             [clj-tuple :refer [tuple]]
-            [clj-tcp.client :refer [close-all]]
             [kafka-clj.produce :refer [metadata-request-producer send-metadata-request shutdown]]
             [fun-utils.core :refer [fixdelay]]
             [clojure.tools.logging :refer [info error]]
-            [clojure.core.async :refer [go <!]])
+            [clojure.core.async :refer [go <! <!! >!! alts!! timeout thread]])
   (:import [java.nio ByteBuffer]
            [clj_tcp.client Poison Reconnected]))
 
@@ -45,63 +44,45 @@
         ]
     m))
 
-(defn track-broker-partitions [brokers partition-ref freq-ms conf]
-  "This method will update the partition ref every freq-ms milliseconds
-   Arguments
-   brokers a list of maps with keys :host :port
-   partition-ref must be of type ref
-   freq-ms a long value
+(defn send-update-metadata [producer conf]
+  (try
+      (send-metadata-request producer conf)
+      (catch Exception e (error e e))))
+
+(defn get-broker-metadata [broker {:keys [metadata-timeout] :or {metadata-timeout 10000} :as conf}]
    "
-   (let [producers (into #{} (map-indexed vector (map (fn [{:keys [host port]}] (metadata-request-producer host (int port))) brokers)))]
-     (doseq [[k p] producers]
-       
-          ;; read errors from the producer at position k, the next producer is at position k+1
-          ;; if an error is found by reading a value of this channel, then send a metadata-request to the next producer if any at k+1
-	        (go 
-	          (while true
-	               (let [error (<! (-> p :client :error-ch))]
-                     (prn "error !!!! " error)
-                     (error (str error "  Error contacting " p))
-                     (if-let [p2 (get producers (inc k))]
-                       (send-metadata-request p conf)))))
-          
-          ;;read responses from the producer at position k
-          ;;if any response that is not Poison, call the handle-metadata-respones function
-          (go 
-            (loop [local-client (:client p)]
-              (let [resp (<! (:read-ch local-client))]
-                (cond (instance? Poison resp)
-                      (prn "Shutdown metadata response")
-                      (instance? Reconnected resp)
-                      (do 
-                        (prn "Reconnected because " (:cause resp))
-                        (.printStackTrace (:cause resp))
-                        (recur (:client resp)))
-                           
-                  :else 
-                     (if resp
-		                    (do
-		                      (dosync (commute partition-ref (fn [x] 
-		                                               (try (convert-metadata-response resp)
-		                                                 (catch Exception e (do (.printStackTrace e) (error e e) x))))))
-                        (recur local-client)))))))
-         
-		     ;;on fix delay send a metadata request to the first available producer
-		     ;;if one fails we send another
-		     ;;the error handling here is redundent somewhat but done for completeness
-		     ;;the connection and recover error handling is done in the go loops above 
-         
-			   (fixdelay freq-ms
-		              (loop [ps producers]
-		                (if-let [[_ p] (first ps)]
-		                  (let [x (try
-                                
-						                     (do 
-                                     (send-metadata-request p {}) nil)
-						                     (catch Exception e (do
-						                                          (error (str "Error contacting " p) e)
-                                                      (.printStackTrace e)
-						                                          e)))]
-		                    (if x 
-		                      (recur (rest ps))))))))))
-				                  
+   Creates a metadata-request-producer, sends a metadata request to the broker and waits for a result,
+   if no result in $metadata-timeout or an error an exception is thrown, otherwise the result of
+   (convert-metadata-response resp) is returned.
+   "
+   (let [{:keys [host port]} broker
+         producer (metadata-request-producer host port conf)
+         read-ch  (-> producer :client :read-ch)
+         error-ch (-> producer :client :error-ch)]
+	    (try
+          (do 
+            (send-update-metadata producer conf)
+	          ;wait for response or timeout
+            (prn "Wait for timeout ")
+	          (let [[v c] (alts!! [read-ch error-ch (timeout metadata-timeout)])]
+	             (if v
+	               (if (= c read-ch) (convert-metadata-response v)
+	                 (throw (Exception. (str "Error reading metadata from producer " broker  " error " v))))
+	               (throw (Exception. (str "timeout reading from producer " broker ))))))
+          (finally 
+            (shutdown producer)))))
+
+           
+(defn get-metadata [brokers conf]
+  "Iterate through the brokers, and the first one that returns a metadata response is used"
+     (if-let [broker (first brokers)]
+       (try
+         (get-broker-metadata broker conf)
+         (catch Exception e (do (error "error " e)
+                                  (if (rest brokers) (get-metadata (rest brokers) conf)
+                                  (error e e)))))))
+
+
+     
+     
+     

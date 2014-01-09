@@ -11,18 +11,20 @@
 
   :aot [kafka-clj.client]
   :main kafka-clj.client
-  :java-source-paths ["java"]   
+  :java-source-paths ["java"]  
+  :jvm-opts ["-Xmx3g"]
   :plugins [
          [lein-rpm "0.0.5"] [lein-midje "3.0.1"] [lein-marginalia "0.7.1"] 
          [lein-kibit "0.0.8"] [no-man-is-an-island/lein-eclipse "2.0.0"]
            ]
   :dependencies [
+                 ;[org.clojure/core.match "0.2.0"]
                  [midje "1.6.0" :scope "test"]
                  [reply "0.3.0" :scope "provided"]
                  [org.clojure/tools.trace "0.7.6"]
                  [org.iq80.snappy/snappy "0.3"]
                  [org.clojure/tools.logging "0.2.6"]
-                 [clj-tcp "0.2.7-SNAPSHOT"]
+                 [clj-tcp "0.2.12-SNAPSHOT"]
                  [fmap-clojure "0.1.1"]
                  [fun-utils "0.2.4"]
                  [clj-tuple "0.1.4"]

@@ -1,0 +1,12 @@
+package kafka_clj.util;
+
+public enum FetchStates {
+	REQUEST_RESPONSE,
+	RESPONSE,
+	FETCH_RESPONSE,
+	READ_TOPIC,
+	READ_PARTITION,
+	READ_MESSAGES,
+	READ_MESSAGE_SET,
+	READ_MESSAGE
+}

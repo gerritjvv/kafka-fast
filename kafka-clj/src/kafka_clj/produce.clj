@@ -3,6 +3,7 @@
             [kafka-clj.response :refer [produce-response-decoder metadata-response-decoder]]
             [clj-tcp.client :refer [client write! read! close-all ALLOCATOR]]
             [clj-tcp.codec :refer [default-encoder]]
+            [clojure.tools.logging :refer [error info]]
             [kafka-clj.buff-utils :refer [inc-capacity write-short-string with-size compression-code-mask]])
   (:import [java.net InetAddress]
            [java.nio ByteBuffer]
@@ -26,7 +27,9 @@
 
 (defn shutdown [{:keys [client]}]
   (if client
-    (close-all client)))
+    (try 
+      (close-all client)
+      (catch Exception e (error e "Error while shutting down producer")))))
 
 (defn message [topic partition ^bytes bts]
   (->Message topic partition bts))
@@ -166,17 +169,19 @@
                        (with-size buff write-metadata-request conf)
                    )))
 
-(defn metadata-request-producer [host port]
+(defn metadata-request-producer [host port conf]
   "Returns a producer with a metadata-response-decoder set"
   (prn "try metadata producer " host ":" port)
   (try 
-  (let [c (client host port {:reuse-client true :handlers [
+  (let [c (client host port (merge conf 
+                                   {:reuse-client true :handlers [
                                                            metadata-response-decoder
                                                            default-encoder 
-                                                           ]})]
+                                                           ]}))]
     (->Producer c host port))
   
-  (catch Exception e (do 
-                       (.printStackTrace e)
+  (catch Exception e (do
+                       (error "Could not create metadata-request-producer " host " " port " due to " e)
+                       (error e e)
                        (throw e)))))  
       

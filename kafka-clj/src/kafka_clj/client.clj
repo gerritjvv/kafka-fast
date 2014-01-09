@@ -2,7 +2,8 @@
   (:gen-class)
   (:require [fun-utils.core :refer [star-channel buffered-chan]]
             [kafka-clj.produce :refer [producer send-messages message shutdown]]
-            [kafka-clj.metadata :refer [track-broker-partitions]]
+            [kafka-clj.metadata :refer [get-metadata]]
+            [clojure.tools.logging :refer [error info]]
             [reply.main]
             [clojure.core.async :refer [chan >! >!! go-loop] :as async])
   (:import [java.util.concurrent.atomic AtomicInteger]))
@@ -93,8 +94,12 @@
 (defn close [{:keys [producers-ref]}]
   "Close all producers and channels created for the connected"
   (doseq [{:keys [producer ch-source]} producers-ref]
-    (async/close! ch-source)
-    (shutdown producer)))
+    (try
+		    (do 
+	        ;(async/close! ch-source)
+			    (shutdown producer))
+      (catch Exception e (error e (str "Error while shutdown " producer " " ch-source))))))
+
    
 (defn create-connector [bootstrap-brokers conf]
   (let [brokers-metadata (ref {})
@@ -103,15 +108,9 @@
                :topic-partition-ref (ref {})
                :conf conf}]
     ;start metadata scanning
-    (track-broker-partitions bootstrap-brokers brokers-metadata 5000 conf)
+    ;(track-broker-partitions bootstrap-brokers brokers-metadata 5000 conf)
     ;block till some data appears in the brokers-metadata
-    (loop [i 20]
-      (if (>= 0 (count @brokers-metadata))
-        (if (> i 0)
-            (do 
-              (Thread/sleep 1000)
-              (recur (dec i)))
-            (throw (RuntimeException. "No metadata for brokers found")))))
+    
          
     
     {:bootstrap-brokers bootstrap-brokers

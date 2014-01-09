@@ -1,57 +1,32 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <classpath>
-	<classpathentry kind="src" path="src"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/checkouts/kafka-fast/kafka-clj/target/classes"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/gui-diff/gui-diff/0.5.0/gui-diff-0.5.0.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/utilize/utilize/0.2.3/utilize-0.2.3.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/apache/zookeeper/zookeeper/3.4.5/zookeeper-3.4.5.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/colorize/colorize/0.1.1/colorize-0.1.1.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/com/google/code/findbugs/jsr305/1.3.9/jsr305-1.3.9.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/com/netflix/curator/curator-client/1.3.3/curator-client-1.3.3.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/tcrawley/dynapath/0.2.3/dynapath-0.2.3.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/midje/midje/1.6.0/midje-1.6.0.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/jline/jline/0.9.94/jline-0.9.94.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/slf4j/slf4j-api/1.6.4/slf4j-api-1.6.4.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/tukaani/xz/1.4/xz-1.4.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/fun-utils/fun-utils/0.1.0/fun-utils-0.1.0.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/com/lmax/disruptor/3.2.0/disruptor-3.2.0.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/clojars/trptcolin/sjacket/0.1.3/sjacket-0.1.3.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/biscuit/biscuit/1.0.0/biscuit-1.0.0.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/clj-time/clj-time/0.6.0/clj-time-0.6.0.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/io/netty/netty-all/4.0.13.Final/netty-all-4.0.13.Final.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/clojure/tools.macro/0.1.1/tools.macro-0.1.1.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/clojure/core.async/0.1.267.0-0d7780-alpha/core.async-0.1.267.0-0d7780-alpha.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/clojure/math.combinatorics/0.0.1/math.combinatorics-0.0.1.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/slingshot/slingshot/0.10.3/slingshot-0.10.3.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/clojure/tools.nrepl/0.2.3/tools.nrepl-0.2.3.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/log4j/log4j/1.2.15/log4j-1.2.15.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/clojure/tools.logging/0.2.6/tools.logging-0.2.6.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/bultitude/bultitude/0.2.2/bultitude-0.2.2.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/net/cgrand/regex/1.1.0/regex-1.1.0.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/clj-json/clj-json/0.5.3/clj-json-0.5.3.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/ordered/ordered/1.2.0/ordered-1.2.0.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/jboss/netty/netty/3.2.2.Final/netty-3.2.2.Final.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/clojure/clojure/1.5.1/clojure-1.5.1.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/commons-codec/commons-codec/1.6/commons-codec-1.6.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/joda-time/joda-time/2.0/joda-time-2.0.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/clojure-complete/clojure-complete/0.2.3/clojure-complete-0.2.3.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/fmap-clojure/fmap-clojure/0.1.1/fmap-clojure-0.1.1.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/javax/mail/mail/1.4/mail-1.4.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/clj-tcp/clj-tcp/0.1.0-SNAPSHOT/clj-tcp-0.1.0-SNAPSHOT.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/javax/activation/activation/1.1/activation-1.1.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/clojure/tools.namespace/0.2.2/tools.namespace-0.2.2.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/com/netflix/curator/curator-framework/1.3.3/curator-framework-1.3.3.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/clojure/core.unify/0.5.2/core.unify-0.5.2.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/codehaus/jackson/jackson-core-asl/1.9.9/jackson-core-asl-1.9.9.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/net/cgrand/parsley/0.9.1/parsley-0.9.1.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/com/google/guava/guava/11.0.1/guava-11.0.1.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/swiss-arrows/swiss-arrows/0.1.0/swiss-arrows-0.1.0.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/slf4j/slf4j-log4j12/1.6.1/slf4j-log4j12-1.6.1.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/clojure/tools.reader/0.7.10/tools.reader-0.7.10.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/com/taoensso/nippy/2.5.2/nippy-2.5.2.jar"/>
-	<classpathentry kind="lib" path="/Users/gvanvuuren/.m2/repository/org/iq80/snappy/snappy/0.3/snappy-0.3.jar" sourcepath="/Users/gvanvuuren/.m2/repository/org/iq80/snappy/snappy/0.3/snappy-0.3-sources.jar"/>
-	<classpathentry kind="src" path="test"/>
-	<classpathentry kind="src" path="resources"/>
 	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
+	<classpathentry kind="src" path="src"/>
+	<classpathentry kind="src" path="java"/>
+	<classpathentry kind="src" path="test">
+		<attributes>
+			<attribute name="optional" value="true"/>
+		</attributes>
+	</classpathentry>
+	<classpathentry kind="src" path="dev-resources">
+		<attributes>
+			<attribute name="optional" value="true"/>
+		</attributes>
+	</classpathentry>
+	<classpathentry kind="src" path="resources">
+		<attributes>
+			<attribute name="optional" value="true"/>
+		</attributes>
+	</classpathentry>
+	<classpathentry kind="lib" path="target/classes">
+		<attributes>
+			<attribute name="optional" value="true"/>
+		</attributes>
+	</classpathentry>
+	<classpathentry exported="true" kind="con" path="ccw.LEININGEN_CONTAINER">
+		<attributes>
+			<attribute name="org.eclipse.jdt.launching.CLASSPATH_ATTR_LIBRARY_PATH_ENTRY" value="kafka-clj/target/native/macosx/x86_64"/>
+		</attributes>
+	</classpathentry>
 	<classpathentry kind="output" path="target/classes"/>
 </classpath>

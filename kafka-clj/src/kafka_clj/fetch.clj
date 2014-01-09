@@ -5,11 +5,12 @@
             [clj-tcp.client :refer [client write! read! close-all ALLOCATOR read-print-ch read-print-in]]
             [fun-utils.core :refer [fixdelay apply-get-create]]
             [kafka-clj.offset-storage :as offset-storage]
-            [kafka-clj.codec :refer [uncompress]]
-            [kafka-clj.metadata :refer [track-broker-partitions]]
+            [kafka-clj.codec :refer [uncompress crc32-int]]
+            [kafka-clj.metadata :refer [get-metadata]]
             [kafka-clj.buff-utils :refer [write-short-string with-size read-short-string read-byte-array codec-from-attributes]]
+            [kafka-clj.fetch-codec :refer [fetch-response-decoder]]
             [kafka-clj.produce :refer [API_KEY_FETCH_REQUEST API_KEY_OFFSET_REQUEST API_VERSION MAGIC_BYTE]]
-            [clojure.core.async :refer [go >! <! chan <!!]])
+            [clojure.core.async :refer [go >! <! chan <!! alts!! timeout]])
   (:import [io.netty.buffer ByteBuf Unpooled PooledByteBufAllocator]
            [io.netty.handler.codec ByteToMessageDecoder ReplayingDecoder]
            [java.util List]
@@ -69,11 +70,16 @@
   Key => bytes
   Value => bytes"
   (let [crc (Util/unsighedToNumber (.readInt buff))
+        start-index (.readerIndex buff) ;start of message + attribytes + magic byte
         magic-byte (.readByte buff)
         attributes (.readByte buff)
         codec (codec-from-attributes attributes)
         key-arr (read-byte-array buff)
-        val-arr (read-byte-array buff)]
+        val-arr (read-byte-array buff)
+        end-index (.readerIndex buff)
+        crc32-arr (byte-array (- end-index start-index)) 
+        crc2 (do (.getBytes buff (int start-index) crc32-arr) (crc32-int crc32-arr))
+        ]
     ;check attributes, if the message is compressed, uncompress and read messages
     ;else return as is
     (if (> codec 0)
@@ -85,7 +91,7 @@
 	            (doall 
 			            ;read the messages inside of this compressed message
 			            (mapcat flatten (map :message (read-messages0 ubuff (count ubytes))))))))
-      (tuple {:crc crc :key key-arr :bts val-arr}))))
+      (tuple {:crc crc :key key-arr :bts val-arr :crc2 crc2}))))
     
         
    
@@ -142,7 +148,7 @@
 				 topic-count (.readInt in)
          
          ]
-       
+       (info ">>>>>>>>>==== size " size)
        {:correlation-id correlation-id
         :topics 
 		        (doall
@@ -161,19 +167,6 @@
         }
      ))
 
-(defn fetch-response-decoder []
-  "
-   A handler that reads fetch request responses
- 
-   "
-  (proxy [ReplayingDecoder]
-    ;decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out)
-    []
-    (decode [ctx ^ByteBuf in ^List out] 
-			      (.add out
-					        (read-fetch-response in))
-        )))
-
 
 (defn write-offset-request-message [^ByteBuf buff {:keys [topics max-offsets use-earliest] :or {use-earliest true max-offsets 10}}]
   "
@@ -190,11 +183,12 @@
     (write-short-string buff topic)
     (.writeInt buff (int (count partitions)))
     (doseq [{:keys [partition]} partitions]
-      (-> buff
-        (.writeInt (int partition))
-        (.writeLong (if use-earliest -2 -1))
-        (.writeInt  (int max-offsets)))))
-        
+      (do
+	      (-> buff
+	        (.writeInt (int partition))
+	        (.writeLong (if use-earliest -2 -1))
+	        (.writeInt  (int max-offsets))))))
+	        
     buff)
 
  
@@ -271,204 +265,48 @@
                    (write-fetch-request buff (merge conf {:topics topics}))))
   )
 
-
-(defn flip-sent-state [consumer-state-ref topic partition]
-  (dosync (alter consumer-state-ref (fn [m] (merge-with (partial merge-with merge) m {topic {partition {:sent-request true}}})))))
-
-(defn start-fetch-updater [consumer topic partition consumer-state-ref {:keys [fetch-update-freq] :or {fetch-update-freq 5000}}]
-  "Sets a background loop that every n  milliseconds sends a consume offset, but only if the partition-info 
-   extracted from consume-state-ref has (>= (:current-offset partition-info) (:fetch-water-mark partition-info))"
-  ;(prn "start fetch updater: " partition)
-  (fixdelay fetch-update-freq 
-            (try
-              (if-let [partition-info (-> @consumer-state-ref (get topic) (get partition))]
-                    (if (and (>= (:current-offset partition-info) (:fetch-water-mark partition-info)) (not (true? (:sent-request partition-info))))
-                      (do
-                           (prn "Send fetch request " topic " " partition)
-                           (flip-sent-state consumer-state-ref topic partition)
-			                     (send-fetch consumer [[topic [{:partition partition :offset (inc (:fetch-water-mark partition-info)) }]]]))
-                       )
-		                
-                (prn "No partition info for " topic " " partition))
-                       
-              (catch Exception e (do 
-                                   (prn "Error reading " (-> @consumer-state-ref (get topic) (get partition)))
-                                   (error e (str "Error reading " (-> @consumer-state-ref (get topic) (get partition)) )))))))
-  
-(defn set-offsets-state [consumer-state-ref topic partition offsets]
-  (dosync 
-    (alter consumer-state-ref (fn [m] 
-		                                                   (if (-> m (get topic) (get partition))
-		                                                    m
-		                                                    (do
-                                                           (prn "offsets " offsets)
-                                                           (merge-with (partial merge-with merge)  m 
-                                                                                                  {topic {partition {:current-offset (first offsets)
-		                                                                                                :fetch-water-mark (first offsets) } } } )))))))
-
-(defn topic-offset-consumer [host port consumer-state-ref conf]
-	(let [c (client host port (merge  
-	                                   ;;parameters that can be over written
-				                             {:max-concurrent-writes 4000
-				                             :reuse-client true 
-	                                   :write-buff 100
-	                                   }
-	                                   ;merge conf
-	                                   conf
-	                                   ;parameters tha cannot be overwritten
-	                                   {
-				                             ;:channel-options [[ALLOCATOR (PooledByteBufAllocator. false)]]
-				                             :handlers [
-				                                                           offset-response-decoder
-				                                                           default-encoder 
-				                                                           
-				                                                           ]}))]
-	     (read-print-ch "error" (:error-ch c))
-      
-       ;on every response received update the consumer-state-ref, only if it does not exist in the map yet
-	     (go 
-        (while true
-          (let [v (<! (:read-ch c))]
-            ;type of data expected: ({:topic "ping", :partitions ({:partition 0, :error-code 0, :offsets (0)})})
-                    (doseq [{:keys [topic partitions]} v]
-		                  (doseq [{:keys [partition error-code offsets]} partitions]
-		                    (if (= error-code 0)
-                          (set-offsets-state consumer-state-ref topic partition offsets)
-		                      (error "Partition offset fetch error " topic " " partition " returned error " error-code)
-		                       ))))))
-       
-	     {:client c
-        :conf conf}
-	
-	  ))
-
-(defn flip-sent-state2 [consumer-state-ref topic partition]
-  (dosync (alter consumer-state-ref (fn [m] (merge-with (partial merge-with merge) m {topic {partition {:sent-request false}}})))))
-
-(defn set-water-mark [consumer-state-ref high-water-mark-offset topic partition messages]
-  (dosync
-						                     (if-let [fetch-water-mark (->> messages (sort-by :offset) last :offset)]
-														           (do ;(prn "setting fetch-water-mark " fetch-water-mark)
-                                           (alter consumer-state-ref (fn [m]
-														                                         (merge-with (partial merge-with merge) m {topic {partition {:high-water-mark-offset high-water-mark-offset
-			                                                                                                                :fetch-water-mark fetch-water-mark} } })))))))
-(defn topic-consumer [host port consumer-state-ref message-ch conf]
-   (let [c (client host port (merge  
+(defn create-offset-producer 
+  ([{:keys [host port]} conf]
+    (create-offset-producer host port conf))
+  ([host port conf]
+    (let [c (client host port (merge  
                                    ;;parameters that can be over written
-			                             {:max-concurrent-writes 4000
-			                             :reuse-client true 
-                                   :write-buff 100
+			                             {
+                                   :reuse-client true 
+                                   :read-buff 1
                                    }
-                                   ;merge conf
                                    conf
                                    ;parameters tha cannot be overwritten
                                    {
-			                             ;:channel-options [[ALLOCATOR (PooledByteBufAllocator. false)]]
+			                             :handlers [
+			                                                           offset-response-decoder
+			                                                           default-encoder 
+			                                                           ]}))]
+      {:client c :conf conf :broker {:host host :port port}})))
+                                                  
+                               
+
+(defn create-fetch-producer 
+  ([{:keys [host port]} conf]
+    (create-fetch-producer host port conf))
+  ([host port conf]
+    (let [c (client host port (merge  
+                                   ;;parameters that can be over written
+			                             {
+                                   :reuse-client true 
+                                   :read-buff 1
+                                   }
+                                   conf
+                                   ;parameters tha cannot be overwritten
+                                   {
 			                             :handlers [
 			                                                           fetch-response-decoder
 			                                                           default-encoder 
-			                                                           
 			                                                           ]}))]
-     
-     ;
-     (read-print-ch "error" (:error-ch c))
+       {:client c :conf conf :broker {:host host :port port}})))
 
-     (go 
-       (while true
-		       (let [v (<! (:read-ch c))]
-		         ; {:correlation-id 11, :topics (["ping" ({:partition 0, :error-code 0, :high-water-mark-offset 56, :messages [{:offset 1, :message-size 18, :message [{:crc 2143009708, :key #<byte[] [B@5022d801>, :bts #<byte[] [B@1f9352c1>}]} {:offset 2, :message-size 17, :message [{:crc 4056112429, :key #<byte[] [B@11e0d19>, :bts #<byte[] [B@5bede4e1>}]}
-					       ;(prn "read response " v) 
-                 (doseq [[topic partitions] (:topics v)]
-					           (doseq [{:keys [partition error-code high-water-mark-offset messages]} partitions]
-					             (if (= error-code 0)
-						             (do
-                           (set-water-mark consumer-state-ref high-water-mark-offset topic partition messages)
-                            (doseq [{:keys [offset message]} messages]
-                                
-                                (if (coll? message)
-                                  (doseq [message-item message]
-                                       (do (>! message-ch (assoc message-item :topic topic :partition partition :offset offset))))
-                                  (>! message-ch (assoc message :topic topic :partition partition :offset offset)))))
-                   
-					              (error "Fetch error " topic " " partition))
-                        ;reset send flag flip-sent-state2 [consumer-state-ref topic partition]
-                        (flip-sent-state2 consumer-state-ref topic partition)
-                        )))))
-			         
-     ;(read-print-in c)
-     {:client c
-      :conf conf}
 
-  ))
-
-(defn mark-msg-processed [consumer {:keys [offset topic partition]}]
-   (let [consumer-state-ref (-> consumer :state :consumer-state-ref)
-         storage (:storage :consumer)]
-     (dosync 
-       (alter consumer-state-ref (fn [m]
-                                   (merge-with (partial merge-with merge) m {topic {partition {:current-offset offset}}}))))
-     (offset-storage/save-offset topic partition offset)))
-     
-     
-     
-         
-(defn consumer [ bootstrap-brokers topics {:keys [message-buff] :or {message-buff 100} :as conf}]
-  ;set metadata requests and wait
-  ;request las positions
-  ;request 
-  (let [consumer-state-ref (ref {})
-        brokers-metadata (ref {})
-        offset-clients  (ref {})
-        fetch-clients   (ref {})
-        message-ch      (chan message-buff)
-        state {:brokers-metadata brokers-metadata
-               :conf conf
-               :topics topics
-               :consumer-state-ref consumer-state-ref
-               :offset-clients offset-clients}]
-    ;request metatada
-    (track-broker-partitions bootstrap-brokers brokers-metadata 5000 conf)
-    ;block till some data appears in the brokers-metadata
-    (loop [i 20]
-      (if (>= 0 (count @brokers-metadata))
-        (if (> i 0)
-            (do 
-              (Thread/sleep 1000)
-              (recur (dec i)))
-            (throw (RuntimeException. "No metadata for brokers found")))))
-    
-     ;for each topic partition, we get the broker and create an offset consumer while also sending the offset request
-     ;on response the offset consumer will update the consumer-state-ref
-     (doseq [topic topics]
-       (if-let [partitions (get @brokers-metadata topic)]
-         (doseq [[i broker] (map-indexed (fn ([] 0) ([a b] [a b])) partitions)]
-              (dosync (alter offset-clients apply-get-create
-                                               broker 
-                                               (fn [offset-client]
-                                                           (send-offset-request offset-client [[topic [{:partition i}]]]))
-                                               (fn [] 
-                                                 ;topic-offset-consumer [host port conf]
-                                                 (topic-offset-consumer (:host broker) (:port broker) consumer-state-ref conf)
-                                                 )))
-              (dosync (alter fetch-clients apply-get-create broker
-                             (fn [fetch-client]
-                               ;start-fetch-updater [consumer topic partition consume-state-ref {:keys [fetch-update-freq] :or {fetch-update-freq 500}}]
-                               (start-fetch-updater fetch-client topic i consumer-state-ref conf))
-                             (fn []
-                               ;create fetch consumer topic-consumer [host port consumer-state-ref conf]
-                               (topic-consumer (:host broker) (:port broker) consumer-state-ref message-ch conf)
-                               )))
-              
-              )))
-         
-     {:state state :conf conf :message-ch message-ch}
-    ))
-    
-    
- (defn read-msg [{:keys [message-ch]}]
-   (<!! message-ch))
-  
-  
+   
 
 
  

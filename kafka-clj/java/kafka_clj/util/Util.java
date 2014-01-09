@@ -1,15 +1,14 @@
 package kafka_clj.util;
 
+import io.netty.buffer.ByteBuf;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.zip.CRC32;
 import java.util.zip.GZIPInputStream;
 
 import org.iq80.snappy.SnappyInputStream;
-
-import io.netty.buffer.ByteBuf;
 
 public class Util {
 
