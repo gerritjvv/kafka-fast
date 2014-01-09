@@ -38,7 +38,7 @@
    buff)
 	  
 
-(defn ^ByteBuf write-fetch-request-header [^ByteBuf buff {:keys [client-id correlation-id] :or {client-id "1" correlation-id 11} :as state}]
+(defn ^ByteBuf write-fetch-request-header [^ByteBuf buff {:keys [client-id correlation-id] :or {client-id "1" correlation-id (int (/ (System/currentTimeMillis) 1000))} :as state}]
   "
    RequestMessage => ApiKey ApiVersion CorrelationId ClientId RequestMessage
   ApiKey => int16

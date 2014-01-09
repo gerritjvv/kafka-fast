@@ -7,46 +7,62 @@
             [kafka-clj.fetch :refer [create-fetch-producer create-offset-producer send-offset-request send-fetch]]
             [kafka-clj.metadata :refer [get-metadata]]
             [clojure.pprint :refer [pprint]]
-            [clojure.core.async :refer [<!! >!! alts!! timeout chan]]))
+            [clojure.core.async :refer [<!! >!! alts!! timeout chan]])
+  (:import [kafka_clj.fetch_codec FetchMessage FetchError FetchEnd]))
 
 
 
+(defn get-rest-of-partitions [broker topic partition state]
+  "state should be {broker {topic [{:partition :offset :topic}... ] }}
+   This method will return all of the data for a broker topic that does not have :partition == partition"
+  (filter #(not (= (:partition %) partition)) (-> state (get broker) (get topic))))
 
-(defn send-request-and-wait [producer topic-offsets {:keys [fetch-timeout] :or {fetch-timeout 10000}}]
-  "Returns the messages, or -1 error -2 timeout"
+
+(defn merge-broker-offsets [state d]
+  "D is a collection of messages one per topic partition, that were last consumed from a fetch request,
+   state is the broker-offsets {broker {topic [{:partition :offset :topic}]}}
+   The function will merge d with state so that state will contain the latest offsets consumed,
+   and then returns the new state
+   "
+  (reduce (fn [state [broker messages]]
+                    (reduce (fn [state {:keys [topic partition offset error-code]}]
+			                         (merge-with merge
+                                 state
+			                           {broker 
+			                                 {topic 
+			                                      (conj (get-rest-of-partitions broker topic partition state)
+			                                            {:offset (inc offset) :partition partition :error-code (if error-code error-code 0)  })
+                                         }
+                                    }))
+                            state messages))
+          state d))
+                            
+
+(defn send-request-and-wait [producer topic-offsets msg-ch {:keys [fetch-timeout] :or {fetch-timeout 10000}}]
+  "Returns the messages, if any error was or timeout was detected the function returns otherwise it waits for a FetchEnd message
+   and returns. "
   ;convert {topic ({:offset 135111084, :error-code 0, :partition 2} {:offset 137539746, :error-code 0, :partition 5})}
   ;to [[topic [{:partition 0} {:partition 1}...]] ... ]
+  
+  (info "Send fetch request " (map (fn [[k v]] [k v]) topic-offsets))
   (send-fetch producer (map (fn [[k v]] [k v]) topic-offsets))
   
-  (let [{:keys [read-ch error-ch]} (:client producer)
-        [v c] (alts!! [read-ch error-ch (timeout fetch-timeout)])]
-    (if v
-      (if (= c read-ch)
-        v
-        (do (error "Error while requesting data from " producer " for topics " (keys topic-offsets)) -1))
-        (do (error "Timeout while requesting data from " producer " for topics " (keys topic-offsets)) -2))))
+  (let [{:keys [read-ch error-ch]} (:client producer)]
+    (loop [resp {}]
+       (let [[v c] (alts!! [read-ch error-ch (timeout fetch-timeout)])]
+		    (if v
+		      (if (= c read-ch)
+		        (cond (instance? FetchEnd v) (vals resp)
+                  :else ;assume FetchMessage
+                     (do
+                       (let [latest-offset (:offset (get resp #{(:topic v) (:partition v)}))]
+	                       (if (or (nil? latest-offset) (> (:offset v) latest-offset))
+	                          (>!! msg-ch v)
+	                          (error "Duplicate message latest-offset " latest-offset " message offset " (:offset v))))
+                       (recur (assoc resp #{(:topic v) (:partition v)} v))))
+		        (do (error "Error while requesting data from " producer " for topics " (keys topic-offsets)) (vals resp)))
+		        (do (error "Timeout while requesting data from " producer " for topics " (keys topic-offsets)) (vals resp)))))))
 
-
-(defn route-requests [{:keys [topics] :as msgs} msg-ch]
-  "Returns a collection of the last messages sent one for each topic partition combination
-   or of msgs is not a collection the msgs is returned as is"
-  (if (coll? msgs)  ;route messages and return a list of the last messages per topic partition sent
-    (do
-      (info "route-requests -------->>>>>>>>> " msgs)
-      ;send every message in {:correlation-id 11, :topics 
-      ;([raw-requests-adx ({:partition 0, :error-code 0, :high-water-mark-offset 348700561, 
-      ;:messages [{:offset 139305751, :message-size 1522, 
-      ;:message [{:crc 1402969336, :key #<byte[] [B@73b9f690>, :bts #<byte[] [B@36bb6683>, :crc2 1402969336}]} {:offset 139305752, :message-size 1515, :message [{:crc 1270530475, :key #<byte[] [B@43604329>, :bts #<byte[] [B@7471451>, :crc2 1270530475}]}
-      
-      [:a 1]
-      ;for each topic return the message with the largest offset
-      ;we use doall so that the messages (except the last ones) are gc'ed
-      ;(doall (for [[topic v] (group-by :topic msgs) :let [o (last (sort-by :offset v))] ] o))
-      )
-    
-    msgs)) ;else return the msgs that is -1 or -2 depending on the error
-  
-  
 
 (defn consume-broker [producer topic-offsets msg-ch conf]
   "Send a request to the broker and waits for a response, error or timeout
@@ -54,7 +70,8 @@
    The result returned can be either, the last messages consumed per topic and partition,
    or -1 for error and -2 for timeout
    "
-  (route-requests (send-request-and-wait producer topic-offsets conf) msg-ch))
+   (send-request-and-wait producer topic-offsets msg-ch conf))
+
 
 (defn transform-offsets [topic offsets-response {:keys [use-earliest] :or {use-earliest false}}]
    "Transforms [{:topic topic :partitions {:partition :error-code :offsets}}]
@@ -108,10 +125,14 @@
    Consume brokers and returns a list of lists that contains the last messages consumed, or -1 -2 where errors are concerned
    the data structure returned is {broker -1|-2|[{:offset o topic: a} {:offset o topic a} ... ] ...}
   "
-  (doall (into {} (pmap #([%  (consume-broker % (get broker-offsets (:broker %)) msg-ch conf)]) producers))))
+  (info "Consume brokers !!: "  broker-offsets)
+  (try
+    (doall (into {} (pmap #(vector (:broker %)  (consume-broker % (get broker-offsets (:broker %)) msg-ch conf)) producers)))
+   (finally
+     (info ">>>>>>>>>>>>>>>>>>>>> END CONSUME BROKERS!")))
+  )
 
 (defn broker-error? [v]
-  (info "has broker error? " v)
   false
   )
 
@@ -119,8 +140,7 @@
   "
    broker-offsets must be {broker {topic [{:offset o :partition p} ...] }}
    v must be {broker -1|-2|[{:offset o topic: a} {:offset o topic a} ... ] ...}"
-  
-  broker-offsets
+   (merge-broker-offsets broker-offsets v)
   )
 
 
@@ -134,18 +154,24 @@
       [producers broker-offsets])
     (throw (RuntimeException. "No metadata from brokers " bootstrap-brokers))))
 
-(defn consume-producers! [bootstrap-brokers producers topic broker-offsets msg-ch conf]
+(defn consume-producers! [bootstrap-brokers producers topic broker-offsets msg-ch {:keys [fetch-poll-ms] :or {fetch-poll-ms 10000} :as conf}]
   "Consume from the current offsets, 
    if any error the producers are closed and a reconnect is done, and consumption is tried again
    otherwise the broker-offsets are updated and the next fetch is done"
-  (let [v (consume-brokers! producers broker-offsets msg-ch conf)]
-    (if (broker-error? v)
-      (let [[producers broker-offsets] (close-and-reconnect bootstrap-brokers producers topic conf)]
-        (recur bootstrap-brokers producers topic broker-offsets msg-ch conf))
-         ;(recur bootstrap-brokers producers topic (update-broker-offsets broker-offsets v) msg-ch conf)
-      (info ">>>>>>>>=============== update-broker-offsets: " v)
-      )))
-        
+
+  (loop [producers producers broker-offsets broker-offsets]
+		  (let [v (consume-brokers! producers broker-offsets msg-ch conf)]
+		    (if (broker-error? v)
+		      (do 
+		         (info "Error close and reconnect")
+		         (let [[producers broker-offsets] (close-and-reconnect bootstrap-brokers producers topic conf)]
+		            (recur producers broker-offsets)))
+		      (do 
+             (<!! (timeout fetch-poll-ms))
+             (recur producers (update-broker-offsets broker-offsets v))))
+		      
+		      )))
+
 (defn consume [bootstrap-brokers msg-ch topic conf]
   "Entry point for topic consumption,
    The cluster metadata is requested from the bootstrap-brokers, the topic offsets are sorted per broker.

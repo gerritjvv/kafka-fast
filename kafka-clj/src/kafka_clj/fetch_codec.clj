@@ -1,5 +1,6 @@
 (ns kafka-clj.fetch-codec
-  (:require [kafka-clj.buff-utils :refer [write-short-string with-size read-short-string read-byte-array codec-from-attributes]]
+  (:require [clojure.tools.logging :refer [info error]]
+            [kafka-clj.buff-utils :refer [write-short-string with-size read-short-string read-byte-array codec-from-attributes]]
             [kafka-clj.codec :refer [uncompress crc32-int]]
             [clj-tuple :refer [tuple]])
   (:import [io.netty.buffer ByteBuf Unpooled PooledByteBufAllocator]
@@ -14,7 +15,8 @@
 
 (defrecord FetchMessage [topic partition ^bytes bts offset])
 (defrecord FetchError [topic partition error-code])
-  
+(defrecord FetchEnd [])
+
 (defn create-fetch-message [topic partition ^bytes bts offset]
   (->FetchMessage topic partition bts offset))
 
@@ -110,6 +112,7 @@
 	          
 	          (= state FetchStates/RESPONSE)
 	          (let [correlation-id (.readInt in)]
+              (info "correlation-id " correlation-id)
 	            (checkpoint this FetchStates/FETCH_RESPONSE))
 	          
 	          (= state FetchStates/FETCH_RESPONSE) ;FetchResponse => [TopicName [Partition ErrorCode HighwaterMarkOffset MessageSetSize MessageSet]]
@@ -125,7 +128,8 @@
 		            (.set topic-name topic)
                 (.getAndDecrement topic-len) ;decrement topic len
 	              (checkpoint this FetchStates/READ_PARTITION))
-               (checkpoint this FetchStates/REQUEST_RESPONSE)) ;if all the topics have been read, reset to start
+               (do (.add out (->FetchEnd))
+                   (checkpoint this FetchStates/REQUEST_RESPONSE))) ;if all the topics have been read, reset to start
             
             (= state FetchStates/READ_PARTITION)
             (if (> (.get partition-len) 0)
@@ -144,6 +148,7 @@
                (checkpoint this FetchStates/READ_MESSAGE_SET))
             
             (= state FetchStates/READ_MESSAGE_SET)
+            (do
             (if (> (.get message-set-size) 0)
               (let [offset (.readLong in)
                   message-size (.readInt in)]
@@ -152,7 +157,7 @@
 	              (if (> message-size 0)
 	                  (checkpoint this FetchStates/READ_MESSAGE)
 	                  (checkpoint this FetchStates/READ_MESSAGE_SET))) ;back to message set
-	             (checkpoint this FetchStates/READ_PARTITION)) ;if no more message-set-size go back to partition     
+	             (checkpoint this FetchStates/READ_PARTITION))) ;if no more message-set-size go back to partition     
               
              (= state FetchStates/READ_MESSAGE)
              (let [reader-start (.readerIndex in)
@@ -162,7 +167,16 @@
                
                (let [bts-read (- (.readerIndex in) reader-start)]
                  (.getAndAdd  message-set-size (* -1 bts-read))
-                 (checkpoint this FetchStates/READ_MESSAGE_SET)))
+                 ;decide if at end of message
+                 (if (> (.get message-set-size) 0)
+                   (checkpoint this FetchStates/READ_MESSAGE_SET)
+                   (if (> (.get topic-len) 0)
+                       (if (> (.get partition-len) 0)
+                            (checkpoint this FetchStates/READ_PARTITION) 
+                            (checkpoint this FetchStates/READ_TOPIC))
+                       (do (.add out (->FetchEnd)) (checkpoint this FetchStates/REQUEST_RESPONSE)))
+                   
+                     )))
                
 	      
 	        ))))))
