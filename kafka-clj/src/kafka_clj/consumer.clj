@@ -1,8 +1,8 @@
 (ns kafka-clj.consumer
-  
-  (:require 
+
+  (:require
             [clojure.tools.logging :refer [info error]]
-            [clj-tcp.client :refer [client write! read! close-all]] 
+            [clj-tcp.client :refer [client write! read! close-all close-client]]
             [kafka-clj.produce :refer [shutdown message]]
             [kafka-clj.fetch :refer [create-fetch-producer create-offset-producer send-offset-request send-fetch]]
             [kafka-clj.metadata :refer [get-metadata]]
@@ -24,44 +24,65 @@
    The function will merge d with state so that state will contain the latest offsets consumed,
    and then returns the new state
    "
+  ;(info "merge " state " with " d)
   (reduce (fn [state [broker messages]]
                     (reduce (fn [state {:keys [topic partition offset error-code]}]
 			                         (merge-with merge
                                  state
-			                           {broker 
-			                                 {topic 
+			                           (if (or (not error-code) (= error-code 0))
+                                   {broker
+			                                 {topic
 			                                      (conj (get-rest-of-partitions broker topic partition state)
-			                                            {:offset (inc offset) :partition partition :error-code (if error-code error-code 0)  })
+			                                            {:offset (inc offset)
+                                                   :partition partition :error-code (if error-code error-code 0)  })
                                          }
-                                    }))
+                                      })))
                             state messages))
           state d))
-                            
+
+(defn- get-latest-offset [k current-offsets resp]
+  "Helper function for send-request-and-wait, k is searched in resp, if no entry current-offsets is searched, and if none is found 0 is returned"
+  (if-let [o (get resp k)]
+    (:offset o)
+    (if-let [o (get current-offsets k)]
+      (let [l (dec (:offset o))] ;we decrement the current offset, th reason is this is the pinged offset, the last 
+                                 ;consumed offset is always (dec pinged-offset)
+        (if (> l 0) l 0))
+      (throw (RuntimeException. (str "Cannot find " k " in " current-offsets))))))
+
 
 (defn send-request-and-wait [producer topic-offsets msg-ch {:keys [fetch-timeout] :or {fetch-timeout 10000}}]
   "Returns the messages, if any error was or timeout was detected the function returns otherwise it waits for a FetchEnd message
    and returns. "
-  ;convert {topic ({:offset 135111084, :error-code 0, :partition 2} {:offset 137539746, :error-code 0, :partition 5})}
-  ;to [[topic [{:partition 0} {:partition 1}...]] ... ]
-  
-  (info "Send fetch request " (map (fn [[k v]] [k v]) topic-offsets))
+
+  (info "send-fetch ========= " topic-offsets)
   (send-fetch producer (map (fn [[k v]] [k v]) topic-offsets))
-  
-  (let [{:keys [read-ch error-ch]} (:client producer)]
+
+  (let [{:keys [read-ch error-ch]} (:client producer)
+        current-offsets (into {} (for [[topic v] topic-offsets
+                                        msg   v]
+                                      [#{topic (:partition msg)} (assoc msg :topic topic) ]))]
     (loop [resp {}]
        (let [[v c] (alts!! [read-ch error-ch (timeout fetch-timeout)])]
 		    (if v
 		      (if (= c read-ch)
-		        (cond (instance? FetchEnd v) (vals resp)
+		        (cond (instance? FetchEnd v) (do (close-client (:client producer)) (vals resp))
                   :else ;assume FetchMessage
                      (do
-                       (let [latest-offset (:offset (get resp #{(:topic v) (:partition v)}))]
-	                       (if (or (nil? latest-offset) (> (:offset v) latest-offset))
+                       (info "----------------- v " v)
+                       (let [k #{(:topic v) (:partition v)}
+                             latest-offset (get-latest-offset k current-offsets resp)
+                             new-msg? (or (> (:offset v) latest-offset) (= (:offset v) 0)) ]
+                         (info "new-msg? " new-msg? " latest-offset " latest-offset " v offset " (:offset v))
+                         (if new-msg?
 	                          (>!! msg-ch v)
-	                          (error "Duplicate message latest-offset " latest-offset " message offset " (:offset v))))
-                       (recur (assoc resp #{(:topic v) (:partition v)} v))))
+                            (error "Duplicate message " k " latest-offset " latest-offset " message offset " (:offset v)))
+
+                       (recur (if new-msg? (assoc resp k v) resp)))))
 		        (do (error "Error while requesting data from " producer " for topics " (keys topic-offsets)) (vals resp)))
-		        (do (error "Timeout while requesting data from " producer " for topics " (keys topic-offsets)) (vals resp)))))))
+		        (do 
+                (close-client (:client producer));we close to force a reconnect
+                (error "Timeout while requesting data from " producer " for topics " (keys topic-offsets)) (vals resp)))))))
 
 
 (defn consume-broker [producer topic-offsets msg-ch conf]
@@ -83,14 +104,14 @@
                      {:offset (if use-earliest (last offsets) (first offsets))
                       :error-code error-code
                       :partition partition}))}))
-     
+
 (defn get-offsets [offset-producer topic partitions]
   "returns [{:topic topic :partitions {:partition :error-code :offsets}}]"
   ;we should send format [[topic [{:partition 0} {:partition 1}...]] ... ]
    (send-offset-request offset-producer [[topic (map (fn [x] {:partition x}) partitions)]] )
    (let [{:keys [offset-timeout] :or {offset-timeout 10000}} (:conf offset-producer)
          {:keys [read-ch error-ch]} (:client offset-producer)
-         
+
          [v c] (alts!! [read-ch error-ch (timeout offset-timeout)])
          ]
      (if v
@@ -104,14 +125,14 @@
    (let [topic-data (get metadata topic)
          by-broker (group-by second (map-indexed vector topic-data))]
         (into {}
-		        (for [[broker v] by-broker] 
+		        (for [[broker v] by-broker]
 		          ;here we have data {{:host "localhost", :port 1} [[0 {:host "localhost", :port 1}] [1 {:host "localhost", :port 1}]], {:host "abc", :port 1} [[2 {:host "abc", :port 1}]]}
 		          ;doing map first v gives the partitions for a broker
 		          (let [offset-producer (create-offset-producer broker conf)
 		                offsets-response (get-offsets offset-producer topic (map first v))]
 		            (shutdown offset-producer)
 		            [broker (transform-offsets topic offsets-response conf)])))))
-		        
+
 (defn create-producers [broker-offsets conf]
   "Returns created producers"
     (for [broker (keys broker-offsets)]
@@ -147,7 +168,7 @@
 (defn close-and-reconnect [bootstrap-brokers topic producers conf]
   (doseq [producer producers]
     (shutdown producer))
-  
+
   (if-let [metadata (get-metadata bootstrap-brokers topic)]
     (let [broker-offsets (doall (get-broker-offsets metadata topic conf))
           producers (doall (create-producers broker-offsets conf))]
@@ -155,21 +176,21 @@
     (throw (RuntimeException. "No metadata from brokers " bootstrap-brokers))))
 
 (defn consume-producers! [bootstrap-brokers producers topic broker-offsets msg-ch {:keys [fetch-poll-ms] :or {fetch-poll-ms 10000} :as conf}]
-  "Consume from the current offsets, 
+  "Consume from the current offsets,
    if any error the producers are closed and a reconnect is done, and consumption is tried again
    otherwise the broker-offsets are updated and the next fetch is done"
 
   (loop [producers producers broker-offsets broker-offsets]
 		  (let [v (consume-brokers! producers broker-offsets msg-ch conf)]
 		    (if (broker-error? v)
-		      (do 
+		      (do
 		         (info "Error close and reconnect")
 		         (let [[producers broker-offsets] (close-and-reconnect bootstrap-brokers producers topic conf)]
 		            (recur producers broker-offsets)))
-		      (do 
+		      (do
              (<!! (timeout fetch-poll-ms))
              (recur producers (update-broker-offsets broker-offsets v))))
-		      
+
 		      )))
 
 (defn consume [bootstrap-brokers msg-ch topic conf]
@@ -181,21 +202,21 @@
   (if-let [metadata (get-metadata bootstrap-brokers {})]
     (let[broker-offsets (doall (get-broker-offsets metadata topic conf))
          producers (doall (create-producers broker-offsets conf))
-         t (future (try 
+         t (future (try
                      (consume-producers! bootstrap-brokers producers topic broker-offsets msg-ch conf)
                      (catch Exception e (error e e))))]
       {:msg-ch msg-ch :shutdown (fn [] (future-cancel t))}
       )
      (throw (Exception. (str "No metadata from brokers " bootstrap-brokers)))))
-        
+
 (defn consumer [bootstrap-brokers topics conf]
- "Creates a consumer and starts consumption"  
+ "Creates a consumer and starts consumption"
   (let [msg-ch (chan)
         consumers (doall
                        (for [topic (into #{} topics)]
                          (consume bootstrap-brokers msg-ch topic conf)))
-        
-        shutdown (fn [] 
+
+        shutdown (fn []
                    (doseq [c consumers]
                      ((:shutdown c))))]
     {:shutdown shutdown :message-ch msg-ch}))
@@ -204,9 +225,9 @@
   "Shutsdown a consumer"
   (shutdown))
 
- (defn read-msg 
+ (defn read-msg
    ([{:keys [message-ch]}]
        (<!! message-ch))
    ([{:keys [message-ch]} timeout-ms]
    (first (alts!! [message-ch (timeout timeout-ms)]))))
- 
+
