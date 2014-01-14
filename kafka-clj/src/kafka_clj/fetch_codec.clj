@@ -13,12 +13,15 @@
  The decoder will read fetch responses from a broker, and return either FetchMessage [topic partition bts offset] instances
  or a FetchError [topic partition error-code] for any messages with a error-code > 0"
 
-(defrecord FetchMessage [topic partition ^bytes bts offset])
+(defrecord FetchMessage [topic partition ^bytes bts offset locked])
 (defrecord FetchError [topic partition error-code])
 (defrecord FetchEnd [])
 
-(defn create-fetch-message [topic partition ^bytes bts offset]
-  (->FetchMessage topic partition bts offset))
+(defn create-fetch-message 
+  ([topic partition ^bytes bts offset]
+    (create-fetch-message topic partition bts offset true))
+  ([topic partition ^bytes bts offset locked]
+    (->FetchMessage topic partition bts offset true)))
 
 (defn create-fetch-error [topic partition error-code]
   (->FetchError topic partition error-code))

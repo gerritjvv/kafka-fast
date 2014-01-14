@@ -4,7 +4,6 @@
             [clj-tcp.codec :refer [default-encoder]]
             [clj-tcp.client :refer [client write! read! close-all ALLOCATOR read-print-ch read-print-in]]
             [fun-utils.core :refer [fixdelay apply-get-create]]
-            [kafka-clj.offset-storage :as offset-storage]
             [kafka-clj.codec :refer [uncompress crc32-int]]
             [kafka-clj.metadata :refer [get-metadata]]
             [kafka-clj.buff-utils :refer [write-short-string with-size read-short-string read-byte-array codec-from-attributes]]
@@ -48,6 +47,7 @@
   ClientId => string
   RequestMessage => FetchRequestMessage
   "
+  (info "correlation-id " correlation-id " state " state)
   (-> buff
      (.writeShort (short API_KEY_FETCH_REQUEST))
      (.writeShort (short API_VERSION))
