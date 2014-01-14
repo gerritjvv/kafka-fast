@@ -10,6 +10,8 @@ fast kafka send library implemented in clojure
 
 Please note that this library is still under development, any contributions are welcome
 
+```[kafka-clj "0.2.0-SNAPSHOT"]```
+
 ## Multi Producer
 
 The ```kafka-clien.client``` namespace contains a ```create-connector``` function that returns a async multi threaded thread safe connector.
