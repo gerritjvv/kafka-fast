@@ -95,6 +95,10 @@
   (persistent-set* group-conn (vec state)))
   
 (defn get-persister [group-conn conf]
+  "Returns an object that have functions p-close p-send, 
+   the offset saved will be incremented before its saved. 
+   This means we are saving to next offset to be read. 
+   The last offset read will is (dec v)"
   (let [{:keys [offset-commit-freq] :or {offset-commit-freq 5000}} conf
         ch (chan 100)]
     
@@ -105,7 +109,7 @@
               (if (nil? v)
                  (write-persister-data group-conn state) ;channel is closed
 		            (if (= c ch)
-		              (recur t (assoc state (clojure.string/join "/" [(:topic v) (:partition v)]) (:offset v)))))
+		              (recur t (assoc state (clojure.string/join "/" [(:topic v) (:partition v)]) (inc (:offset v))))))
                ;timeout
               (do
                 (write-persister-data group-conn state)
@@ -257,14 +261,19 @@
 (defn- change-partition-lock [group-conn broker-offsets broker topic partition locked?]
   "broker-offsets = {broker {topic [{:partition :offset :topic}]}}
    change the locked value of a partition
-   returns the modified broker-offsets"
+   returns the modified broker-offsets
+
+   Any records that cannot be locked are removed from the map returned"
   (let [rest-records (get-rest-of-partitions broker topic partition broker-offsets)
            p-record (get-partition broker topic partition broker-offsets)
            saved-offset (get-saved-offset group-conn topic partition)]
       (info "change-partition-lock " broker-offsets " with p-record " p-record " locked? " locked? " saved-offset " saved-offset)
-      (if p-record (merge-with merge  {broker {topic (conj rest-records (assoc p-record :locked locked?
-                                                                                        :offset (if saved-offset saved-offset 
-                                                                                                    (:offset p-record) ) ))}})
+      (if p-record (merge-with merge  {broker {topic 
+                                               (if locked?
+		                                               (conj rest-records (assoc p-record :locked locked?
+		                                                                                        :offset (if saved-offset saved-offset 
+		                                                                                                    (:offset p-record) ) ))
+                                                   rest-records)}})
         broker-offsets)))
 
     
@@ -283,19 +292,22 @@
 									                                               broker topic partition 
 									                                               (reentrant-lock group-conn (str topic "/" partition)))
 																				                (rest partitions)))
-									                               broker-offsets1))]
-        (info "add " add)
-        (info "broker-offsets1 " broker-offsets1)
-									    
-        (loop [broker-offsets2 broker-offsets1 partitions remove]
-          (if-let [record (first partitions)]
-            (let [{:keys [broker partition]} record]
-	            (recur
-	                 (do
-	                   (release group-conn (str topic "/" partition)) 
-	                   (change-partition-lock broker-offsets2 broker topic partition false)) 
-	                 (rest partitions)))
-	            broker-offsets2))))
+									                               broker-offsets1))
+         broker-offsets2
+							        (loop [broker-offsets2 broker-offsets1 partitions remove]
+							          (if-let [record (first partitions)]
+							            (let [{:keys [broker partition]} record]
+								            (recur
+								                 (do
+								                   (release group-conn (str topic "/" partition)) 
+								                   (change-partition-lock broker-offsets2 broker topic partition false)) 
+								                 (rest partitions)))
+								            broker-offsets2))]
+               
+           ;only allow offsets with locked true, this is done automatically by the change-partition-lock function
+          broker-offsets2
+        
+        ))
     
   
 (defn consume-producers! [bootstrap-brokers
