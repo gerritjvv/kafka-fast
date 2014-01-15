@@ -1,6 +1,6 @@
 
 
-kafka-fast
+kafka-clj
 ==========
 
 fast kafka send library implemented in clojure
