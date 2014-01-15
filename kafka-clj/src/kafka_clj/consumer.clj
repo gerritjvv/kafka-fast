@@ -136,16 +136,23 @@
 		        (cond (instance? FetchEnd v) (do (p-close) (close-client (:client producer)) (vals resp))
                   :else ;assume FetchMessage
                      (do
-                       (let [k #{(:topic v) (:partition v)}
+                       (if (instance? FetchError v)
+                         (do
+                           (error "Fetch error " v)
+                           (recur resp))
+                         
+                         (do 
+                           (info "Message " v)
+                           (let [k #{(:topic v) (:partition v)}
                              latest-offset (get-latest-offset k current-offsets resp)
                              new-msg? (or (> (:offset v) latest-offset) (= (:offset v) 0)) ]
-                         (if new-msg?
-	                          (do 
-                               (>!! msg-ch v)
-                               (p-send v))
-                            (error "Duplicate message " k " latest-offset " latest-offset " message offset " (:offset v)))
-
-                       (recur (if new-msg? (assoc resp k v) resp)))))
+		                         (if new-msg?
+			                          (do 
+		                               (>!! msg-ch v)
+		                               (p-send v))
+		                            (error "Duplicate message " k " latest-offset " latest-offset " message offset " (:offset v)))
+		
+		                       (recur (if new-msg? (assoc resp k v) resp)))))))
 		        (do (p-close) (error "Error while requesting data from " producer " for topics " (keys topic-offsets)) (vals resp)))
 		        (do 
                 (p-close) 
@@ -216,7 +223,7 @@
    Consume brokers and returns a list of lists that contains the last messages consumed, or -1 -2 where errors are concerned
    the data structure returned is {broker -1|-2|[{:offset o topic: a} {:offset o topic a} ... ] ...}
   "
-  (info "Consume brokers !!: "  broker-offsets)
+  ;(info "Consume brokers !!: "  broker-offsets)
   (try
     (doall (into {} (pmap #(vector (:broker %)  (consume-broker % group-conn (get broker-offsets (:broker %)) msg-ch conf)) producers)))
    (finally
@@ -251,7 +258,9 @@
   (if (instance? Long v) v
     (if (instance? Number v) 
       (long v)
-      (Long/parseLong (str v)))))
+      (if (> (count v) 0)
+        (Long/parseLong (str v))
+        nil))))
 
 (defn- get-saved-offset [group-conn topic partition]
   "Retreives the offset saved for the topic partition or nil"
@@ -267,7 +276,7 @@
   (let [rest-records (get-rest-of-partitions broker topic partition broker-offsets)
            p-record (get-partition broker topic partition broker-offsets)
            saved-offset (get-saved-offset group-conn topic partition)]
-      (info "change-partition-lock " broker-offsets " with p-record " p-record " locked? " locked? " saved-offset " saved-offset)
+      ;(info "change-partition-lock " broker-offsets " with p-record " p-record " locked? " locked? " saved-offset " saved-offset)
       (if p-record (merge-with merge  {broker {topic 
                                                (if locked?
 		                                               (conj rest-records (assoc p-record :locked locked?
@@ -304,6 +313,7 @@
 								                 (rest partitions)))
 								            broker-offsets2))]
                
+          ;(info "broker-offsets2 " broker-offsets2)
            ;only allow offsets with locked true, this is done automatically by the change-partition-lock function
           broker-offsets2
         
