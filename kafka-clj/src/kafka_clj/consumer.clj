@@ -142,7 +142,6 @@
                            (recur resp))
                          
                          (do 
-                           (info "Message " v)
                            (let [k #{(:topic v) (:partition v)}
                              latest-offset (get-latest-offset k current-offsets resp)
                              new-msg? (or (> (:offset v) latest-offset) (= (:offset v) 0)) ]

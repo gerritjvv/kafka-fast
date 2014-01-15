@@ -75,7 +75,7 @@
         crc2 (do (.getBytes buff (int start-index) crc32-arr) (crc32-int crc32-arr))
         ]
     (if (not (= crc2 crc)) 
-      (error ">>>>>>>>>>>>>>>>>>>> crc does not match " crc  " crc2 " crc2 " for val " (String. val-arr)))
+      (error ">>>>>>>>>>>>>>>>>>>> crc does not match " crc  " crc2 " crc2 " for val "  val-arr))
     ;check attributes, if the message is compressed, uncompress and read messages
     ;else return as is
     (if (> codec 0)

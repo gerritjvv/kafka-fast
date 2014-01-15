@@ -47,7 +47,7 @@
   ClientId => string
   RequestMessage => FetchRequestMessage
   "
-  (info "correlation-id " correlation-id " state " state)
+  ;(info "correlation-id " correlation-id " state " state)
   (-> buff
      (.writeShort (short API_KEY_FETCH_REQUEST))
      (.writeShort (short API_VERSION))
