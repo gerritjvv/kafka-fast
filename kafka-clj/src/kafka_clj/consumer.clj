@@ -102,20 +102,22 @@
   (let [{:keys [offset-commit-freq] :or {offset-commit-freq 5000}} conf
         ch (chan 100)]
     
-    (go 
-      (loop [t (timeout offset-commit-freq) state {}]
-          (let [[v c] (alts! [ch t])]
-            (if (= c ch)
-              (if (nil? v)
-                 (write-persister-data group-conn state) ;channel is closed
-		            (if (= c ch)
-		              (recur t (assoc state (clojure.string/join "/" [(:topic v) (:partition v)]) (inc (:offset v))))))
-               ;timeout
-              (do
-                (write-persister-data group-conn state)
-                  (recur (timeout offset-commit-freq)
-                         {}))))))
-    
+    (go
+      (try
+	      (loop [t (timeout offset-commit-freq) state {}]
+	          (let [[v c] (alts! [ch t])]
+	            (if (= c ch)
+	              (if (nil? v)
+	                 (write-persister-data group-conn state) ;channel is closed
+			            (if (= c ch)
+			              (recur t (assoc state (clojure.string/join "/" [(:topic v) (:partition v)]) (inc (:offset v))))))
+	               ;timeout
+	              (do
+	                (write-persister-data group-conn state)
+	                  (recur (timeout offset-commit-freq)
+	                         {})))))
+        (catch Exception e (error e e))))
+	    
     {:ch ch :p-close #(close! ch) :p-send #(>!! ch %)}))
                          
 (defn send-request-and-wait [producer group-conn topic-offsets msg-ch {:keys [fetch-timeout] :or {fetch-timeout 10000} :as conf}]
