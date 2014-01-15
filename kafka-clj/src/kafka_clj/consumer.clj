@@ -222,7 +222,7 @@
    Consume brokers and returns a list of lists that contains the last messages consumed, or -1 -2 where errors are concerned
    the data structure returned is {broker -1|-2|[{:offset o topic: a} {:offset o topic a} ... ] ...}
   "
-  ;(info "Consume brokers !!: "  broker-offsets)
+  (info "Consume brokers !!: "  broker-offsets)
   (try
     (doall (into {} (pmap #(vector (:broker %)  (consume-broker % group-conn (get broker-offsets (:broker %)) msg-ch conf)) producers)))
    (finally

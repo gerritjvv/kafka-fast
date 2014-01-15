@@ -51,7 +51,6 @@ One producer will be created per topic partition combination, each with its own 
 ;; read-response takes p and a timeout in milliseconds on timeout nil is returned
 ```
 
-
 # Benchmark Producer
 
 Environment:
@@ -82,11 +81,24 @@ Note: this is still very experimental
 
 ```clojure
 
-(use 'kafka-clj.fetch :reload)
-(def c (consumer [{:host "localhost" :port 9092}] ["ping"] {}))
+(require '[kafka-clj.consumer :refer [consume read-msg]])
 
-(while true (let [m (read-msg c)] (try (prn (String. (:bts m))) (catch Exception e (do)) (finally (mark-msg-processed c m)))))
+;create a consumer using localhost as the bootstrap brokers, you can provide more
+;read from the "ping" topic, again you can specify more topics here.
+;use-earliest true means that the consumer will start from the latest messages
+;locking group management and offsets are all saved in redis.the redis conf and options can be found at
+;https://github.com/gerritjvv/group-redis
+(def c (consumer [{:host "localhost" :port 9092}] ["ping"] {:use-earliest true :max-bytes 1073741824 :metadata-timeout 60000 :redis-conf {:redis-host "localhost" :heart-beat 10} }))
 
+;create a lazy sequence of messages
+(defn lazy-ch [c]
+  (lazy-seq (cons (read-msg c) (lazy-ch c))))
+
+;the messages returned are FetchMessage [topic partition ^bytes bts offset locked]
+
+(doseq [msg (take 10 (lazy-ch c))]
+  (prn (String. (:bts msg))))
+ 
 ```
 
 

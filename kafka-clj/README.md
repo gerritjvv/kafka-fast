@@ -1,10 +1,9 @@
 # kafka-clj
 
-A Clojure library designed to ... well, that part is up to you.
+Kakfa consumer producer api
 
 ## Usage
 
-FIXME
 
 ## License
 
