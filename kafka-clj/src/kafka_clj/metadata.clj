@@ -63,7 +63,7 @@
           (do 
             (send-update-metadata producer conf)
 	          ;wait for response or timeout
-            (prn "Wait for timeout ")
+            ;(prn "Wait for timeout ")
 	          (let [[v c] (alts!! [read-ch error-ch (timeout metadata-timeout)])]
 	             (if v
 	               (if (= c read-ch) (convert-metadata-response v)

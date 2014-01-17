@@ -95,10 +95,7 @@
   (persistent-set* group-conn (vec state)))
   
 (defn get-persister [group-conn conf]
-  "Returns an object that have functions p-close p-send, 
-   the offset saved will be incremented before its saved. 
-   This means we are saving to next offset to be read. 
-   The last offset read will is (dec v)"
+  "Returns an object that have functions p-close p-send"
   (let [{:keys [offset-commit-freq] :or {offset-commit-freq 5000}} conf
         ch (chan 100)]
     
@@ -110,7 +107,7 @@
 	              (if (nil? v)
 	                 (write-persister-data group-conn state) ;channel is closed
 			            (if (= c ch)
-			              (recur t (assoc state (clojure.string/join "/" [(:topic v) (:partition v)]) (inc (:offset v))))))
+			              (recur t (assoc state (clojure.string/join "/" [(:topic v) (:partition v)]) (:offset v)))))
 	               ;timeout
 	              (do
 	                (write-persister-data group-conn state)
@@ -121,30 +118,33 @@
     {:ch ch :p-close #(close! ch) :p-send #(>!! ch %)}))
                          
 (defn send-request-and-wait [producer group-conn topic-offsets msg-ch {:keys [fetch-timeout] :or {fetch-timeout 10000} :as conf}]
-  "Returns the messages, if any error was or timeout was detected the function returns otherwise it waits for a FetchEnd message
-   and returns. "
-
+  "Returns [the messages, and fetch errors], if any error was or timeout was detected the function returns otherwise it waits for a FetchEnd message
+   and returns. 
+  "
+  (info "send fetch " topic-offsets)
   (send-fetch producer (map (fn [[k v]] [k v]) topic-offsets))
 
+  
   (let [{:keys [p-close p-send]} (get-persister group-conn conf)
         {:keys [read-ch error-ch]} (:client producer)
         current-offsets (into {} (for [[topic v] topic-offsets
                                         msg   v]
                                       [#{topic (:partition msg)} (assoc msg :topic topic) ]))]
-    (loop [resp {}]
-       (let [[v c] (alts!! [read-ch error-ch (timeout fetch-timeout)])]
+    
+    (loop [resp {} fetch-errors [] t (timeout fetch-timeout)]
+       (let [[v c] (alts!! [read-ch error-ch t])]
 		    (if v
 		      (if (= c read-ch)
-		        (cond (instance? FetchEnd v) (do (p-close) (close-client (:client producer)) (vals resp))
+		        (cond (instance? FetchEnd v) (do (p-close) (close-client (:client producer)) [(vals resp) fetch-errors])
                   :else ;assume FetchMessage
                      (do
                        (if (instance? FetchError v)
                          (do
                            (error "Fetch error " v)
-                           (recur resp))
+                           (recur resp (conj fetch-errors v) (timeout fetch-timeout)))
                          
-                         (do 
-                           (let [k #{(:topic v) (:partition v)}
+                         (if-let [partition (:partition v)] 
+                           (let [k #{(:topic v) partition}
                              latest-offset (get-latest-offset k current-offsets resp)
                              new-msg? (or (> (:offset v) latest-offset) (= (:offset v) 0)) ]
 		                         (if new-msg?
@@ -153,24 +153,25 @@
 		                               (p-send v))
 		                            (error "Duplicate message " k " latest-offset " latest-offset " message offset " (:offset v)))
 		
-		                       (recur (if new-msg? (assoc resp k v) resp)))))))
-		        (do (p-close) (error "Error while requesting data from " producer " for topics " (keys topic-offsets)) (vals resp)))
+		                       (recur (if new-msg? (assoc resp k v) resp) fetch-errors (timeout fetch-timeout)))
+                           (error "No partition sent " v)
+                           ))))
+		        (do (p-close) (error "Error while requesting data from " producer " for topics " (keys topic-offsets)) [(vals resp) fetch-errors]))
 		        (do 
                 (p-close) 
                 (close-client (:client producer));we close to force a reconnect
-                (error "Timeout while requesting data from " producer " for topics " (keys topic-offsets)) (vals resp)))))))
+                (error "Timeout while requesting data from " producer " for topics " (keys topic-offsets)) [(vals resp) fetch-errors]))))))
 
 
 (defn consume-broker [producer group-conn topic-offsets msg-ch conf]
   "Send a request to the broker and waits for a response, error or timeout
    Then threads the call to the route-requests, and returns the result
-   The result returned can be either, the last messages consumed per topic and partition,
-   or -1 for error and -2 for timeout
+   Returns [messages, fetch-error]
    "
    (send-request-and-wait producer group-conn topic-offsets msg-ch conf))
 
 
-(defn transform-offsets [topic offsets-response {:keys [use-earliest] :or {use-earliest false}}]
+(defn transform-offsets [topic offsets-response {:keys [use-earliest] :or {use-earliest true}}]
    "Transforms [{:topic topic :partitions {:partition :error-code :offsets}}]
     to {topic [{:offset offset :partition partition}]}"
    (let [topic-data (first (filter #(= (:topic %) topic) offsets-response))
@@ -224,15 +225,15 @@
    Consume brokers and returns a list of lists that contains the last messages consumed, or -1 -2 where errors are concerned
    the data structure returned is {broker -1|-2|[{:offset o topic: a} {:offset o topic a} ... ] ...}
   "
-  (info "Consume brokers !!: "  broker-offsets)
   (try
-    (doall (into {} (pmap #(vector (:broker %)  (consume-broker % group-conn (get broker-offsets (:broker %)) msg-ch conf)) producers)))
+    (reduce 
+      (fn [[state errors] [broker [msgs msg-errors]]]
+         [(merge state {broker msgs}) (if (> (count msg-errors) 0) (apply conj errors msg-errors) errors)])
+          [{} []];initial value
+          (pmap #(vector (:broker %)  (consume-broker % group-conn (get broker-offsets (:broker %)) msg-ch conf)) 
+                  producers))
    (finally
      (info ">>>>>>>>>>>>>>>>>>>>> END CONSUME BROKERS!")))
-  )
-
-(defn broker-error? [v]
-  false
   )
 
 (defn update-broker-offsets [broker-offsets v]
@@ -243,11 +244,12 @@
   )
 
 
-(defn close-and-reconnect [bootstrap-brokers topic producers conf]
+(defn close-and-reconnect [bootstrap-brokers producers topic conf]
   (doseq [producer producers]
     (shutdown producer))
 
-  (if-let [metadata (get-metadata bootstrap-brokers topic)]
+  (info "close-and-reconnect: " bootstrap-brokers " topic " topic)
+  (if-let [metadata (get-metadata bootstrap-brokers conf)]
     (let [broker-offsets (doall (get-broker-offsets metadata topic conf))
           producers (doall (create-producers broker-offsets conf))]
       [producers broker-offsets])
@@ -268,7 +270,7 @@
   (coerce-long 
          (persistent-get group-conn (clojure.string/join "/" [topic partition]))))
 
-(defn- change-partition-lock [group-conn broker-offsets broker topic partition locked?]
+(defn change-partition-lock [group-conn broker-offsets broker topic partition locked?]
   "broker-offsets = {broker {topic [{:partition :offset :topic}]}}
    change the locked value of a partition
    returns the modified broker-offsets
@@ -276,21 +278,27 @@
    Any records that cannot be locked are removed from the map returned"
   (let [rest-records (get-rest-of-partitions broker topic partition broker-offsets)
            p-record (get-partition broker topic partition broker-offsets)
-           saved-offset (get-saved-offset group-conn topic partition)]
-      ;(info "change-partition-lock " broker-offsets " with p-record " p-record " locked? " locked? " saved-offset " saved-offset)
-      (if p-record (merge-with merge  {broker {topic 
-                                               (if locked?
+           saved-offset (inc (get-saved-offset group-conn topic partition))
+           ]
+      (if p-record (merge-with merge broker-offsets
+                                       {broker {topic 
+                                               (if (= locked? true)
 		                                               (conj rest-records (assoc p-record :locked locked?
 		                                                                                        :offset (if saved-offset saved-offset 
 		                                                                                                    (:offset p-record) ) ))
                                                    rest-records)}})
-        broker-offsets)))
+          (do
+            (error "Error no record found ")
+            broker-offsets)
+          
+        )))
 
     
 (defn calculate-locked-offsets [topic group-conn broker-offsets]
   "broker-offsets have format  {broker {topic [{:partition :offset :topic}]}}
    calculate which offsets should be consumed based on the locks and other members
    returns the broker-offsets marked as locked or not as locked."
+  
   (let [{:keys [add remove]} (get-partitions-to-lock topic broker-offsets (get-members group-conn))
 				broker-offsets1
 									    (loop [broker-offsets1 broker-offsets partitions add]
@@ -313,7 +321,8 @@
 								                   (change-partition-lock broker-offsets2 broker topic partition false)) 
 								                 (rest partitions)))
 								            broker-offsets2))]
-               
+          
+          
           ;(info "broker-offsets2 " broker-offsets2)
            ;only allow offsets with locked true, this is done automatically by the change-partition-lock function
           broker-offsets2
@@ -321,6 +330,18 @@
         ))
     
   
+(defn persist-error-offsets [group-conn broker-offsets errors conf]
+  (let [{:keys [p-close p-send]} (get-persister group-conn conf)
+        offsets (flatten-broker-partitions broker-offsets)]
+    (info "Updating offsets for errors " errors " using offsets " offsets)
+	  (doseq [{:keys [topic partition]} errors]
+     (if-let [record (first (filter #(and (= (:topic %) topic) (= (:partition %) partition)) offsets))]
+       (do
+         (info "updating " topic " " partition " to " record)
+         (p-send {:topic topic :partition partition :offset (:offset record)}))
+       (error "The record " topic " " partition " cannot be found in " offsets)))
+    (p-close)))
+     
 (defn consume-producers! [bootstrap-brokers
                           group-conn
                           producers topic broker-offsets-p msg-ch {:keys [fetch-poll-ms] :or {fetch-poll-ms 10000} :as conf}]
@@ -330,11 +351,16 @@
 
   (loop [producers producers broker-offsets1 broker-offsets-p]
       ;v is [broker data]
-		  (let [v (consume-brokers! producers group-conn (calculate-locked-offsets  topic group-conn broker-offsets1) msg-ch conf)]
-		    (if (broker-error? v)
+		  (let [q (consume-brokers! producers group-conn (calculate-locked-offsets  topic group-conn broker-offsets1) msg-ch conf)]
+       (let [[v errors] q]
+		    (if (> (count errors) 0)
 		      (do
-		         (info "Error close and reconnect")
+		         (info "Error close and reconnect1: " errors)
+             (info "---- " v)
 		         (let [[producers broker-offsets] (close-and-reconnect bootstrap-brokers producers topic conf)]
+                ;;here we need to delete the offsets that have had errors from the storage
+                ;;or better yet set them to storage
+                (persist-error-offsets group-conn broker-offsets errors conf)
 		            (recur producers broker-offsets)))
 		      (do
              (if (nil?  (second v)) ; if we were reading data, no need to pause
@@ -342,7 +368,7 @@
              
              (recur producers (update-broker-offsets broker-offsets1 v))))
 
-		      )))
+		      ))))
 
 (defn consume [bootstrap-brokers group-conn msg-ch topic conf]
   "Entry point for topic consumption,

@@ -4,6 +4,8 @@
             [kafka-clj.produce :refer [producer send-messages message shutdown]]
             [kafka-clj.metadata :refer [get-metadata]]
             [clojure.tools.logging :refer [error info]]
+            [fun-utils.core :refer [fixdelay apply-get-create]]
+            
             [reply.main]
             [clojure.core.async :refer [chan >! >!! go-loop] :as async])
   (:import [java.util.concurrent.atomic AtomicInteger]))
@@ -56,14 +58,25 @@
    A map with keys :producer ch-source and buff-ch is returned"
   (let [producer (producer host port conf)
         ch-source (chan 100)
+        read-ch (-> producer :client :read-ch)
         buff-ch (buffered-chan ch-source batch-num-messages queue-buffering-max-ms 10)]
+    
+    ;TODO in this loop we can handle produce responses
+    ;check and tests for any errors
+    (go-loop []
+             (if-let [v (<! read-ch)]
+               (if (> (:error-code v) 0)
+                 (error (str "Error producing " v)))
+               
+               ))
+    
     (go-loop []
         (if-let [v (<! buff-ch)]
              (do
                (if (> (count v) 0) 
                  (do
                    ;(prn "Sending buffered messages " v)
-                   (try (send-messages producer {} v) (catch Exception e (.printStackTrace e)))))
+                   (try (send-messages producer {} v) (catch Exception e (error e e)))))
                 (recur))))
     
     {:producer producer
@@ -102,16 +115,18 @@
 
    
 (defn create-connector [bootstrap-brokers conf]
-  (let [brokers-metadata (ref {})
+  (let [brokers-metadata (ref (get-metadata bootstrap-brokers conf))
         state {:producers-ref (ref {})
                :brokers-metadata brokers-metadata
                :topic-partition-ref (ref {})
                :conf conf}]
-    ;start metadata scanning
-    ;(track-broker-partitions bootstrap-brokers brokers-metadata 5000 conf)
-    ;block till some data appears in the brokers-metadata
-    
-         
+
+    ;start periodic metadata scanning
+    (fixdelay 5000
+              (try
+                (dosync (alter brokers-metadata (fn [x]
+                                            (get-metadata bootstrap-brokers conf))))
+                (catch Exception e (error e e))))
     
     {:bootstrap-brokers bootstrap-brokers
      :state state}

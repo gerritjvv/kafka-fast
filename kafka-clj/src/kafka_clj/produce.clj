@@ -171,7 +171,6 @@
 
 (defn metadata-request-producer [host port conf]
   "Returns a producer with a metadata-response-decoder set"
-  (prn "try metadata producer " host ":" port)
   (try 
   (let [c (client host port (merge conf 
                                    {:reuse-client true :handlers [

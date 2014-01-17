@@ -5,7 +5,12 @@
            [io.netty.handler.codec ByteToMessageDecoder ReplayingDecoder]
            [io.netty.buffer ByteBuf]
            [java.util List]
+           [kafka_clj.util SafeReplayingDecoder ProduceStates]
+           [java.util.concurrent.atomic AtomicInteger AtomicReference]
            ))
+
+(defrecord ResponseEnd [])
+(defrecord ProduceResponse [correlation-id topic partition error-code offset])
 
 (defn error? [error-code]
   (> error-code 0))
@@ -26,37 +31,6 @@
 	                        11 "StaleControllerEpochCode"
 	                        12 "OffsetMetadataTooLargeCode"
 	                        })
-
-    
-
-(defn read-produce-response [^ByteBuf in]
-  "
-  RequestOrResponse => Size (RequestMessage | ResponseMessage)
-    Size => int32
-
-   Response => CorrelationId ResponseMessage
-    CorrelationId => int32
-    ResponseMessage => MetadataResponse | ProduceResponse | FetchResponse | OffsetResponse | OffsetCommitResponse | OffsetFetchResponse
-
-   ProduceResponse => [TopicName [Partition ErrorCode Offset]]
-	  TopicName => string
-	  Partition => int32
-	  ErrorCode => int16
-	  Offset => int64
-  "
-  (let [size (.readInt in)                                ;request size int
-				              correlation-id (.readInt in)                      ;correlation id int
-				              topic-count (.readInt in)]                        ;topic array count int
-				          (doall ;we must force the operation here
-				              (for [i (range topic-count)]                   
-						            (let [topic (read-short-string in)]                 ;topic name has len=short string bytes
-						              {:topic topic
-						               :partitions (let [partition-count (.readInt in)] ;read partition array count int
-						                             (for [q (range partition-count)]
-						                               {:partition (.readInt in)        ;read partition int
-						                                :error-code (.readShort in)     ;read error code short
-						                                :offset (.readLong in)}))       ;read offset long
-						               })))))
 
 (defn read-metadata-response [^ByteBuf in]
   "
@@ -127,18 +101,101 @@
              (catch Exception e (error e e)))
         )))
 			        
+			        
+    
+(defn transform [state state-transformers out]
+  (let [t ((get state-transformers state) out)]
+    t))
 
+(defn checkpoint [^SafeReplayingDecoder decoder s]
+  (.checkp decoder s))
+
+(defn state [^SafeReplayingDecoder decoder]
+  (.getState decoder))
+
+
+
+ 
 (defn produce-response-decoder []
   "
    A handler that reads produce responses
  
    "
-  (proxy [ReplayingDecoder]
-    ;decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out)
-    []
-    (decode [ctx ^ByteBuf in ^List out] 
-			      (.add out
-					        (read-produce-response in))
-        )))
+  (let [initial-state ProduceStates/PRODUCE_RESPONSE
+        topic-len (AtomicInteger. 0)
+        partition-len (AtomicInteger. 0)
+        topic-name (AtomicReference. nil)
+        correlation-id (AtomicReference. nil)
+        end-of-consume (fn [^List out]
+                         (.add out (->ResponseEnd))
+                         ProduceStates/PRODUCE_RESPONSE)
+        
+        decrement-partition! (fn [] 
+                               (if (= (.getAndDecrement partition-len) 1)
+                                 (.getAndDecrement topic-len)))
+        transform-messages (fn [out]
+                                                       (cond 
+                                                            (and (= (.get partition-len) 0)
+                                                                 (= (.get topic-len) 0))
+                                                            (end-of-consume out)
+                                                       
+                                                            (and (= (.get partition-len) 0)
+                                                                 (> (.get topic-len) 0))
+                                                            ProduceStates/TOPIC
+                                                            (> (.get partition-len) 0)
+                                                            ProduceStates/PARTITION
+                                                            
+                                                            :else ProduceStates/PARTITION))
+        state-transformers {
+                            ProduceStates/PRODUCE_RESPONSE (fn [out]
+                                                             (if (> (.get topic-len) 0)
+                                                                ProduceStates/TOPIC
+                                                                (end-of-consume out)))
+                                                             
+                            ProduceStates/TOPIC            transform-messages
+                            ProduceStates/PARTITION        transform-messages
+                                                             
+                            }
+        ]
+    
+	  (proxy [SafeReplayingDecoder]
+	    ;decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out)
+	    [initial-state]
+	    (decode [ctx ^ByteBuf in ^List out] 
+	          (let [state (state this)]
+	            (cond 
+	              
+	              (= state ProduceStates/PRODUCE_RESPONSE)
+	              (let [size (.readInt in)
+                     corr-id (.readInt in)]
+                 
+                 (.set correlation-id corr-id)
+                 (.set topic-len (.readInt in))
+                 (checkpoint this (transform ProduceStates/PRODUCE_RESPONSE state-transformers out)))
+               
+                (= state ProduceStates/TOPIC)
+	              (do
+                 (.set topic-name (read-short-string in))
+                 (.set partition-len (.readInt in))
+                 
+                 (checkpoint this (transform ProduceStates/TOPIC state-transformers out)))
+               
+                
+	              (= state ProduceStates/PARTITION)
+	              (let [partition (.readInt in)
+                      error-code (.readShort in)
+                      offset (.readLong in)]
+                 
+                 (decrement-partition!)
+                 
+                 (.add out
+                      (->ProduceResponse (.get correlation-id) (.get topic-name) 
+                                         partition error-code offset))
+                 (checkpoint this (transform ProduceStates/PARTITION state-transformers out)))
+               
+	              :else 
+	                  (throw (RuntimeException. (str "The state " state " is not excepted")))))
+	             
+	        ))))
 			                   
           
