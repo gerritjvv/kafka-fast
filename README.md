@@ -81,7 +81,7 @@ Note: this is still very experimental
 
 ```clojure
 
-(require '[kafka-clj.consumer :refer [consume read-msg]])
+(require '[kafka-clj.consumer :refer [consumer read-msg]])
 
 ;create a consumer using localhost as the bootstrap brokers, you can provide more
 ;read from the "ping" topic, again you can specify more topics here.

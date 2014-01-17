@@ -4,7 +4,8 @@
             [kafka-clj.codec :refer [uncompress crc32-int]]
             [clj-tuple :refer [tuple]])
   (:import [io.netty.buffer ByteBuf Unpooled PooledByteBufAllocator]
-           [io.netty.handler.codec ByteToMessageDecoder ReplayingDecoder]
+           [io.netty.handler.codec ByteToMessageDecoder ReplayingDecoder ]
+           [io.netty.channel ChannelInboundHandlerAdapter]
            [java.util List]
            [java.util.concurrent.atomic AtomicInteger AtomicLong AtomicReference]
            [kafka_clj.util Util FetchStates SafeReplayingDecoder]))
@@ -41,10 +42,11 @@
        (let [offset (.readLong in)
              message-size (.readInt in)
              arr (byte-array message-size)
-             _ (.readBytes in arr)]
+             _ (.readBytes in arr)
+             msg (read-message (Unpooled/wrappedBuffer arr))]
 		        {:offset offset
 		         :message-size message-size
-		         :message (read-message (Unpooled/wrappedBuffer arr))
+		         :message msg
               ;(read-message in)
            }))
 
@@ -103,6 +105,16 @@
     ;(info "from " state " -> " t)
     t))
 
+(defn bytes-read-status-handler []
+  (proxy [ChannelInboundHandlerAdapter]
+    []
+    (channelRead [ctx bts]
+      (if (instance? ByteBuf bts)
+        (info "channelRead " (.readableBytes ^ByteBuf bts))
+        (info "channelRead " bts))
+       (proxy-super channelRead ctx bts)
+       )))
+      
 (defn fetch-response-decoder []
   "
    A handler that reads fetch request responses
@@ -122,7 +134,7 @@
         resp-start-index (AtomicInteger. 0)
         end-of-consume (fn [^List out o ^ByteBuf in]
                          (.add out (->FetchEnd))
-                         
+
                          (let [index (.readerIndex in)
                                diff (- index (.get resp-start-index))
                                size (.get resp-size)]
@@ -158,6 +170,7 @@
                                                        )
         state-transformers {FetchStates/READ_MESSAGES transform-messages
                             FetchStates/READ_MESSAGE  transform-messages
+	                                                                     
                             FetchStates/PARTIAL_MESSAGE  transform-messages
                             
                             FetchStates/READ_MESSAGE_SET (fn [out o in]
@@ -175,8 +188,8 @@
 	    ;decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out)
 	    [initial-state]
 	    (decode [ctx ^ByteBuf in ^List out]
-
 	      (let [state (state this)]
+         ;(info "state " state)
          ;(info state " " (.get correlation-id-name)  " [" (.get topic-len) "] " (.get topic-name)  " [" (.get partition-len) "] " (.get partition-name) " " (.get offset-name)) 
 	        (cond
 	          (= state FetchStates/REQUEST_RESPONSE)
@@ -233,6 +246,7 @@
                (.set message-set-size (.readInt in))
                (.set fixed-message-set-size (.get message-set-size))
                
+               ;(info "message-set-size " (.get message-set-size))
                (if (= (.get message-set-size) 0)
                  (decrement-partition!))
                
@@ -274,7 +288,7 @@
                  
                  ;(info "calling checkpoint ")
                  (let [t (transform FetchStates/READ_MESSAGE state-transformers out this in)]
-                   ;(info "checkpoint " t)
+                   
                    (checkpoint this t))
                    
 

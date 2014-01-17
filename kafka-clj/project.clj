@@ -24,7 +24,7 @@
                  [org.clojure/tools.trace "0.7.6"]
                  [org.iq80.snappy/snappy "0.3"]
                  [org.clojure/tools.logging "0.2.6"]
-                 [clj-tcp "0.2.14-SNAPSHOT"]
+                 [clj-tcp "0.2.15-SNAPSHOT"]
                  [fmap-clojure "0.1.1"]
                  [fun-utils "0.2.4"]
                  [clj-tuple "0.1.4"]

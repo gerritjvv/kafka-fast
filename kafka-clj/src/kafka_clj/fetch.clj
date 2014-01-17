@@ -7,16 +7,18 @@
             [kafka-clj.codec :refer [uncompress crc32-int]]
             [kafka-clj.metadata :refer [get-metadata]]
             [kafka-clj.buff-utils :refer [write-short-string with-size read-short-string read-byte-array codec-from-attributes]]
-            [kafka-clj.fetch-codec :refer [fetch-response-decoder]]
+            [kafka-clj.fetch-codec :refer [fetch-response-decoder bytes-read-status-handler]]
             [kafka-clj.produce :refer [API_KEY_FETCH_REQUEST API_KEY_OFFSET_REQUEST API_VERSION MAGIC_BYTE]]
             [clojure.core.async :refer [go >! <! chan <!! alts!! timeout]])
   (:import [io.netty.buffer ByteBuf Unpooled PooledByteBufAllocator]
            [io.netty.handler.codec ByteToMessageDecoder ReplayingDecoder]
+           [io.netty.channel ChannelOption]
            [java.util List]
-           [kafka_clj.util Util]))
+           [kafka_clj.util Util]
+           [io.netty.channel.nio NioEventLoopGroup]))
 
 (defn ^ByteBuf write-fecth-request-message [^ByteBuf buff {:keys [max-wait-time min-bytes topics max-bytes]
-                                          :or { max-wait-time 1000 min-bytes 1 max-bytes 1073741824}}]
+                                          :or { max-wait-time 1000 min-bytes 1 max-bytes 314572800}}]
   "FetchRequest => ReplicaId MaxWaitTime MinBytes [TopicName [Partition FetchOffset MaxBytes]]  ReplicaId => int32  MaxWaitTime => int32  MinBytes => int32  TopicName => string  Partition => int32  FetchOffset => int64  MaxBytes => int32"
   ;(info "min-bytes " min-bytes " max-wait-time " max-wait-time)
   (-> buff
@@ -273,7 +275,7 @@
                                    ;;parameters that can be over written
 			                             {
                                    :reuse-client true 
-                                   :read-buff 1
+                                   :read-buff 100
                                    }
                                    conf
                                    ;parameters tha cannot be overwritten
@@ -290,16 +292,27 @@
   ([{:keys [host port]} conf]
     (create-fetch-producer host port conf))
   ([host port conf]
-    (let [c (client host port (merge  
+    (let [
+          read-group (NioEventLoopGroup. )
+          write-group read-group
+          c (client host port (merge  
                                    ;;parameters that can be over written
 			                             {
+                                   :read-group read-group
+                                   :write-group write-group
                                    :reuse-client true 
-                                   :read-buff 1
+                                   :read-buff 100
+                                   ;setting default options for big data fetch
+                                   ;5mb tcp receive buffer and tcp nodelay off
+                                   :channel-options [
+                                                     [ChannelOption/TCP_NODELAY false]
+                                                     [ChannelOption/SO_RCVBUF (int (* 1048576 10))] ] 
                                    }
                                    conf
                                    ;parameters tha cannot be overwritten
                                    {
 			                             :handlers [
+                                                                 ;bytes-read-status-handler
 			                                                           fetch-response-decoder
 			                                                           default-encoder 
 			                                                           ]}))]

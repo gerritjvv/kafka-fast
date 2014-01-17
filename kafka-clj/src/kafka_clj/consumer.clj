@@ -121,21 +121,22 @@
   "Returns [the messages, and fetch errors], if any error was or timeout was detected the function returns otherwise it waits for a FetchEnd message
    and returns. 
   "
-  (info "send fetch " topic-offsets)
+  (info "send fetch " (:broker producer) " "  (map (fn [[k v]] [k v]) topic-offsets))
   (send-fetch producer (map (fn [[k v]] [k v]) topic-offsets))
 
   
-  (let [{:keys [p-close p-send]} (get-persister group-conn conf)
+  (let [
+        {:keys [p-close p-send]} (get-persister group-conn conf)
         {:keys [read-ch error-ch]} (:client producer)
         current-offsets (into {} (for [[topic v] topic-offsets
                                         msg   v]
                                       [#{topic (:partition msg)} (assoc msg :topic topic) ]))]
     
     (loop [resp {} fetch-errors [] t (timeout fetch-timeout)]
-       (let [[v c] (alts!! [read-ch error-ch t])]
+      (let [[v c] (alts!! [read-ch error-ch t])]
 		    (if v
 		      (if (= c read-ch)
-		        (cond (instance? FetchEnd v) (do (p-close) (close-client (:client producer)) [(vals resp) fetch-errors])
+		        (cond (instance? FetchEnd v) (do (p-close) [(vals resp) fetch-errors])
                   :else ;assume FetchMessage
                      (do
                        (if (instance? FetchError v)
@@ -152,15 +153,17 @@
 		                               (>!! msg-ch v)
 		                               (p-send v))
 		                            (error "Duplicate message " k " latest-offset " latest-offset " message offset " (:offset v)))
-		
+                           
 		                       (recur (if new-msg? (assoc resp k v) resp) fetch-errors (timeout fetch-timeout)))
                            (error "No partition sent " v)
                            ))))
 		        (do (p-close) (error "Error while requesting data from " producer " for topics " (keys topic-offsets)) [(vals resp) fetch-errors]))
 		        (do 
                 (p-close) 
-                (close-client (:client producer));we close to force a reconnect
-                (error "Timeout while requesting data from " producer " for topics " topic-offsets) [(vals resp) fetch-errors]))))))
+                (error "Timeout while requesting data from " (:broker producer) " read messages: " resp) [(vals resp) fetch-errors]))))
+    
+    
+    ))
 
 
 (defn consume-broker [producer group-conn topic-offsets msg-ch conf]
@@ -168,7 +171,12 @@
    Then threads the call to the route-requests, and returns the result
    Returns [messages, fetch-error]
    "
-   (send-request-and-wait producer group-conn topic-offsets msg-ch conf))
+   (try
+      (send-request-and-wait producer group-conn topic-offsets msg-ch conf)
+      (catch Exception e (error e e))
+      (finally (do
+                 (info ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> end consume-broker " (:broker producer) " <<<<<<<<<<<<<<<<<<<<<<<<")
+                 ))))
 
 
 (defn transform-offsets [topic offsets-response {:keys [use-earliest] :or {use-earliest true}}]
@@ -188,9 +196,9 @@
   "returns [{:topic topic :partitions {:partition :error-code :offsets}}]"
   ;we should send format [[topic [{:partition 0} {:partition 1}...]] ... ]
    (send-offset-request offset-producer [[topic (map (fn [x] {:partition x}) partitions)]] )
+   
    (let [{:keys [offset-timeout] :or {offset-timeout 10000}} (:conf offset-producer)
          {:keys [read-ch error-ch]} (:client offset-producer)
-
          [v c] (alts!! [read-ch error-ch (timeout offset-timeout)])
          ]
      (if v
@@ -278,13 +286,13 @@
    Any records that cannot be locked are removed from the map returned"
   (let [rest-records (get-rest-of-partitions broker topic partition broker-offsets)
            p-record (get-partition broker topic partition broker-offsets)
-           saved-offset (inc (get-saved-offset group-conn topic partition))
+           saved-offset (get-saved-offset group-conn topic partition)
            ]
       (if p-record (merge-with merge broker-offsets
                                        {broker {topic 
                                                (if (= locked? true)
 		                                               (conj rest-records (assoc p-record :locked locked?
-		                                                                                        :offset (if saved-offset saved-offset 
+		                                                                                        :offset (if saved-offset (inc saved-offset) 
 		                                                                                                    (:offset p-record) ) ))
                                                    rest-records)}})
           (do
