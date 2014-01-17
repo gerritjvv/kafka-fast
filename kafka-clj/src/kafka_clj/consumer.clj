@@ -117,7 +117,7 @@
 	    
     {:ch ch :p-close #(close! ch) :p-send #(>!! ch %)}))
                          
-(defn send-request-and-wait [producer group-conn topic-offsets msg-ch {:keys [fetch-timeout] :or {fetch-timeout 10000} :as conf}]
+(defn send-request-and-wait [producer group-conn topic-offsets msg-ch {:keys [fetch-timeout] :or {fetch-timeout 30000} :as conf}]
   "Returns [the messages, and fetch errors], if any error was or timeout was detected the function returns otherwise it waits for a FetchEnd message
    and returns. 
   "
@@ -160,7 +160,7 @@
 		        (do 
                 (p-close) 
                 (close-client (:client producer));we close to force a reconnect
-                (error "Timeout while requesting data from " producer " for topics " (keys topic-offsets)) [(vals resp) fetch-errors]))))))
+                (error "Timeout while requesting data from " producer " for topics " topic-offsets) [(vals resp) fetch-errors]))))))
 
 
 (defn consume-broker [producer group-conn topic-offsets msg-ch conf]
