@@ -12,8 +12,7 @@
             [clojure.core.async :refer [<!! >!! alts!! timeout chan go >! <! close!]])
   (:import [kafka_clj.fetch_codec FetchMessage FetchError FetchEnd]))
 
-
-
+             
  ;------- partition lock and release api
 
 (defn- flatten-broker-partitions [broker-offsets]

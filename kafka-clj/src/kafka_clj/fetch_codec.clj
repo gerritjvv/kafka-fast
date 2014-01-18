@@ -102,7 +102,7 @@
 
 (defn transform [state state-transformers out o in]
   (let [t ((get state-transformers state) out o in)]
-    ;(info "from " state " -> " t)
+    ;(spit "/tmp/fetc-codec.txt" (str "from " state " -> " t "\n") :append true)
     t))
 
 (defn bytes-read-status-handler []
@@ -134,7 +134,7 @@
         resp-start-index (AtomicInteger. 0)
         end-of-consume (fn [^List out o ^ByteBuf in]
                          (.add out (->FetchEnd))
-
+                         (info "end of consume")
                          (let [index (.readerIndex in)
                                diff (- index (.get resp-start-index))
                                size (.get resp-size)]
@@ -171,7 +171,13 @@
         state-transformers {FetchStates/READ_MESSAGES transform-messages
                             FetchStates/READ_MESSAGE  transform-messages
 	                                                                     
-                            FetchStates/PARTIAL_MESSAGE  transform-messages
+                            FetchStates/PARTIAL_MESSAGE (fn [out o in]
+                                                          
+                                                          ;(spit "/tmp/fetc-codec.txt" (str "partition-len " (.get partition-len)
+                                                           ;                                " topic-len " (.get topic-len)
+                                                            ;                               " message-set-size " (.get message-set-size)
+                                                             ;                              "\n") :append true)
+                                                          (transform-messages out o in))
                             
                             FetchStates/READ_MESSAGE_SET (fn [out o in]
                                                               (cond 
@@ -194,18 +200,20 @@
 	        (cond
 	          (= state FetchStates/REQUEST_RESPONSE)
 	          (let [size (.readInt in)]
-	           (.set resp-size (int size)) 
+	           (.set resp-size (int (- size 4))) 
              (.set resp-start-index (.readerIndex in))
              (checkpoint this FetchStates/RESPONSE))
 
 	          (= state FetchStates/RESPONSE)
 	          (let [correlation-id (.readInt in)]
               (.set correlation-id-name correlation-id)
+              (.getAndAdd resp-size -4)
               (checkpoint this FetchStates/FETCH_RESPONSE))
 
 	          (= state FetchStates/FETCH_RESPONSE) ;FetchResponse => [TopicName [Partition ErrorCode HighwaterMarkOffset MessageSetSize MessageSet]]
 	          (let [topic-count (.readInt in)]
 	            (.set topic-len topic-count)
+              (.getAndAdd resp-size -4)
               (if (= topic-count 0)
                 (checkpoint this (end-of-consume out this in))
                 (checkpoint this FetchStates/READ_TOPIC)))
@@ -216,6 +224,8 @@
               (if (> (.get topic-len) 0)
 		          (let [topic (read-short-string in)
 		                partition-count (.readInt in)]
+                  (.getAndAdd resp-size (* -1 (+ (count (.getBytes topic)) 4)))
+                  
 		              (.set partition-len partition-count)
 			            (.set topic-name topic)
 	                (checkpoint this FetchStates/READ_PARTITION))
@@ -228,6 +238,7 @@
                   error-code (.readShort in)
                   high-water-mark-offset (.readLong in)]
                 (.set partition-name partition)
+                (.getAndAdd resp-size -14)
                 (checkpoint this FetchStates/READ_MESSAGES)
                 (if (> error-code 0) (.add out (create-fetch-error (.get topic-name) partition error-code))))
               (do
@@ -236,8 +247,11 @@
             (= state FetchStates/PARTIAL_MESSAGE)
             (do 
               ;read partial message and decrement partition
-              (info "READ PARTIAL MESSAGE left; " (.get message-set-size))
+              (info "READ PARTIAL MESSAGE left; " (.get message-set-size)  " resp size " (.get resp-size))
               (.skipBytes in (int (.get message-set-size)))
+              
+              (decrement-partition!)
+              
               (checkpoint this (transform FetchStates/PARTIAL_MESSAGE state-transformers out this in))
               )
             
@@ -245,7 +259,7 @@
             (do
                (.set message-set-size (.readInt in))
                (.set fixed-message-set-size (.get message-set-size))
-               
+               (.getAndAdd resp-size -4)
                ;(info "message-set-size " (.get message-set-size))
                (if (= (.get message-set-size) 0)
                  (decrement-partition!))
@@ -261,8 +275,8 @@
 
                 (.set message-size (.readInt in))
 	              (.set offset-name offset)
-               
-                ;(info "READ_MESSAGE_SET message-size " message-size " offset " offset " message-set-size " (.get message-set-size))
+                (.getAndAdd resp-size -12)
+                ;(spit "/tmp/fetc-codec.txt" (str "READ_MESSAGE_SET message-size " message-size " offset " offset " message-set-size " (.get message-set-size) " resp size " (.get resp-size) "\n") :append true)
                 (.getAndAdd message-set-size -12) ;decrement message set size by 12 bytes
                 ;(info "READ_MESSAGE_SET message-set-size -12 " (.get message-set-size))
                 
@@ -282,6 +296,7 @@
                ;(info "complete read message bytes")
                (let [bts-read (- (.readerIndex in) reader-start)]
                  (.getAndAdd  message-set-size (* -1 bts-read))
+                 (.getAndAdd resp-size (* -1 bts-read))
                  
                  (if (< (.get message-set-size) 1)
                    (decrement-partition!))
