@@ -10,103 +10,60 @@
        
       (fact "Test write fetch request"
              (let [buff (Unpooled/buffer 1024)]
-               (write-fetch-request buff {:topics {"a" [{:partition 1 :offset 100}]}})
+               (write-fetch-request buff {:topics [["raw-requests-adx" [{:offset 0, :error-code 0, :locked true, :partition 7} 
+                                                                        {:offset 0, :error-code 0, :locked true, :partition 5} 
+                                                                        {:offset 0, :error-code 0, :locked true, :partition 3}]]]})
                
                "RequestMessage => ApiKey ApiVersion CorrelationId ClientId RequestMessage
-								ApiKey => int16
-								ApiVersion => int16
-								CorrelationId => int32
-								ClientId => string"
-               
-               (.readInt buff) => 54 ;size
-               (.readShort buff) => 1  ;api
-               (.readShort buff) => 0  ;version
-               (.readInt buff) => 1  ;default is 1 correlation id
-               (read-short-string buff) => "1" ;client id
-               
-               "FetchRequest => ReplicaId MaxWaitTime MinBytes [TopicName [Partition FetchOffset MaxBytes]]
-							  ReplicaId => int32
-							  MaxWaitTime => int32
-							  MinBytes => int32
-							  TopicName => string
-							  Partition => int32
-							  FetchOffset => int64
-							  MaxBytes => int32"
-               (.readInt buff) => -1 ;replica id is always -1 for a client
-               (.readInt buff) => 1000 ;max wait time, default is 1000
-               (.readInt buff) => 1    ;min bytes default 1
-               (.readInt buff) => 1    ;read topic array count
-               (read-short-string buff) => "a" ;topic name
-               (.readInt buff) => 1    ;partition array count
-               (.readInt buff) => 1    ;partition
-               (.readLong buff) => 100 ;offset
-               (.readInt buff)  => (Integer/MAX_VALUE) ; max bytes
-                    
-               
+                  ApiKey => int16
+  ApiVersion => int16
+  CorrelationId => int32
+  ClientId => string
+  RequestMessage => MetadataRequest | ProduceRequest | FetchRequest | OffsetRequest | OffsetCommitRequest | OffsetFetchRequest
+   FetchRequest
+
+FetchRequest => ReplicaId MaxWaitTime MinBytes [TopicName [Partition FetchOffset MaxBytes]]
+  ReplicaId => int32
+  MaxWaitTime => int32
+  MinBytes => int32
+  TopicName => string
+  Partition => int32
+  FetchOffset => int64
+  MaxBytes => int32
+   "
+                
+                (prn ">>>>>>> len: " (.readInt buff))
+                (prn ">>>>>>> apikey: " (.readShort buff))
+                (prn ">>>>>>> api-version: " (.readShort buff))
+                (prn ">>>>>>> corrid: " (.readInt buff))
+                (prn ">>>>>>> cid: " (read-short-string buff))
+                 
+                (.readInt buff) => -1
+                (prn ">>> max wait time " (.readInt buff))
+                (prn ">>> min bytes " (.readInt buff))
+                (prn "topics " (.readInt buff))
+                (prn "topic " (read-short-string buff))
+                (let [partition-len (.readInt buff)]
+                  partition-len => 3
+                  (.readInt buff) => 7
+                  (.readLong buff) => 0
+                  (.readInt  buff)
+                  
+                  (.readInt buff) => 5
+                  (.readLong buff) => 0
+                  (.readInt  buff)
+                  
+                  (.readInt buff) => 3
+                  (.readLong buff) => 0
+                  (.readInt  buff)
+                  
+                  )
+                (prn "Reabable bytes " (.readableBytes buff))
+                
+                
+              
                )
              
              )
        
-       (fact "Read fetch request response from the message-set start"
-             (let [buff (Unpooled/buffer 1024)]
-               ;(defn write-request [^ByteBuf buff {:keys [correlation-id client-id codec acks timeout] :or {correlation-id 1 client-id "1" codec 0 acks 1 timeout 1000}}
-                    ; msgs]
-               (produce/write-request buff {:codec 0} [{:topic "mytopic" :partition 0 :bts (.getBytes "Hi")} {:topic "mytopic" :partition 0 :bts (.getBytes "Hi")}])
-               
-               (doto buff
-                 (.readShort) ;api key produce
-                 (.readShort) ;api version
-                 (.readInt)   ;read correlation id
-                 (read-short-string) ;read client id
-                 (.readShort) ;acks
-                 (.readInt)   ;timeout
-                 )
-               
-               "ProduceRequest => RequiredAcks Timeout [TopicName [Partition MessageSetSize MessageSet]]"
-               (prn "Done")
-               (prn "Topic count " (.readInt buff))
-               (prn "Topic " (read-short-string buff))
-               (prn "Partition count " (.readInt buff))
-               (prn "Size " (.readInt buff))
-               (let [msgs (read-messages buff)]
-                 (count msgs) => 2
-                 (doseq [{:keys [offset message-size message]} msgs]
-                        (doseq [{:keys [crc key bts]} message]
-                          (String. bts) => "Hi")))
-                          
-                          
-                                      
-             ))
-       
-       (fact "Read fetch request response from the message-set start with compressed messages"
-             (let [buff (Unpooled/buffer 1024)]
-               (produce/write-request buff {:codec 1} [{:topic "mytopic" :partition 0 :bts (.getBytes "Hi")} {:topic "mytopic" :partition 0 :bts (.getBytes "Ho")}])
-               (prn "Writer index " (.writerIndex buff))
-               
-               (doto buff
-                 (.readShort) ;api key produce
-                 (.readShort) ;api version
-                 (.readInt)   ;read correlation id
-                 (read-short-string) ;read client id
-                 (.readShort) ;acks
-                 (.readInt)   ;timeout
-                 )
-               
-               "ProduceRequest => RequiredAcks Timeout [TopicName [Partition MessageSetSize MessageSet]]"
-               (prn "Done")
-               (prn "Topic count " (.readInt buff))
-               (prn "Topic " (read-short-string buff))
-               (prn "Partition count " (.readInt buff))
-               (prn "Size " (.readInt buff))
-               (let [msgs (read-messages buff)]
-                 (prn "msgs " msgs)
-                 (count msgs) => 1
-                 (doseq [{:keys [offset message-size message]} msgs]
-                   (doseq [{:keys [crc key bts]} message]
-                     (String. bts) => (fn [x] (or (= x "Hi") (= x "Ho")))
-                        ))
-                 
-                 )
-               
-                                      
-             )))
+       )

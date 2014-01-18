@@ -26,12 +26,14 @@
     (.writeInt (int max-wait-time))
     (.writeInt (int min-bytes))
     (.writeInt (int (count topics)))) ;write topic array count
-    
+    (prn "topics " topics)
    (doseq [[topic partitions] topics]
+      (prn "topic " topic " partitions "partitions)
 	    (-> buff
        ^ByteBuf (write-short-string topic)
        (.writeInt (count partitions))) ;write partition array count
       (doseq [{:keys [partition offset]} partitions];default max-bytes 500mb
+        (prn "write " partition " " offset)
 		    (-> buff
         (.writeInt (int partition))
 		    (.writeLong offset)
@@ -49,7 +51,7 @@
   ClientId => string
   RequestMessage => FetchRequestMessage
   "
-  ;(info "correlation-id " correlation-id " state " state)
+  (info "correlation-id " correlation-id " state " state)
   (-> buff
      (.writeShort (short API_KEY_FETCH_REQUEST))
      (.writeShort (short API_VERSION))
@@ -263,8 +265,14 @@
 
 (defn send-fetch [{:keys [client conf]} topics]
   "topics must have format [[topic [{:partition 0} {:partition 1}...]] ... ]"
+  
   (write! client (fn [^ByteBuf buff]
-                   (write-fetch-request buff (merge conf {:topics topics}))))
+                   (info "!!!!!!!!!!!!>>>>>>>>>>>>>><<<<<<<<<<< write offset request; " topics)
+                   (info "writer index " (.writerIndex buff))
+                   
+                   (write-fetch-request buff (merge conf {:topics topics}))
+                   (info "after writer index " (.writerIndex buff))
+                   ))
   )
 
 (defn create-offset-producer 
@@ -274,6 +282,8 @@
     (let [c (client host port (merge  
                                    ;;parameters that can be over written
 			                             {
+                                   :read-group (NioEventLoopGroup.)
+                                   :write-group (NioEventLoopGroup.)
                                    :reuse-client true 
                                    :read-buff 100
                                    }
@@ -293,20 +303,20 @@
     (create-fetch-producer host port conf))
   ([host port conf]
     (let [
-          read-group (NioEventLoopGroup. )
-          write-group read-group
+          ;read-group (NioEventLoopGroup. )
+          ;write-group read-group
           c (client host port (merge  
                                    ;;parameters that can be over written
 			                             {
-                                   :read-group read-group
-                                   :write-group write-group
+                                   ;:read-group read-group
+                                   ;:write-group write-group
                                    :reuse-client true 
                                    :read-buff 100
                                    ;setting default options for big data fetch
                                    ;5mb tcp receive buffer and tcp nodelay off
                                    :channel-options [
                                                      [ChannelOption/TCP_NODELAY false]
-                                                     [ChannelOption/SO_RCVBUF (int (* 1048576 10))] ] 
+                                                     [ChannelOption/SO_RCVBUF (int 1048576)] ] 
                                    }
                                    conf
                                    ;parameters tha cannot be overwritten
