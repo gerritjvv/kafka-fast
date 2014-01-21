@@ -29,5 +29,12 @@
                  [fun-utils "0.2.4"]
                  [clj-tuple "0.1.4"]
                  [clj-json "0.5.3"]
-                 [com.netflix.curator/curator-framework "1.3.3"]
+                 [com.codahale.metrics/metrics-core "3.0.1"]
+                 
+                
+                ; [org.apache.kafka/kafka_2.10 "0.8.0" :scope "test" :exclusions [[javax.mail/mail :extension "jar"]
+                 ;                             [javax.jms/jms :classifier "*"]
+                  ;                            com.sun.jdmk/jmxtools
+                   ;                           com.sun.jmx/jmxri]]
+                 ;[org.apache.curator/curator-test "2.3.0" :scope "test" ]
                  [org.clojure/clojure "1.5.1" :scope "provided"]])

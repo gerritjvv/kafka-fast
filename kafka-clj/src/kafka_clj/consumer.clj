@@ -10,10 +10,13 @@
             [fun-utils.core :refer [buffered-chan]]
             [clojure.pprint :refer [pprint]]
             [clojure.core.async :refer [<!! >!! alts!! timeout chan go >! <! close!]])
-  (:import [kafka_clj.fetch_codec FetchMessage FetchError FetchEnd]))
+  (:import [kafka_clj.fetch_codec FetchMessage FetchError FetchEnd]
+           [com.codahale.metrics Meter MetricRegistry Timer Histogram]))
 
              
  ;------- partition lock and release api
+
+(defonce ^MetricRegistry metrics-registry (MetricRegistry.))
 
 (defn- flatten-broker-partitions [broker-offsets]
   (for [[broker topics] broker-offsets
@@ -95,7 +98,7 @@
   
 (defn get-persister [group-conn conf]
   "Returns an object that have functions p-close p-send"
-  (let [{:keys [offset-commit-freq] :or {offset-commit-freq 5000}} conf
+  (let [{:keys [offset-commit-freq ^Meter m-redis-reads ^Meter m-redis-writes] :or {offset-commit-freq 5000}} conf
         ch (chan 100)]
     
     (go
@@ -104,11 +107,12 @@
 	          (let [[v c] (alts! [ch t])]
 	            (if (= c ch)
 	              (if (nil? v)
-	                 (write-persister-data group-conn state) ;channel is closed
+	                  (do (.mark m-redis-writes) (write-persister-data group-conn state))  ;channel is closed
 			            (if (= c ch)
 			              (recur t (assoc state (clojure.string/join "/" [(:topic v) (:partition v)]) (:offset v)))))
 	               ;timeout
 	              (do
+                  (.mark m-redis-writes)
 	                (write-persister-data group-conn state)
 	                  (recur (timeout offset-commit-freq)
 	                         {})))))
@@ -116,13 +120,15 @@
 	    
     {:ch ch :p-close #(close! ch) :p-send #(>!! ch %)}))
                          
-(defn send-request-and-wait [producer group-conn topic-offsets msg-ch {:keys [fetch-timeout] :or {fetch-timeout 30000} :as conf}]
+(defn send-request-and-wait [producer group-conn topic-offsets msg-ch {:keys [^Histogram m-message-size
+                                                                              ^Meter m-consume-reads fetch-timeout] 
+                                                                       :or {fetch-timeout 30000} :as conf}]
   "Returns [the messages, and fetch errors], if any error was or timeout was detected the function returns otherwise it waits for a FetchEnd message
    and returns. 
   "
   (info "send fetch " (:broker producer) " "  (map (fn [[k v]] [k v]) topic-offsets))
   ;(send-fetch producer 
-   ;           [["raw-requests-adx" [
+   ;           [["topic" [
     ;                                {:offset 0, :error-code 0, :locked true, :partition 7} 
                                     ;{:offset 0, :error-code 0, :locked true, :partition 5} 
      ;                               {:offset 0, :error-code 0, :locked true, :partition 3}
@@ -148,6 +154,7 @@
     
     (loop [resp {} fetch-errors [] t (timeout fetch-timeout) fetch-count-i fetch-count]
       (let [[v c] (alts!! [read-ch error-ch t])]
+        (.mark m-consume-reads) ;metrics mark
 		    (if v
 		      (if (= c read-ch)
 		        (cond (instance? FetchEnd v) (do 
@@ -168,6 +175,7 @@
                              new-msg? (or (> (:offset v) latest-offset) (= (:offset v) 0)) ]
 		                         (if new-msg?
 			                          (do 
+                                   (.update m-message-size (count (:bts v)))
 		                               (>!! msg-ch v)
 		                               (p-send v))
 		                            (error "Duplicate message " k " latest-offset " latest-offset " message offset " (:offset v)))
@@ -225,18 +233,20 @@
          (throw (RuntimeException. (str "Error reading offsets from " offset-producer " for topic " topic " error: " v))))
        (throw (RuntimeException. (str "Timeout while reading offsets from " offset-producer " for topic " topic))))))
 
-(defn get-broker-offsets [metadata topic conf]
+(defn get-broker-offsets [metadata topics conf]
   "Builds the datastructure {broker {topic [{:offset o :partition p} ...] }}"
-   (let [topic-data (get metadata topic)
-         by-broker (group-by second (map-indexed vector topic-data))]
-        (into {}
-		        (for [[broker v] by-broker]
-		          ;here we have data {{:host "localhost", :port 1} [[0 {:host "localhost", :port 1}] [1 {:host "localhost", :port 1}]], {:host "abc", :port 1} [[2 {:host "abc", :port 1}]]}
-		          ;doing map first v gives the partitions for a broker
-		          (let [offset-producer (create-offset-producer broker conf)
-		                offsets-response (get-offsets offset-producer topic (map first v))]
-		            (shutdown offset-producer)
-		            [broker (transform-offsets topic offsets-response conf)])))))
+   (apply merge-with merge
+     (for [topic topics] 
+	     (let [topic-data (get metadata topic)
+	         by-broker (group-by second (map-indexed vector topic-data))]
+	        (into {}
+			        (for [[broker v] by-broker]
+			          ;here we have data {{:host "localhost", :port 1} [[0 {:host "localhost", :port 1}] [1 {:host "localhost", :port 1}]], {:host "abc", :port 1} [[2 {:host "abc", :port 1}]]}
+			          ;doing map first v gives the partitions for a broker
+			          (let [offset-producer (create-offset-producer broker conf)
+			                offsets-response (get-offsets offset-producer topic (map first v))]
+			            (shutdown offset-producer)
+			            [broker (transform-offsets topic offsets-response conf)])))))))
 
 (defn create-producers [broker-offsets conf]
   "Returns created producers"
@@ -270,13 +280,13 @@
   )
 
 
-(defn close-and-reconnect [bootstrap-brokers producers topic conf]
+(defn close-and-reconnect [bootstrap-brokers producers topics conf]
   (doseq [producer producers]
     (shutdown producer))
 
-  (info "close-and-reconnect: " bootstrap-brokers " topic " topic)
+  (info "close-and-reconnect: " bootstrap-brokers " topic " topics)
   (if-let [metadata (get-metadata bootstrap-brokers conf)]
-    (let [broker-offsets (doall (get-broker-offsets metadata topic conf))
+    (let [broker-offsets (doall (get-broker-offsets metadata topics conf))
           producers (doall (create-producers broker-offsets conf))]
       [producers broker-offsets])
     (throw (RuntimeException. "No metadata from brokers " bootstrap-brokers))))
@@ -291,12 +301,13 @@
         (Long/parseLong (str v))
         nil))))
 
-(defn- get-saved-offset [group-conn topic partition]
+(defn- get-saved-offset [group-conn topic partition {:keys [^Meter m-redis-reads]}]
   "Retreives the offset saved for the topic partition or nil"
+  (.mark m-redis-reads)
   (coerce-long 
          (persistent-get group-conn (clojure.string/join "/" [topic partition]))))
 
-(defn change-partition-lock [group-conn broker-offsets broker topic partition locked?]
+(defn change-partition-lock [group-conn broker-offsets broker topic partition locked? conf]
   "broker-offsets = {broker {topic [{:partition :offset :topic}]}}
    change the locked value of a partition
    returns the modified broker-offsets
@@ -304,7 +315,7 @@
    Any records that cannot be locked are removed from the map returned"
   (let [rest-records (get-rest-of-partitions broker topic partition broker-offsets)
            p-record (get-partition broker topic partition broker-offsets)
-           saved-offset (get-saved-offset group-conn topic partition)
+           saved-offset (get-saved-offset group-conn topic partition conf)
            ]
       (if p-record (merge-with merge broker-offsets
                                        {broker {topic 
@@ -320,7 +331,7 @@
         )))
 
     
-(defn calculate-locked-offsets [topic group-conn broker-offsets]
+(defn calculate-locked-offsets [topic group-conn broker-offsets conf]
   "broker-offsets have format  {broker {topic [{:partition :offset :topic}]}}
    calculate which offsets should be consumed based on the locks and other members
    returns the broker-offsets marked as locked or not as locked."
@@ -328,15 +339,17 @@
   (let [{:keys [add remove]} (get-partitions-to-lock topic broker-offsets (get-members group-conn))
 				broker-offsets1
 									    (loop [broker-offsets1 broker-offsets partitions add]
-												     (if-let [record (first partitions)]
+                              (if-let [record (first partitions)]
 											             (let [{:keys [broker partition]} record]
 																			(recur 
 																		      (change-partition-lock group-conn
                                                                  broker-offsets1 
 									                                               broker topic partition 
-									                                               (reentrant-lock group-conn (str topic "/" partition)))
+									                                               (reentrant-lock group-conn (str topic "/" partition))
+                                                                 conf)
 																				                (rest partitions)))
-									                               broker-offsets1))
+                                    broker-offsets1))
+                                       
          broker-offsets2
 							        (loop [broker-offsets2 broker-offsets1 partitions remove]
 							          (if-let [record (first partitions)]
@@ -344,7 +357,7 @@
 								            (recur
 								                 (do
 								                   (release group-conn (str topic "/" partition)) 
-								                   (change-partition-lock broker-offsets2 broker topic partition false)) 
+								                   (change-partition-lock broker-offsets2 broker topic partition false conf)) 
 								                 (rest partitions)))
 								            broker-offsets2))]
           
@@ -370,65 +383,78 @@
      
 (defn consume-producers! [bootstrap-brokers
                           group-conn
-                          producers topic broker-offsets-p msg-ch {:keys [fetch-poll-ms] :or {fetch-poll-ms 10000} :as conf}]
+                          producers topics broker-offsets-p msg-ch {:keys [^Timer m-consume-cycle fetch-poll-ms] 
+                                                                    :or {fetch-poll-ms 10000} :as conf}]
   "Consume from the current offsets,
    if any error the producers are closed and a reconnect is done, and consumption is tried again
    otherwise the broker-offsets are updated and the next fetch is done"
-
   (loop [producers producers broker-offsets1 broker-offsets-p]
       ;v is [broker data]
-		  (let [q (consume-brokers! producers group-conn (calculate-locked-offsets  topic group-conn broker-offsets1) msg-ch conf)]
-       (let [[v errors] q]
-		    (if (> (count errors) 0)
-		      (do
-		         (info "Error close and reconnect1: " errors)
-             (info "---- " v)
-		         (let [[producers broker-offsets] (close-and-reconnect bootstrap-brokers producers topic conf)]
-                ;;here we need to delete the offsets that have had errors from the storage
-                ;;or better yet set them to storage
-                (persist-error-offsets group-conn broker-offsets errors conf)
-		            (recur producers broker-offsets)))
-		      (do
-             (if (nil?  (second v)) ; if we were reading data, no need to pause
-               (<!! (timeout fetch-poll-ms)))
-             
-             (recur producers (update-broker-offsets broker-offsets1 v))))
+	      (let [ timer-ctx (.time m-consume-cycle)
+               q (consume-brokers! producers group-conn 
+	                              (apply merge-with merge 
+	                                          (for [topic topics] 
+	                                            (calculate-locked-offsets topic group-conn broker-offsets1 conf))) msg-ch conf)]
+	       (let [[v errors] q]
+			    (if (> (count errors) 0)
+			      (do
+			         (info "Error close and reconnect1: " errors)
+	             (info "---- " v)
+			         (let [[producers broker-offsets] (close-and-reconnect bootstrap-brokers producers topics conf)]
+	                ;;here we need to delete the offsets that have had errors from the storage
+	                ;;or better yet set them to storage
+	                (persist-error-offsets group-conn broker-offsets errors conf)
+                  (.stop timer-ctx)
+			            (recur producers broker-offsets)))
+			      (do
+	             (if (nil?  (second v)) ; if we were reading data, no need to pause
+	               (do (info "sleep: " fetch-poll-ms) (<!! (timeout fetch-poll-ms))))
+	             
+               (.stop timer-ctx)
+	             (recur producers (update-broker-offsets broker-offsets1 v))))
+	
+			      ))))
 
-		      ))))
-
-(defn consume [bootstrap-brokers group-conn msg-ch topic conf]
+(defn consume [bootstrap-brokers group-conn msg-ch topics conf]
   "Entry point for topic consumption,
    The cluster metadata is requested from the bootstrap-brokers, the topic offsets are sorted per broker.
    For each broker a producer is created that will control the sending and reading from the broker,
    then consume-producers is called in the background that will reconnect if needed,
    the method returns with {:msg-ch and :shutdown (fn []) }, shutdown should be called to stop all consumption for this topic"
   (if-let [metadata (get-metadata bootstrap-brokers {})]
-    (let[broker-offsets (doall (get-broker-offsets metadata topic conf))
+    (let[broker-offsets (doall (get-broker-offsets metadata topics conf))
          producers (doall (create-producers broker-offsets conf))
          t (future (try
-                     (consume-producers! bootstrap-brokers group-conn producers topic broker-offsets msg-ch conf)
+                     (consume-producers! bootstrap-brokers group-conn producers topics broker-offsets msg-ch conf)
                      (catch Exception e (error e e))))]
       {:msg-ch msg-ch :shutdown (fn [] (future-cancel t))}
       )
      (throw (Exception. (str "No metadata from brokers " bootstrap-brokers)))))
 
+(defn create-metrics []
+       {:m-consume-reads (.meter metrics-registry (str "kafka-consumer.consume-#" (System/nanoTime)))
+        :m-redis-reads (.meter metrics-registry (str "kafka-consumer.redis-reads-#" (System/nanoTime)))
+        :m-redis-writes (.meter metrics-registry (str "kafka-consumer.redis-writes-#" (System/nanoTime)))
+        :m-message-size (.histogram metrics-registry (str "kafka-consumer.msg-size-#" (System/nanoTime)))
+        :m-consume-cycle (.timer metrics-registry (str "kafka-consume.cycle-#" (System/nanoTime)))})
+        
 (defn consumer [bootstrap-brokers topics conf]
  "Creates a consumer and starts consumption"
-  (let [msg-ch (chan)
+  (let [
+        metrics (create-metrics)
+        msg-ch (chan 100)
         redis-conf (get conf :redis-conf {:heart-beat-freq 10})
         group-conn (let [c (create-group-connector (get redis-conf :redis-host "localhost") redis-conf)]
                      (join c)
                      c)
-        consumers (doall
-                       (for [topic (into #{} topics)]
-                         (consume bootstrap-brokers group-conn msg-ch topic conf)))
+        consumers [(consume bootstrap-brokers group-conn msg-ch (into #{} topics) (merge conf metrics))]
        
         shutdown (fn []
                    (close group-conn)
                    (doseq [c consumers]
                      ((:shutdown c))))]
     
-    {:shutdown shutdown :message-ch msg-ch :group-conn group-conn}))
+    {:shutdown shutdown :message-ch msg-ch :group-conn group-conn :metrics metrics}))
 
 
 (defn shutdown-consumer [{:keys [shutdown]}]

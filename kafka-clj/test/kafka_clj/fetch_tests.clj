@@ -14,23 +14,6 @@
                                                                         {:offset 0, :error-code 0, :locked true, :partition 5} 
                                                                         {:offset 0, :error-code 0, :locked true, :partition 3}]]]})
                
-               "RequestMessage => ApiKey ApiVersion CorrelationId ClientId RequestMessage
-                  ApiKey => int16
-  ApiVersion => int16
-  CorrelationId => int32
-  ClientId => string
-  RequestMessage => MetadataRequest | ProduceRequest | FetchRequest | OffsetRequest | OffsetCommitRequest | OffsetFetchRequest
-   FetchRequest
-
-FetchRequest => ReplicaId MaxWaitTime MinBytes [TopicName [Partition FetchOffset MaxBytes]]
-  ReplicaId => int32
-  MaxWaitTime => int32
-  MinBytes => int32
-  TopicName => string
-  Partition => int32
-  FetchOffset => int64
-  MaxBytes => int32
-   "
                 
                 (prn ">>>>>>> len: " (.readInt buff))
                 (prn ">>>>>>> apikey: " (.readShort buff))

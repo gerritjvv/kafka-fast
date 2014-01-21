@@ -101,4 +101,32 @@ Note: this is still very experimental
  
 ```
 
+##Consumer metrics
+
+The api uses http://metrics.codahale.com/ for metrics.
+The following metrics are provides
+
+```
+kafka-consumer.consume-#[number]        Message consumption per second
+kafka-consumer.redis-reads-#[number]    Redis reads per second
+kafka-consumer.redis-writes-#[number]   Redis writes per second
+kafka-consumer.msg-size-#[number]       Histogram of message byte sizes
+kafka-consume.cycle-#[number]           Internal metrics to time each cycle between consume and check for new members
+```
+
+
+```clojure
+
+(require '[kafka-clj.metrics :refer [ report-consumer-metrics ]])
+(report-consumer-metrics :console :freq 10) ;report to stdout every 10 seconds
+(report-consumer-metrics :csv :freq 10 :dir "/tmp/mydir") ; report to the directory :dir every 10 seconds
+
+```
+
+The metrics registry is held in ```kafka-clj.consumer.metrics-registry```, and can be used to customize reporting
+
+
+
+
+
 
