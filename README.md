@@ -131,10 +131,14 @@ The metrics registry is held in ```kafka-clj.consumer.metrics-registry```, and c
 
 For each broker a single fetch message is sent for all topics and partitions on that broker to be consumed.
 This means the max-bytes property needs to be big enough to atleast hold one message from each topic partition on that broker, it its smaller
-the broker will not send the message and we will get timeouts.
+the broker will not send the message and we will get timeouts, also if its too large the brokers will take longer the get all of the data
+together, for some reason during production its been noted that the timeout is not always honoured by the broker.
 
-The default value is 314572800 bytes which is 300 mb
+The default value is 52428800 bytes which is 50 mb.
 
+The best is to keep the max-bytes small and limit the size of each message set sent by the producers.
+
+If you get timeouts try first for smaller max-bytes, then bigger 100 mb, 150 mb etc, this will need some experimentation and patience.
  
 
 

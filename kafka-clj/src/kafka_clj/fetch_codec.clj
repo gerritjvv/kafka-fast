@@ -233,8 +233,10 @@
             (= state FetchStates/PARTIAL_MESSAGE)
             (do 
               ;read partial message and decrement partition
-              (info "READ PARTIAL MESSAGE left; " (.get message-set-size)  " resp size "); (.get resp-size))
-              (.skipBytes in (int (.get message-set-size)))
+              ;(info "READ PARTIAL MESSAGE left; " (.get message-set-size)  " resp size "); (.get resp-size))
+              (if (> (.get message-set-size) 0)
+                (.skipBytes in (int (.get message-set-size))))
+              
               ;(.getAndAdd resp-size (* -1 (.get message-set-size)))
               (.set message-set-size 0)
               (decrement-partition!)
