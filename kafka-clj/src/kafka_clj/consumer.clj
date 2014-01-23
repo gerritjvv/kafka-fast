@@ -126,7 +126,8 @@
   "Returns [the messages, and fetch errors], if any error was or timeout was detected the function returns otherwise it waits for a FetchEnd message
    and returns. 
   "
-  (info "send fetch " (:broker producer) " "  (map (fn [[k v]] [k v]) topic-offsets))
+  (info "!!!!!!send fetch " (:broker producer) " "  (map (fn [[k v]] [k v]) topic-offsets))
+  
   ;(send-fetch producer 
    ;           [["topic" [
     ;                                {:offset 0, :error-code 0, :locked true, :partition 7} 
@@ -136,12 +137,13 @@
   
   ;sending each offset seperately fixed bug found that not response is made
   ;when fetch is sent with more than one partition
-  (doseq [[topic offsets] topic-offsets]
-    (doseq [offset offsets]
-         (send-fetch producer [[topic [offset]]])))
+  ;(doseq [[topic offsets] topic-offsets]
+   ; (doseq [offset offsets]
+    ;     (send-fetch producer [[topic [offset]]])))
+   (send-fetch producer (map (fn [[k v]] [k v]) topic-offsets))
           
   
-
+ 
   
   (let [
         fetch-count (count (for [[topic offsets] topic-offsets
@@ -155,13 +157,14 @@
     (loop [resp {} fetch-errors [] t (timeout fetch-timeout) fetch-count-i fetch-count]
       (let [[v c] (alts!! [read-ch error-ch t])]
         (.mark m-consume-reads) ;metrics mark
+        ;(info "v " v)
 		    (if v
 		      (if (= c read-ch)
 		        (cond (instance? FetchEnd v) (do 
                                          
-	                                         (if (= (dec fetch-count-i) 0)
-	                                             (do (p-close) [(vals resp) fetch-errors])
-	                                             (recur resp fetch-errors (timeout fetch-timeout) (dec fetch-count-i))))
+	                                         ;(if (= (dec fetch-count-i) 0)
+	                                             (do (p-close) [(vals resp) fetch-errors]))
+	                                          ;   (recur resp fetch-errors (timeout fetch-timeout) (dec fetch-count-i))))
                   :else ;assume FetchMessage
                      (do
                        (if (instance? FetchError v)
@@ -261,6 +264,7 @@
    Consume brokers and returns a list of lists that contains the last messages consumed, or -1 -2 where errors are concerned
    the data structure returned is {broker -1|-2|[{:offset o topic: a} {:offset o topic a} ... ] ...}
   "
+  (info "consume brokers " broker-offsets)
   (try
     (reduce 
       (fn [[state errors] [broker [msgs msg-errors]]]

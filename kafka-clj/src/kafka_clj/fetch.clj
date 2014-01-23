@@ -20,20 +20,18 @@
 (defn ^ByteBuf write-fecth-request-message [^ByteBuf buff {:keys [max-wait-time min-bytes topics max-bytes]
                                           :or { max-wait-time 1000 min-bytes 1 max-bytes 314572800}}]
   "FetchRequest => ReplicaId MaxWaitTime MinBytes [TopicName [Partition FetchOffset MaxBytes]]  ReplicaId => int32  MaxWaitTime => int32  MinBytes => int32  TopicName => string  Partition => int32  FetchOffset => int64  MaxBytes => int32"
+  ;(prn "!!!!!!!!!!!!!!!!!!!! max bytes " max-bytes)
   ;(info "min-bytes " min-bytes " max-wait-time " max-wait-time)
   (-> buff
     (.writeInt (int -1))
     (.writeInt (int max-wait-time))
     (.writeInt (int min-bytes))
     (.writeInt (int (count topics)))) ;write topic array count
-    (prn "topics " topics)
    (doseq [[topic partitions] topics]
-      (prn "topic " topic " partitions "partitions)
 	    (-> buff
        ^ByteBuf (write-short-string topic)
        (.writeInt (count partitions))) ;write partition array count
       (doseq [{:keys [partition offset]} partitions];default max-bytes 500mb
-        (prn "write " partition " " offset)
 		    (-> buff
         (.writeInt (int partition))
 		    (.writeLong offset)
@@ -51,7 +49,7 @@
   ClientId => string
   RequestMessage => FetchRequestMessage
   "
-  (info "correlation-id " correlation-id " state " state)
+  ;(info "correlation-id " correlation-id " state " state)
   (-> buff
      (.writeShort (short API_KEY_FETCH_REQUEST))
      (.writeShort (short API_VERSION))
@@ -267,11 +265,11 @@
   "topics must have format [[topic [{:partition 0} {:partition 1}...]] ... ]"
   
   (write! client (fn [^ByteBuf buff]
-                   (info "!!!!!!!!!!!!>>>>>>>>>>>>>><<<<<<<<<<< write offset request; " topics)
-                   (info "writer index " (.writerIndex buff))
+                   ;(info "!!!!!!!!!!!!>>>>>>>>>>>>>><<<<<<<<<<< write offset request; " topics)
+                   ;(info "writer index " (.writerIndex buff))
                    
                    (write-fetch-request buff (merge conf {:topics topics}))
-                   (info "after writer index " (.writerIndex buff))
+                   ;(info "after writer index " (.writerIndex buff))
                    ))
   )
 
