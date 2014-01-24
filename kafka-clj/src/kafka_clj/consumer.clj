@@ -11,7 +11,8 @@
             [clojure.pprint :refer [pprint]]
             [clojure.core.async :refer [<!! >!! alts!! timeout chan go >! <! close!]])
   (:import [kafka_clj.fetch_codec FetchMessage FetchError FetchEnd]
-           [com.codahale.metrics Meter MetricRegistry Timer Histogram]))
+           [com.codahale.metrics Meter MetricRegistry Timer Histogram]
+           [java.util.concurrent Executors ExecutorService Future Callable]))
 
              
  ;------- partition lock and release api
@@ -180,8 +181,8 @@
 			                          (do 
                                    (.update m-message-size (count (:bts v)))
 		                               (>!! msg-ch v)
-		                               (p-send v))
-		                            (error "Duplicate message " k " latest-offset " latest-offset " message offset " (:offset v)))
+		                               (p-send v)))
+		                            ;;(error "Duplicate message " k " latest-offset " latest-offset " message offset " (:offset v)))
                            
 		                       (recur (if new-msg? (assoc resp k v) resp) fetch-errors (timeout fetch-timeout) fetch-count-i))
                            (error "No partition sent " v)
@@ -257,6 +258,15 @@
           (create-fetch-producer broker conf)
           ))
 
+(defonce ^ExecutorService exec-service (Executors/newCachedThreadPool))
+
+(defn future-f-call [^ExecutorService service ^Callable f]
+  (.submit service f))
+
+(defn wait-futures [futures]
+  (doall 
+    (for [[broker ^Future fu] futures]
+      [broker (.get fu)])))
 
 (defn consume-brokers! [producers group-conn broker-offsets msg-ch conf]
   "
@@ -270,8 +280,13 @@
       (fn [[state errors] [broker [msgs msg-errors]]]
          [(merge state {broker msgs}) (if (> (count msg-errors) 0) (apply conj errors msg-errors) errors)])
           [{} []];initial value
-          (pmap #(vector (:broker %)  (consume-broker % group-conn (get broker-offsets (:broker %)) msg-ch conf)) 
-                    producers))
+          (wait-futures 
+	          (for [producer producers]
+	              [(:broker %)  (future-f-call #(consume-broker % group-conn (get broker-offsets (:broker %)) msg-ch conf))])))
+     (catch Exception e (do 
+                          (error e e)
+                          (throw (RuntimeException. (str e)))
+                          ))
    (finally
      (info ">>>>>>>>>>>>>>>>>>>>> END CONSUME BROKERS!")))
   )
@@ -464,7 +479,9 @@
 (defn shutdown-consumer [{:keys [shutdown]}]
   "Shutsdown a consumer"
   (shutdown))
-
+  (.shutdown exec-service)
+  (.shutdownNow exec-service)
+  
  (defn read-msg
    ([{:keys [message-ch]}]
        (<!! message-ch))

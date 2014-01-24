@@ -142,16 +142,16 @@
         
         transform-messages (fn [out o in]
                                                        (cond 
-                                                            (and (= (.get message-set-size) 0)
-                                                                 (= (.get partition-len) 0)
-                                                                 (= (.get topic-len) 0))
+                                                            (and (<= (.get message-set-size) 0)
+                                                                 (<= (.get partition-len) 0)
+                                                                 (<= (.get topic-len) 0))
                                                             (end-of-consume out o in)
                                                        
-                                                            (and (= (.get message-set-size) 0)
-                                                                 (= (.get partition-len) 0)
+                                                            (and (<= (.get message-set-size) 0)
+                                                                 (<= (.get partition-len) 0)
                                                                  (> (.get topic-len) 0))
                                                             FetchStates/READ_TOPIC
-                                                            (and (= (.get message-set-size) 0)
+                                                            (and (<= (.get message-set-size) 0)
                                                                  (> (.get partition-len) 0))
                                                             FetchStates/READ_PARTITION
                                                             
