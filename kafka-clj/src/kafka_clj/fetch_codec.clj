@@ -81,14 +81,17 @@
     ;check attributes, if the message is compressed, uncompress and read messages
     ;else return as is
     (if (> codec 0)
-      (let [ ^"[B" ubytes (try (uncompress codec val-arr) (catch Exception e (do   nil)))
+      (let [ ^"[B" ubytes (try (uncompress codec val-arr) (catch Exception e (error e e)))
              ]
-        ;(prn "decompress " codec   " bts " (String. val-arr))
+        
         (if ubytes
-          (let [ubuff (Unpooled/wrappedBuffer ubytes)]
-	            (doall
+          (let [ubuff (Unpooled/wrappedBuffer ubytes)
+	             v (doall
 			            ;read the messages inside of this compressed message
-			            (mapcat flatten (map :message (read-messages0 ubuff (count ubytes))))))))
+			            (mapcat flatten (map :message (read-messages0 ubuff (count ubytes)))))]
+            ;(info "decompress " codec   " messages " (count v))
+             v
+             )))
       (tuple {:crc crc :key key-arr :bts val-arr :crc2 crc2}))))
 
 

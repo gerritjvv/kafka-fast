@@ -280,16 +280,10 @@
       (fn [[state errors] [broker [msgs msg-errors]]]
          [(merge state {broker msgs}) (if (> (count msg-errors) 0) (apply conj errors msg-errors) errors)])
           [{} []];initial value
-          (wait-futures 
-	          (for [producer producers]
-	              [(:broker %)  (future-f-call #(consume-broker % group-conn (get broker-offsets (:broker %)) msg-ch conf))])))
-     (catch Exception e (do 
-                          (error e e)
-                          (throw (RuntimeException. (str e)))
-                          ))
+          (pmap #(vector (:broker %)  (consume-broker % group-conn (get broker-offsets (:broker %)) msg-ch conf)) 
+                    producers))
    (finally
-     (info ">>>>>>>>>>>>>>>>>>>>> END CONSUME BROKERS!")))
-  )
+     (info ">>>>>>>>>>>>>>>>>>>>> END CONSUME BROKERS!"))))
 
 (defn update-broker-offsets [broker-offsets v]
   "
@@ -479,8 +473,8 @@
 (defn shutdown-consumer [{:keys [shutdown]}]
   "Shutsdown a consumer"
   (shutdown))
-  (.shutdown exec-service)
-  (.shutdownNow exec-service)
+  ;(.shutdown exec-service)
+  ;(.shutdownNow exec-service)
   
  (defn read-msg
    ([{:keys [message-ch]}]

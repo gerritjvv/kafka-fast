@@ -9,8 +9,8 @@
   :global-vars {*warn-on-reflection* true
                 *assert* false}
 
-  :aot [kafka-clj.client]
-  :main kafka-clj.client
+  ;:aot [kafka-clj.client]
+  ;:main kafka-clj.client
   :java-source-paths ["java"]  
   :jvm-opts ["-Xmx3g"]
   :plugins [
@@ -26,7 +26,7 @@
                  [org.clojure/tools.logging "0.2.6"]
                  [clj-tcp "0.2.16-SNAPSHOT"]
                  [fmap-clojure "0.1.1"]
-                 [fun-utils "0.2.9"]
+                 [fun-utils "0.3.0"]
                  [clj-tuple "0.1.4"]
                  [clj-json "0.5.3"]
                  [com.codahale.metrics/metrics-core "3.0.1"]

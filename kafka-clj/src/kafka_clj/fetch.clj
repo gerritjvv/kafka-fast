@@ -322,7 +322,7 @@
 			                             :handlers [
                                                                  ;bytes-read-status-handler
 			                                                           fetch-response-decoder
-			                                                           #(default-encoder false) 
+			                                                           #(default-encoder true) 
 			                                                           ]}))]
        {:client c :conf conf :broker {:host host :port port}})))
 
