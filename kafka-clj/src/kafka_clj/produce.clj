@@ -121,7 +121,6 @@
 (defn producer [host port conf]
   "returns a producer for sending messages, the decoder is a producer-response-decoder"
   (try 
-    (prn "NEW PRODUCER 1 !!!!!!")
   (let [c (client host port (merge  
                                    ;;parameters that can be over written
 			                             {:max-concurrent-writes 4000
