@@ -280,8 +280,8 @@
     (let [c (client host port (merge  
                                    ;;parameters that can be over written
 			                             {
-                                   :read-group (NioEventLoopGroup.)
-                                   :write-group (NioEventLoopGroup.)
+                                   :read-group-threads 1
+                                   :write-group-threads 1
                                    :reuse-client true 
                                    :read-buff 100
                                    }
