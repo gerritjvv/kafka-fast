@@ -66,9 +66,7 @@
     (go-loop []
              (if-let [v (<! read-ch)]
                (if (> (:error-code v) 0)
-                 (error (str "Error producing " v)))
-               
-               ))
+                 (error (str "Error producing " v)))))
     
     (go-loop []
         (if-let [v (<! buff-ch)]
@@ -76,7 +74,7 @@
                (if (> (count v) 0) 
                  (do
                    ;(prn "Sending buffered messages " v)
-                   (try (send-messages producer {} v) (catch Exception e (error e e)))))
+                   (try (send-messages producer conf v) (catch Exception e (error e e)))))
                 (recur))))
     
     {:producer producer

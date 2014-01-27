@@ -74,7 +74,7 @@
     (write-message-set msg-buff 0 msgs) ;write msgs to msg-buff
     (let [arr (byte-array (- (.writerIndex msg-buff) (.readerIndex msg-buff) ))]
       (.readBytes msg-buff arr)
-      (prn "Compress out " (String. (compress codec arr)))
+      ;(prn "Compress out " (String. (compress codec arr)))
 	    (-> buff
 	      (.writeLong 0) ;offset
 	      (with-size write-message codec 

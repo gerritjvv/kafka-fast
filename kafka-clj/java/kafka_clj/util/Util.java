@@ -8,7 +8,8 @@ import java.io.IOException;
 import java.util.zip.CRC32;
 import java.util.zip.GZIPInputStream;
 
-import org.iq80.snappy.SnappyInputStream;
+import org.xerial.snappy.Snappy;
+
 
 public class Util {
 
@@ -37,18 +38,7 @@ public class Util {
     }
 
 	public static final byte[] deflateSnappy(byte[] bts) throws Exception{
-	  SnappyInputStream in = new SnappyInputStream(new ByteArrayInputStream(bts));
-	  ByteArrayOutputStream out = new ByteArrayOutputStream();
-	  try{
-		  int i = -1;
-			
-		  while( (i = in.read()) != -1)
-				out.write(i);
-	  }finally{
-		  in.close();
-	  }
-	  
-	  return out.toByteArray();
+	  return Snappy.uncompress(bts);
 	}
 	
 	public static final byte[] deflateGzip(byte[] bts) throws IOException{

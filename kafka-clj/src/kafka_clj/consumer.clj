@@ -470,6 +470,9 @@
     {:shutdown shutdown :message-ch msg-ch :group-conn group-conn :metrics metrics}))
 
 
+(defn close-consumer [{:keys [shutdown]}]
+  (shutdown))
+
 (defn shutdown-consumer [{:keys [shutdown]}]
   "Shutsdown a consumer"
   (shutdown))

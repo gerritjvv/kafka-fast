@@ -12,7 +12,7 @@ Please note that this library is still under development, any contributions are 
 
 ```[kafka-clj "0.2.0-SNAPSHOT"]```
 
-## Multi Producer
+## Producer
 
 The ```kafka-clien.client``` namespace contains a ```create-connector``` function that returns a async multi threaded thread safe connector.
 One producer will be created per topic partition combination, each with its own buffer and timeout, such that compression can be maximised.
@@ -26,6 +26,10 @@ One producer will be created per topic partition combination, each with its own 
 (def msg4kb (.getBytes (clojure.string/join "," (range 10000))))
 
 (def c (create-connector [{:host "localhost" :port 9092}] {}))
+;to send snappy
+;(def c (create-connector [{:host "localhost" :port 9092}] {:codec 2}))
+;to send gzip
+;(def c (create-connector [{:host "localhost" :port 9092}] {:codec 1}))
 
 (time (doseq [i (range 100000)] (send-msg c "data" msg1kb)))
 
