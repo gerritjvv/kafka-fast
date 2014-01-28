@@ -92,7 +92,7 @@ Redis was chosen over zookeeper because:
 *  Also zookeeper can be a source of problems when a large amount of offsets are stored or the number of consumers become large, so in the end Redis wins the battle, simple + fast.
 
 
-The library used for redis is [group-redis | https://github.com/gerritjvv/group-redis]
+The library used for redis is https://github.com/gerritjvv/group-redis
  
 ```clojure
 
