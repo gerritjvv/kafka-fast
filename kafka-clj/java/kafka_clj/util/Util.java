@@ -9,6 +9,7 @@ import java.util.zip.CRC32;
 import java.util.zip.GZIPInputStream;
 
 import org.xerial.snappy.Snappy;
+import org.xerial.snappy.SnappyInputStream;
 
 
 public class Util {
@@ -37,18 +38,38 @@ public class Util {
 	   return v & 0xFFFFFFFFL;
     }
 
-	public static final byte[] deflateSnappy(byte[] bts) throws Exception{
-	  return Snappy.uncompress(bts);
+	public static final byte[] deflateSnappy(final byte[] bts) throws Exception{
+		final SnappyInputStream in = new SnappyInputStream(new ByteArrayInputStream(bts));
+		final ByteArrayOutputStream out = new ByteArrayOutputStream(bts.length);
+		int len = 0;
+		final byte[] buff = new byte[1024];
+		
+		try{
+			while((len = in.read(buff, 0, buff.length)) > 0)
+				out.write(buff, 0, len);
+		}finally{
+			in.close();
+		}
+		
+		return out.toByteArray();
 	}
 	
-	public static final byte[] deflateGzip(byte[] bts) throws IOException{
-		GZIPInputStream in = new GZIPInputStream(new ByteArrayInputStream(bts));
-		ByteArrayOutputStream out = new ByteArrayOutputStream();
+	public static final byte[] compressSnappy(byte[] bts) throws Exception{
+		return Snappy.compress(bts);
+	}
+	
+	
+	public static final byte[] deflateGzip(final byte[] bts) throws IOException{
+		final GZIPInputStream in = new GZIPInputStream(new ByteArrayInputStream(bts));
+		final ByteArrayOutputStream out = new ByteArrayOutputStream(bts.length);
+		int len = 0;
+		final byte[] buff = new byte[1024];
+		
 		try{
-			int i = -1;
 			
-			while( (i = in.read()) != -1)
-				out.write(i);
+			while((len = in.read(buff)) > 0)
+				out.write(buff, 0, len);
+			
 		}finally{
 			in.close();
 		}

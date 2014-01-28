@@ -2,7 +2,6 @@
   
   (:import [java.io DataOutputStream ByteArrayOutputStream OutputStream ByteArrayInputStream]
            [java.util.zip GZIPOutputStream GZIPInputStream]
-           [org.iq80.snappy SnappyOutputStream SnappyInputStream Snappy]
            [kafka_clj.util Util]
            [java.util Arrays]))
 
@@ -27,14 +26,14 @@
     [(DataOutputStream. (GZIPOutputStream. out)) out] ))
 
 
-(defn ^"[B" compress [codec ^bytes bts]
+(defn ^"[B" compress [codec ^"[B" bts]
   (cond 
     (= codec 1) (let [[^DataOutputStream dout ^ByteArrayOutputStream bout] (gzip-out)]
                   (.write dout bts (int 0) (int (count bts)))
                   (.close dout)
                   (.close bout)
                   (.toByteArray bout))
-    (= codec 2) (Snappy/compress bts)))
+    (= codec 2) (Util/compressSnappy bts)))
                 
 
 (defn ^"[B" uncompress [codec ^"[B" bts]
