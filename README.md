@@ -81,8 +81,14 @@ Results:
 
 
 # Consumer
-Note: this is still very experimental
 
+The consumer depends on redis to hold the partition locks, group management data and the partition offsets. Redis is much more performant than zookeeper. Zookeeper
+was not made to store offsets. Redis can do group management and distributed locks so using zookeeper does not make sense. Also zookeeper can be a source of problems
+when a large amount of offsets are stored or the number of consumers become large, so in the end Redis wins the battle, simple + fast.
+
+
+The library used for redis is [group-redis | https://github.com/gerritjvv/group-redis]
+ 
 ```clojure
 
 (require '[kafka-clj.consumer :refer [consumer read-msg]])
@@ -131,7 +137,7 @@ The metrics registry is held in ```kafka-clj.consumer.metrics-registry```, and c
 
 
 
-## Kafka Consumer Gotchas
+## Kafka Problem solving
 
 For each broker a single fetch message is sent for all topics and partitions on that broker to be consumed.
 This means the max-bytes property needs to be big enough to atleast hold one message from each topic partition on that broker, it its smaller
