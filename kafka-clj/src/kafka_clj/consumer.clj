@@ -35,16 +35,19 @@
 
  (defn get-partitions-to-lock [topic broker-offsets members]
    "broker-offsets {broker {topic [{:partition :offset :topic}]}}
-    Returns {:add [] :remove []} the partitions to add are in add, and to remove are in remove
-    each entry has the format {:broker {:host o :port p} :topic t :partition p :offset o}"
+    Returns the number of partitions that should be locked"
+   
    (let [broker-partitions (filter #(= (:topic %) topic) (flatten-broker-partitions broker-offsets))
          partition-count (count broker-partitions)
          locked-partition-count (count (filter :locked broker-partitions))
          e (long (/ partition-count (count members)))
          l (rem partition-count (count members))]
      
-     {:add (if (< locked-partition-count (+ e l)) (get-add-partitions broker-partitions (+ e l)) [])
-      :remove (if (> locked-partition-count (+ e l)) (get-remove-partitions broker-partitions (- locked-partition-count (+ e l))) [])})) 
+     (prn "members " members " partition-count " partition-count " locked-partition-count " locked-partition-count " e " e " l " l )
+     [(if (> e locked-partition-count) (count (get-add-partitions broker-partitions e)) 0)
+      (if (> locked-partition-count e) (count (get-remove-partitions broker-partitions (- locked-partition-count e))) 0)
+      l
+      ]))
  
  
  ;------- end of partition lock and release api
@@ -67,9 +70,11 @@
    and then returns the new state
    "
   ;(info "merge " state " with " d)
-  (reduce (fn [state [broker messages]]
+  ;(prn "state d " d) 
+  ;(clojure.pprint/pprint state)
+  (let [r (reduce (fn [state [broker messages]]
                     (reduce (fn [state {:keys [topic partition offset error-code locked]}]
-			                         (merge-with merge
+                               (merge-with merge
                                  state
 			                           (if (or (not error-code) (= error-code 0))
                                    {broker
@@ -80,7 +85,9 @@
                                          }
                                       })))
                             state messages))
-          state d))
+          state d)]
+   ; (clojure.pprint/pprint ["r " r])
+    r))
 
 (defn- get-latest-offset [k current-offsets resp]
   "Helper function for send-request-and-wait, k is searched in resp, if no entry current-offsets is searched, and if none is found 0 is returned"
@@ -288,7 +295,7 @@
 (defn update-broker-offsets [broker-offsets v]
   "
    broker-offsets must be {broker {topic [{:offset o :partition p} ...] }}
-   v must be {broker -1|-2|[{:offset o topic: a} {:offset o topic a} ... ] ...}"
+   v must be {broker -1|-2|[{:offrokerset o topic: a} {:offset o topic a} ... ] ...}"
    (merge-broker-offsets broker-offsets v)
   )
 
@@ -330,13 +337,13 @@
            p-record (get-partition broker topic partition broker-offsets)
            saved-offset (get-saved-offset group-conn topic partition conf)
            ]
+      
       (if p-record (merge-with merge broker-offsets
                                        {broker {topic 
-                                               (if (= locked? true)
-		                                               (conj rest-records (assoc p-record :locked locked?
+                                                   (conj rest-records (assoc p-record :locked locked?
 		                                                                                        :offset (if saved-offset (inc saved-offset) 
 		                                                                                                    (:offset p-record) ) ))
-                                                   rest-records)}})
+                                                   }})
           (do
             (error "Error no record found ")
             broker-offsets)
@@ -348,38 +355,45 @@
   "broker-offsets have format  {broker {topic [{:partition :offset :topic}]}}
    calculate which offsets should be consumed based on the locks and other members
    returns the broker-offsets marked as locked or not as locked."
-  
-  (let [{:keys [add remove]} (get-partitions-to-lock topic broker-offsets (get-members group-conn))
-				broker-offsets1
-									    (loop [broker-offsets1 broker-offsets partitions add]
-                              (if-let [record (first partitions)]
-											             (let [{:keys [broker partition]} record]
-																			(recur 
-																		      (change-partition-lock group-conn
-                                                                 broker-offsets1 
-									                                               broker topic partition 
-									                                               (reentrant-lock group-conn (str topic "/" partition))
-                                                                 conf)
-																				                (rest partitions)))
-                                    broker-offsets1))
-                                       
-         broker-offsets2
-							        (loop [broker-offsets2 broker-offsets1 partitions remove]
-							          (if-let [record (first partitions)]
-							            (let [{:keys [broker partition]} record]
-								            (recur
-								                 (do
-								                   (release group-conn (str topic "/" partition)) 
-								                   (change-partition-lock broker-offsets2 broker topic partition false conf)) 
-								                 (rest partitions)))
-								            broker-offsets2))]
-          
-          
-          ;(info "broker-offsets2 " broker-offsets2)
-           ;only allow offsets with locked true, this is done automatically by the change-partition-lock function
-          broker-offsets2
+  (prn "host " (get conf :host-name))
+  (let [
+        broker-partitions (filter #(= (:topic %) topic) (flatten-broker-partitions broker-offsets))
+        [locked-n remove-n l] (get-partitions-to-lock topic broker-offsets (get-members group-conn))
         
-        ))
+          _ (prn "locked-n " locked-n " remove-n " remove-n)
+          broker-offsets1 (loop [broker-offsets1 broker-offsets locked-i locked-n  remove-i remove-n l-i l partitions broker-partitions]
+                            (if-let [record (first partitions)]
+                              (let [{:keys [broker partition locked]} record]
+                                 (prn "looking at " partition " locked = " locked  " remove-i " remove-i " locked-i " locked-i)
+                                 (cond 
+                                   (and locked (> remove-i 0))
+                                   (do 
+                                     (prn ">>>>>>>>>>>> release lock")
+                                     (if-let [host (get conf :host-name nil)] (release group-conn host (str topic "/" partition))
+                                           (release group-conn (str topic "/" partition)))
+                                     (recur (change-partition-lock group-conn broker-offsets1 broker topic partition false conf)
+                                            locked-i (dec remove-i) l-i (rest partitions)))
+                                    (and (not locked) (or (> locked-i 0) (> l-i 0))
+                                         (if-let [host (get conf :host-name nil)]  (reentrant-lock group-conn host (str topic "/" partition))
+	                                                                       (reentrant-lock group-conn (str topic "/" partition)))) 
+                                    ;here we know that we have a lock
+		                                (recur (change-partition-lock group-conn
+			                                                                 broker-offsets1 
+												                                               broker topic partition 
+												                                               true
+			                                                                 conf)
+		                                           (dec locked-i) remove-i (if (> locked-i 0) l-i (dec l-i)) (rest partitions))
+                                       
+                                    :else
+                                    (recur broker-offsets1 locked-i remove-i l-i (rest partitions))))
+                                           
+                                 broker-offsets1))]
+        
+					
+	          (clojure.pprint/pprint broker-offsets1)  
+	          broker-offsets1
+	          
+	        ))
     
   
 (defn persist-error-offsets [group-conn broker-offsets errors conf]
@@ -403,11 +417,11 @@
    otherwise the broker-offsets are updated and the next fetch is done"
   (loop [producers producers broker-offsets1 broker-offsets-p]
       ;v is [broker data]
-	      (let [ timer-ctx (.time m-consume-cycle)
-               q (consume-brokers! producers group-conn 
-	                              (apply merge-with merge 
+	      (let [ broker-offsets2 (apply merge-with merge 
 	                                          (for [topic topics] 
-	                                            (calculate-locked-offsets topic group-conn broker-offsets1 conf))) msg-ch conf)]
+	                                            (calculate-locked-offsets topic group-conn broker-offsets1 conf)))
+               timer-ctx (.time m-consume-cycle)
+               q (consume-brokers! producers group-conn broker-offsets2 msg-ch conf)]
 	       (let [[v errors] q]
 			    (if (> (count errors) 0)
 			      (do
@@ -420,11 +434,17 @@
                   (.stop timer-ctx)
 			            (recur producers broker-offsets)))
 			      (do
+               ;(prn "BRoker offsets 1")
+               ;(clojure.pprint/pprint broker-offsets1)
 	             (if (nil?  (second v)) ; if we were reading data, no need to pause
 	               (do (info "sleep: " fetch-poll-ms) (<!! (timeout fetch-poll-ms))))
 	             
                (.stop timer-ctx)
-	             (recur producers (update-broker-offsets broker-offsets1 v))))
+               (let [r (update-broker-offsets broker-offsets2 v)]
+                 
+                 (clojure.pprint/pprint [(get conf :host-name nil) r])
+                 
+	             (recur producers r))))
 	
 			      ))))
 
@@ -452,13 +472,19 @@
         :m-consume-cycle (.timer metrics-registry (str "kafka-consume.cycle-#" (System/nanoTime)))})
         
 (defn consumer [bootstrap-brokers topics conf]
- "Creates a consumer and starts consumption"
+ "Creates a consumer and starts consumption
+  Group management:
+      The join is done using either :host-name if its defined in conf, otherwise join is done as (join c) using the host name.
+  "
   (let [
         metrics (create-metrics)
         msg-ch (chan 100)
         redis-conf (get conf :redis-conf {:heart-beat-freq 10})
-        group-conn (let [c (create-group-connector (get redis-conf :redis-host "localhost") redis-conf)]
-                     (join c)
+        group-conn (let [c (create-group-connector (get redis-conf :redis-host "localhost") redis-conf)
+                         host-name (get conf :host-name nil) ]
+                     (if (nil? host-name)
+                          (join c)
+                          (join c host-name))
                      c)
         consumers [(consume bootstrap-brokers group-conn msg-ch (into #{} topics) (merge conf metrics))]
        
