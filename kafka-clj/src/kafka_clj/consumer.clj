@@ -387,7 +387,7 @@
                                  broker-offsets1))]
         
 					
-	          (clojure.pprint/pprint broker-offsets1)  
+	          ;(clojure.pprint/pprint broker-offsets1)  
 	          broker-offsets1
 	          
 	        ))
@@ -439,7 +439,7 @@
                (.stop timer-ctx)
                (let [r (update-broker-offsets broker-offsets2 v)]
                  
-                 (clojure.pprint/pprint [(get conf :host-name nil) r])
+                 ;;(clojure.pprint/pprint [(get conf :host-name nil) r])
                  
 	             (recur producers r))))
 	
