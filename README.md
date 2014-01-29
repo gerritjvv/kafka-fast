@@ -160,6 +160,7 @@ If you get timeouts try first for smaller max-bytes, then bigger 100 mb, 150 mb 
 
 | Name | Default | Description |
 | ---- | ------  | ----------- |
+|:bootstrap-brokers | nil | An array of bootstrap brokers from which the consumer and producer will read the initial broker cluster state, e.g. ```clojure [{:host "localhost" :port 9092} {:host "host2" :port 9092}]``` |
 |:batch-num-messages | 100  | Number of messages to batch before sending. If should be high enough for performance but not too high so that the total message-set size is too big. |
 |:queue-buffering-max-ms | 1000 | Number of milliseconds to wait before sending, if the :batch-num-message has no been reached yet but this timeout happens, then the currently held data will be sent.| 
 |:max-wait-time | 1000 | The number of milliseconds the server should wait to gather data (up to at least :min-bytes) for a fetch request. |
