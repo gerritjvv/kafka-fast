@@ -73,6 +73,7 @@
              (do
                (if (> (count v) 0) 
                  (do
+                   ;(prn "Sending buffered messages " v)
                    (try (send-messages producer conf v) (catch Exception e (error e e)))))
                 (recur))))
     
