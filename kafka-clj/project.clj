@@ -26,7 +26,7 @@
                  [org.clojure/tools.logging "0.2.6"]
                  [clj-tcp "0.2.17-SNAPSHOT"]
                  [fmap-clojure "0.1.4"]
-                 [fun-utils "0.3.0"]
+                 [fun-utils "0.3.2"]
                  [clj-tuple "0.1.4"]
                  [clj-json "0.5.3"]
                  [com.codahale.metrics/metrics-core "3.0.1"]
