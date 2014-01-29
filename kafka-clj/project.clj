@@ -1,4 +1,4 @@
-(defproject kafka-clj "0.4.0-SNAPSHOT"
+(defproject kafka-clj "0.4.1-SNAPSHOT"
   :description "FIXME: write description"
   :url "http://example.com/FIXME"
   :license {:name "Eclipse Public License"
@@ -18,7 +18,7 @@
          [lein-kibit "0.0.8"] [no-man-is-an-island/lein-eclipse "2.0.0"]
            ]
   :dependencies [
-                 [group-redis "0.1.6-SNAPSHOT"]
+                 [group-redis "0.1.7-SNAPSHOT"]
                  [midje "1.6.0" :scope "test"]
                  [reply "0.3.0" :scope "provided"]
                  [org.clojure/tools.trace "0.7.6"]

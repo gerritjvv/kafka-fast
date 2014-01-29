@@ -10,7 +10,7 @@ fast kafka send library implemented in clojure
 
 Please note that this library is still under development, any contributions are welcome
 
-```[kafka-clj "0.4.0-SNAPSHOT"]```
+```[kafka-clj "0.4.1-SNAPSHOT"]```
 
 ## Producer
 

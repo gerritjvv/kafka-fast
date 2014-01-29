@@ -135,38 +135,20 @@
    and returns. 
   "
   (info "!!!!!!send fetch " (:broker producer) " "  (map (fn [[k v]] [k v]) topic-offsets))
-  
-  ;(send-fetch producer 
-   ;           [["topic" [
-    ;                                {:offset 0, :error-code 0, :locked true, :partition 7} 
-                                    ;{:offset 0, :error-code 0, :locked true, :partition 5} 
-     ;                               {:offset 0, :error-code 0, :locked true, :partition 3}
-      ;                              ]]])
-  
-  ;sending each offset seperately fixed bug found that not response is made
-  ;when fetch is sent with more than one partition
-  ;(doseq [[topic offsets] topic-offsets]
-   ; (doseq [offset offsets]
-    ;     (send-fetch producer [[topic [offset]]])))
-   (send-fetch producer (map (fn [[k v]] [k v]) topic-offsets))
-          
-  
- 
+  (send-fetch producer (map (fn [[k v]] [k v]) topic-offsets))
   
   (let [
-        fetch-count (count (for [[topic offsets] topic-offsets
-                                 offset offsets] offset))
         {:keys [p-close p-send]} (get-persister group-conn conf)
         {:keys [read-ch error-ch]} (:client producer)
         current-offsets (into {} (for [[topic v] topic-offsets
                                         msg   v]
                                       [#{topic (:partition msg)} (assoc msg :topic topic) ]))]
     
-    (loop [resp {} fetch-errors [] t (timeout fetch-timeout) fetch-count-i fetch-count]
+    (loop [resp {} fetch-errors {} t (timeout fetch-timeout)]
       (let [[v c] (alts!! [read-ch error-ch t])]
         (.mark m-consume-reads) ;metrics mark
-        ;(info "v " v)
-		    (if v
+        
+        (if v
 		      (if (= c read-ch)
 		        (cond (instance? FetchEnd v) (do 
                                          
@@ -178,7 +160,7 @@
                        (if (instance? FetchError v)
                          (do
                            (error "Fetch error " v)
-                           (recur resp (conj fetch-errors v) (timeout fetch-timeout) fetch-count-i))
+                           (recur resp (assoc k v fetch-errors) (timeout fetch-timeout)))
                          
                          (if-let [partition (:partition v)] 
                            (let [k #{(:topic v) partition}
@@ -191,7 +173,7 @@
 		                               (p-send v)))
 		                            ;;(error "Duplicate message " k " latest-offset " latest-offset " message offset " (:offset v)))
                            
-		                       (recur (if new-msg? (assoc resp k v) resp) fetch-errors (timeout fetch-timeout) fetch-count-i))
+		                       (recur (if new-msg? (assoc resp k v) resp) fetch-errors (timeout fetch-timeout)))
                            (error "No partition sent " v)
                            ))))
 		        (do (p-close) (error "Error while requesting data from " producer " for topics " (keys topic-offsets)) [(vals resp) fetch-errors]))
@@ -427,6 +409,7 @@
 			         (let [[producers broker-offsets] (close-and-reconnect bootstrap-brokers producers topics conf)]
 	                ;;here we need to delete the offsets that have had errors from the storage
 	                ;;or better yet set them to storage
+                 ;persist-error-offsets [group-conn broker-offsets errors conf]
 	                (persist-error-offsets group-conn broker-offsets errors conf)
                   (.stop timer-ctx)
 			            (recur producers broker-offsets)))
