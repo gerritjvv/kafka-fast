@@ -1,6 +1,6 @@
 (defproject kafka-clj "0.4.1-SNAPSHOT"
-  :description "FIXME: write description"
-  :url "http://example.com/FIXME"
+  :description "fast kafka library implemented in clojure"
+  :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
 

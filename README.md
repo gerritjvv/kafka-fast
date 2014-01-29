@@ -3,7 +3,7 @@
 kafka-clj
 ==========
 
-fast kafka send library implemented in clojure
+fast kafka library implemented in clojure
 
 
 #Usage
