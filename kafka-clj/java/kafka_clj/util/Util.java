@@ -39,10 +39,11 @@ public class Util {
     }
 
 	public static final byte[] deflateSnappy(final byte[] bts) throws Exception{
+		final int buffLen = 2 * bts.length;
 		final SnappyInputStream in = new SnappyInputStream(new ByteArrayInputStream(bts));
-		final ByteArrayOutputStream out = new ByteArrayOutputStream(bts.length);
+		final ByteArrayOutputStream out = new ByteArrayOutputStream(buffLen);
 		int len = 0;
-		final byte[] buff = new byte[1024];
+		final byte[] buff = new byte[buffLen];
 		
 		try{
 			while((len = in.read(buff, 0, buff.length)) > 0)
@@ -60,10 +61,11 @@ public class Util {
 	
 	
 	public static final byte[] deflateGzip(final byte[] bts) throws IOException{
+		final int buffLen = 2 * bts.length;
 		final GZIPInputStream in = new GZIPInputStream(new ByteArrayInputStream(bts));
-		final ByteArrayOutputStream out = new ByteArrayOutputStream(bts.length);
+		final ByteArrayOutputStream out = new ByteArrayOutputStream(buffLen);
 		int len = 0;
-		final byte[] buff = new byte[1024];
+		final byte[] buff = new byte[buffLen];
 		
 		try{
 			

@@ -43,7 +43,7 @@
          e (long (/ partition-count (count members)))
          l (rem partition-count (count members))]
      
-     (prn "members " members " partition-count " partition-count " locked-partition-count " locked-partition-count " e " e " l " l )
+     ;(prn "members " members " partition-count " partition-count " locked-partition-count " locked-partition-count " e " e " l " l )
      [(if (> e locked-partition-count) (count (get-add-partitions broker-partitions e)) 0)
       (if (> locked-partition-count e) (count (get-remove-partitions broker-partitions (- locked-partition-count e))) 0)
       l
@@ -281,7 +281,7 @@
    Consume brokers and returns a list of lists that contains the last messages consumed, or -1 -2 where errors are concerned
    the data structure returned is {broker -1|-2|[{:offset o topic: a} {:offset o topic a} ... ] ...}
   "
-  (info "consume brokers " broker-offsets)
+  ;(info "consume brokers " broker-offsets)
   (try
     (reduce 
       (fn [[state errors] [broker [msgs msg-errors]]]
@@ -355,20 +355,17 @@
   "broker-offsets have format  {broker {topic [{:partition :offset :topic}]}}
    calculate which offsets should be consumed based on the locks and other members
    returns the broker-offsets marked as locked or not as locked."
-  (prn "host " (get conf :host-name))
+  ;(prn "host " (get conf :host-name))
   (let [
         broker-partitions (filter #(= (:topic %) topic) (flatten-broker-partitions broker-offsets))
         [locked-n remove-n l] (get-partitions-to-lock topic broker-offsets (get-members group-conn))
         
-          _ (prn "locked-n " locked-n " remove-n " remove-n)
           broker-offsets1 (loop [broker-offsets1 broker-offsets locked-i locked-n  remove-i remove-n l-i l partitions broker-partitions]
                             (if-let [record (first partitions)]
                               (let [{:keys [broker partition locked]} record]
-                                 (prn "looking at " partition " locked = " locked  " remove-i " remove-i " locked-i " locked-i)
                                  (cond 
                                    (and locked (> remove-i 0))
                                    (do 
-                                     (prn ">>>>>>>>>>>> release lock")
                                      (if-let [host (get conf :host-name nil)] (release group-conn host (str topic "/" partition))
                                            (release group-conn (str topic "/" partition)))
                                      (recur (change-partition-lock group-conn broker-offsets1 broker topic partition false conf)
@@ -426,7 +423,7 @@
 			    (if (> (count errors) 0)
 			      (do
 			         (info "Error close and reconnect1: " errors)
-	             (info "---- " v)
+	             ;(info "---- " v)
 			         (let [[producers broker-offsets] (close-and-reconnect bootstrap-brokers producers topics conf)]
 	                ;;here we need to delete the offsets that have had errors from the storage
 	                ;;or better yet set them to storage

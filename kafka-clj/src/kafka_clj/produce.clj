@@ -82,7 +82,7 @@
 	        )))))
 	    
     
-(defn write-request [^ByteBuf buff {:keys [correlation-id client-id codec acks timeout] :or {correlation-id 1 client-id "1" codec 0 acks 1 timeout 1000}}
+(defn write-request [^ByteBuf buff {:keys [correlation-id client-id codec acks timeout] :or {correlation-id 1 client-id "1" codec 0 acks 1 timeout 1000} :as conf}
                      msgs]
     (-> buff
       (.writeShort  (short API_KEY_PRODUCE_REQUEST))   ;api-key
