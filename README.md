@@ -172,4 +172,5 @@ If you get timeouts try first for smaller max-bytes, then bigger 100 mb, 150 mb 
 |:offset-commit-freq | 5000 | Offsets consumed will be committed every :offset-commit-freq milliseconds. |
 |:fetch-timeout | 30000 | Milliseconds to wait for a broker to response to a fetch request. |
 |:use-earliest  | true  | Only applies if no offset is held for a particular topic + partition in redis. If true will use the earliest available offset from the broker, otherwise the latest offset is used. |
+|:metadata-timeout  | 10000 | Milliseconds to wait for a broker to respond to a metadata request. |
 
