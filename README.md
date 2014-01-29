@@ -156,5 +156,19 @@ The best is to keep the max-bytes small and limit the size of each message set s
 If you get timeouts try first for smaller max-bytes, then bigger 100 mb, 150 mb etc, this will need some experimentation and patience.
  
 
+#Configuration
 
+| Name | Default | Description |
+| ---- | ------  | ----------- |
+|:batch-num-messages | 100  | Number of messages to batch before sending. If should be high enough for performance but not too high so that the total message-set size is too big. |
+|:queue-buffering-max-ms | 1000 | Number of milliseconds to wait before sending, if the :batch-num-message has no been reached yet but this timeout happens, then the currently held data will be sent.| 
+|:max-wait-time | 1000 | The number of milliseconds the server should wait to gather data (up to at least :min-bytes) for a fetch request. |
+|:min-bytes  | 1 | The minimum bytes a server should have before returning a fetch request. |
+|:max-bytes  | 52428800 (50mb) | The maximum number of bytes a fetch request should return. |
+|:client-id  | "1" | Used for identifying client requests. |
+|:codec      | 0   | The compression that should be used for sending messages, 0 = None, 1 = Gzip, 2 = Snappy. |
+|:acks       | 1   | The number of replicas that should be written and a response message returned for a produce send. | 
+|:offset-commit-freq | 5000 | Offsets consumed will be committed every :offset-commit-freq milliseconds. |
+|:fetch-timeout | 30000 | Milliseconds to wait for a broker to response to a fetch request. |
+|:use-earliest  | true  | Only applies if no offset is held for a particular topic + partition in redis. If true will use the earliest available offset from the broker, otherwise the latest offset is used. |
 

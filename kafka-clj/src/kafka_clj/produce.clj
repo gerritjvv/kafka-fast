@@ -123,7 +123,7 @@
   (try 
   (let [c (client host port (merge  
                                    ;;parameters that can be over written
-			                             {:max-concurrent-writes 4000
+			                             {
 			                             :reuse-client true 
                                    :write-buff 100
                                    }
