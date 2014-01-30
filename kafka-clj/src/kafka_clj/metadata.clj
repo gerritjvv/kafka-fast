@@ -63,10 +63,9 @@
           (do 
             (send-update-metadata producer conf)
 	          ;wait for response or timeout
-            ;(prn "Wait for timeout ")
 	          (let [[v c] (alts!! [read-ch error-ch (timeout metadata-timeout)])]
 	             (if v
-	               (if (= c read-ch) (convert-metadata-response v)
+	               (if (= c read-ch)  (convert-metadata-response v)
 	                 (throw (Exception. (str "Error reading metadata from producer " broker  " error " v))))
 	               (throw (Exception. (str "timeout reading from producer " broker ))))))
           (finally 
@@ -78,9 +77,12 @@
      (if-let [broker (first brokers)]
        (try
          (get-broker-metadata broker conf)
-         (catch Exception e (do (error "error " e)
+         (catch Exception e (do (.printStackTrace e)
+                                (error "error " e)
                                   (if (rest brokers) (get-metadata (rest brokers) conf)
-                                  (error e e)))))))
+                                  (error e e)))))
+       (prn "No brokers")
+       ))
 
 
      
