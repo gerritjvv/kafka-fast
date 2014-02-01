@@ -4,10 +4,13 @@
             [clj-tcp.client :refer [client write! read! close-all ALLOCATOR]]
             [clj-tcp.codec :refer [default-encoder]]
             [clojure.tools.logging :refer [error info]]
-            [kafka-clj.buff-utils :refer [inc-capacity write-short-string with-size compression-code-mask]])
+            [kafka-clj.buff-utils :refer [inc-capacity write-short-string with-size compression-code-mask]]
+            [clj-tuple :refer [tuple]]
+            [kafka-clj.msg-persist :refer [cache-sent-messages]])
   (:import [java.net InetAddress]
            [java.nio ByteBuffer]
-           [io.netty.buffer ByteBuf Unpooled PooledByteBufAllocator]
+           [java.util.concurrent.atomic AtomicLong]
+           [io.netty.buffer ByteBuf Unpooled ByteBufAllocator]
            [java.nio.channels SocketChannel]
            [java.net InetSocketAddress]
            [kafka_clj.util Util]))
@@ -25,6 +28,16 @@
 
 (defonce ^:constant MAGIC_BYTE (int 0))
 
+(defonce ^AtomicLong corr-counter (AtomicLong.))
+
+(defn ^Long unique-corrid! []
+  (let [v (.getAndIncrement corr-counter)]
+    (if (= v Long/MAX_VALUE)
+      (do 
+        (.set corr-counter 0)
+        v)
+      v)))
+
 (defn shutdown [{:keys [client]}]
   (if client
     (try 
@@ -39,7 +52,6 @@
   (let [
         pos (.writerIndex buff)
         ]
-    ;(inc-capacity buff (+ 14 (count bts)))
     (-> buff
       (.writeInt (int -1)) ;crc32
       (.writeByte (byte 0))               ;magic
@@ -56,34 +68,46 @@
     ))
       
   
-(defn write-message-set [^ByteBuf buff codec msgs]
-    ;(inc-capacity buff (* 8 (count msgs)))
-    
-	  (doseq [msg msgs]
-	    (-> buff
-	     
-	      (.writeLong 0)       ;offset
-	      (with-size write-message codec (:bts msg)) ;writes len message
-	      
-	      )))
+(defn write-message-set [^ByteBuf buff correlation-id  codec msgs]
+  "Writes a message set and returns a tuple of [first-offset msgs]"
+      (loop [msgs1 msgs]
+		    (if-let [msg (first msgs1)]
+	         (do 
+	            (-> buff
+				      (.writeLong 0)       ;offset
+				      (with-size write-message codec (:bts msg)) ;writes len message
+				      )
+              (recur (rest msgs1))
+             )
+           ))
+       (tuple correlation-id msgs))
      
 
-(defn write-compressed-message-set [^ByteBuf buff codec msgs]
-  (let [msg-buff (Unpooled/buffer 1024)]
+(defn write-compressed-message-set [^ByteBuf buff correlation-id codec msgs]
+  "Writes the compressed message and returns a tuple of [offset msgs]"
+  ;use the buffer allocator to get a new buffer
+  (let [^ByteBufAllocator alloc (.alloc buff)
+        msg-buff (.buffer alloc (int 1024))]
+    (try 
+		    (let [_ (write-message-set msg-buff correlation-id 0 msgs) ;write msgs to msg-buff
+			        arr (byte-array (- (.writerIndex msg-buff) (.readerIndex msg-buff) ))]
+			      (.readBytes msg-buff arr)
+			      ;(prn "Compress out " (String. (compress codec arr)))
+				    (-> buff
+				      (.writeLong 0) ;offset
+				      (with-size write-message codec 
+				        (compress codec arr)
+				        ))
+             (tuple correlation-id msgs));return the (tuple offset msgs) of the uncompressed messages but with the compressed offset
+       (finally ;all ByteBuff are reference counted
+        (.release msg-buff)))))
+		    
     
-    (write-message-set msg-buff 0 msgs) ;write msgs to msg-buff
-    (let [arr (byte-array (- (.writerIndex msg-buff) (.readerIndex msg-buff) ))]
-      (.readBytes msg-buff arr)
-      ;(prn "Compress out " (String. (compress codec arr)))
-	    (-> buff
-	      (.writeLong 0) ;offset
-	      (with-size write-message codec 
-	        (compress codec arr)
-	        )))))
-	    
-    
-(defn write-request [^ByteBuf buff {:keys [correlation-id client-id codec acks timeout] :or {correlation-id 1 client-id "1" codec 0 acks 1 timeout 1000} :as conf}
+(defn write-request [^ByteBuf buff {:keys [client-id codec acks timeout] :or {client-id "1" codec 0 acks 1 timeout 1000} :as conf}
                      msgs]
+  "Writes the messages and return a sequence of [ [offset msgs] ... ] The offset is the first offset in the message set
+   For compressed messages this is the uncompressed message, and allows us to retry message sending."
+  (let [correlation-id (unique-corrid!)]
     (-> buff
       (.writeShort  (short API_KEY_PRODUCE_REQUEST))   ;api-key
       (.writeShort  (short API_VERSION))   ;version api
@@ -94,28 +118,44 @@
     
       (let [topic-group (group-by :topic msgs)]
         (.writeInt buff (int (count topic-group))) ;topic count
-        (doseq [[topic topic-msgs] topic-group]
-         (write-short-string buff topic) ;short + topic bytes
-         (let [partition-group (group-by :partition topic-msgs)]
-           (.writeInt buff (int (count partition-group)))  ;partition count
-				   (doseq [[partition partition-msgs] partition-group]
-             (.writeInt buff (int partition))       ;partition
-               
-				       (if (= codec 0)
-                   (with-size buff write-message-set codec msgs)
-                   (with-size buff write-compressed-message-set codec msgs)))))) ;write message set with len message-set
-				      
-      )
+        (doall 
+          (apply concat
+		        (for [[topic topic-msgs] topic-group]
+		         (do 
+		           (write-short-string buff topic) ;short + topic bytes
+			         (let [partition-group (group-by :partition topic-msgs)]
+			           (.writeInt buff (int (count partition-group)))  ;partition count
+		             (for [[partition partition-msgs] partition-group]
+			             (do (.writeInt buff (int partition))       ;partition
+				             (if (= codec 0)
+				                   (with-size buff write-message-set correlation-id codec msgs)
+				                   (with-size buff write-compressed-message-set  correlation-id codec msgs))))))))))))
+								      
+      
   
 (defn read-response [{:keys [client]} timeout]
     (read! client timeout))
-       
-(defn send-messages [{:keys [client]} 
-                     conf
+  
+(defn- write-message-for-ack [connector conf msgs ^ByteBuf buff]
+  "Writes the messages to the buff and send the results of [[offset msgs] ...] to the cache.
+   This function always returns the msgs"
+    (if buff (cache-sent-messages connector (with-size buff write-request conf msgs)))
+    msgs)
+
+(defn send-messages [connector
+                     {:keys [client]} 
+                     {:keys [acks] :as conf}
                      msgs]
-  (write! client (fn [^ByteBuf buff] 
-                   (with-size buff write-request conf msgs)
-                   )))
+  "Send messages by writing them to the tcp client.
+   The write is async.
+   If the conf properties acks is > 0 the messages will also be written to an inmemory cache,
+   the cache expires and has a maximum size, but it allows us to retry failed messages."
+  (if (> acks 0)
+    (write! client (partial write-message-for-ack connector conf msgs))
+	  (write! client (fn [^ByteBuf buff] 
+	                       (if buff (with-size buff write-request conf msgs))
+                         msgs;we must return the msgs here, its used later by the cache for retries
+	                       ))))
 
 
 (defn producer [host port conf]

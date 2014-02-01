@@ -173,4 +173,40 @@ If you get timeouts try first for smaller max-bytes, then bigger 100 mb, 150 mb 
 |:fetch-timeout | 30000 | Milliseconds to wait for a broker to response to a fetch request. |
 |:use-earliest  | true  | Only applies if no offset is held for a particular topic + partition in redis. If true will use the earliest available offset from the broker, otherwise the latest offset is used. |
 |:metadata-timeout  | 10000 | Milliseconds to wait for a broker to respond to a metadata request. |
+|:send-cache-max-entries | 1000000 | number of entries to keep in cache for server ack checks |
+|:send-cache-expire-after-write | 5 | seconds to expire an entry after write |
+|:send-cache-expire-after-access | 5 | seconds to expire an entry after read |
 
+
+# Produce Error handling and persistence
+
+When sending messages the broker(s) may respond with and error or the broker itself may be down.
+In case a broker is down but other brokers are up, the messages will be sent to the 'up' brokers.
+
+If no brokers are available of the broker responds with and error message, the message is saved to a off heap cache.
+https://github.com/jankotek/mapdb is used for this purpose.
+
+The latter is only true if ack is not 0. 
+
+
+## Retry cache logic
+
+Each producer is represented by a producer-buffer, each producer-buffer will send any errors from the tcp client or as a Response error from the broker send the error to
+a common producer-error-ch channel.
+
+A go block is created that will read from the producer-error-ch channel and does:
+
+* write-to-retry-cache
+* update-metadata
+* removes the producer from the global producer-ref
+* and closes the producer buffer that sent the error
+
+
+A background thread is created that will get all of the values from the retry cache 
+and re-send it using the send-msg entry method, that will again send the message to 
+a different producer buffer, the message once sent is deleted from the retry-cache.
+
+The logic above is created in the create-connector function, and attached to the connector.
+
+The close function will stop all the background logic above.
+ 

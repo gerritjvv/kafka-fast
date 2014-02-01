@@ -19,6 +19,7 @@
            ]
   :dependencies [
                  [group-redis "0.1.7-SNAPSHOT"]
+                 [org.mapdb/mapdb "0.9.9"]
                  [midje "1.6.0" :scope "test"]
                  [reply "0.3.0" :scope "provided"]
                  [org.clojure/tools.trace "0.7.6"]
@@ -26,7 +27,7 @@
                  [org.clojure/tools.logging "0.2.6"]
                  [clj-tcp "0.2.18-SNAPSHOT"]
                  [fmap-clojure "0.1.4"]
-                 [fun-utils "0.3.5"]
+                 [fun-utils "0.3.6"]
                  [clj-tuple "0.1.4"]
                  [clj-json "0.5.3"]
                  [com.codahale.metrics/metrics-core "3.0.1"]

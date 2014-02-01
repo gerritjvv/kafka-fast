@@ -3,11 +3,15 @@
   (:require [fun-utils.core :refer [star-channel buffered-chan fixdelay apply-get-create stop-fixdelay]]
             [kafka-clj.produce :refer [producer send-messages message shutdown]]
             [kafka-clj.metadata :refer [get-metadata]]
+            [kafka-clj.msg-persist :refer [get-sent-message close-send-cache create-send-cache close-send-cache remove-sent-message
+                                           create-retry-cache write-to-retry-cache retry-cache-seq close-retry-cache delete-from-retry-cache]]
             [clojure.tools.logging :refer [error info]]
             [reply.main]
-            [clojure.core.async :refer [chan >! >!! go-loop] :as async])
-  (:import [java.util.concurrent.atomic AtomicInteger]))
+            [clojure.core.async :refer [chan >! >!! go go-loop close!] :as async])
+  (:import [java.util.concurrent.atomic AtomicInteger]
+           [kafka_clj.response ProduceResponse]))
 
+(declare close-producer-buffer!)
 
 (defn- get-partition-count [topic brokers-metadata]
   (count (get brokers-metadata topic)))
@@ -51,35 +55,61 @@
 (defn send-to-buffer [{:keys [ch-source]} msg]
   (>!! ch-source msg))
 
-(defn create-producer-buffer [topic partition producer-error-ch {:keys [host port]} {:keys [batch-num-messages queue-buffering-max-ms] :or 
+(defn create-producer-buffer [connector topic partition producer-error-ch {:keys [host port]} {:keys [batch-num-messages queue-buffering-max-ms] :or 
                                                                    {batch-num-messages 100 queue-buffering-max-ms 1000} :as conf}]
   "Creates a producer and buffered-chan with a go loop that will read off the buffered chan and send to the producer.
    A map with keys :producer ch-source and buff-ch is returned"
   (let [producer (producer host port conf)
+        c (:client producer)
         ch-source (chan 100)
         read-ch (-> producer :client :read-ch)
         buff-ch (buffered-chan ch-source batch-num-messages queue-buffering-max-ms 10)
-        handle-send-message-error (fn [e producer conf v]
+        
+        handle-send-message-error (fn [e producer conf offset v]
                                     (error e e)
-                                    (>!! producer-error-ch {:key-val (str topic ":" partition) :error e :producer producer :v v :topic topic})
+                                    (>!! producer-error-ch {:key-val (str topic ":" partition) :error e :producer {:producer producer ::buff-ch buff-ch} 
+                                                            :offset offset :v v :topic topic})
                                     )]
     
-    ;TODO in this loop we can handle produce responses
-    ;check and tests for any errors
+   
+    ;if a response from the server (only when ack > 0)
+    ; if error-codec > 0 then handle the error
+    ; else remove the message from the cache
     (go-loop []
              (if-let [v (<! read-ch)]
-               (if (> (:error-code v) 0)
-                 (error (str "Error producing " v)))))
+               (do 
+                  (if (instance? ProduceResponse v) ;ProduceResponse [correlation-id topic partition error-code offset])
+	                 (let [{:keys [correlation-id topic partition]} v]
+	                   (if (> (:error-code v) 0)
+		                  (handle-send-message-error 
+		                    (RuntimeException. (str "Response error " (:error-code v))) 
+		                    producer conf (get-sent-message connector topic partition correlation-id) v ))
+		                  (remove-sent-message connector topic partition correlation-id)))
+		                  (recur))))
     
+    ;;if any error on the tcp client handle error
+    (go-loop []
+      (when-let [[e v] (<! (:error-ch c))]
+		    (if (fn? v) 
+          (handle-send-message-error 
+                    (RuntimeException. (str "Client tcp error " e)) 
+                    producer conf v -1)
+          (error "Cannot react on message " v))
+        
+        (error e e)
+        
+		    (recur)))
+		    
+    ;send buffered messages
+    ;if any exception handle the error
     (go-loop []
         (if-let [v (<! buff-ch)]
              (do
                (if (> (count v) 0) 
                  (do
-                   ;(prn "Sending buffered messages " v)
                    (try 
-                       (send-messages producer conf v) 
-                       (catch Exception e (handle-send-message-error e producer conf v)))))
+                       (send-messages connector producer conf v) 
+                       (catch Exception e (handle-send-message-error e producer conf v -1)))))
                 (recur))))
     
     {:host host
@@ -92,8 +122,8 @@
   "If any error is read on the client error-ch this producer this removed from the producers-ref"
   ;this loop will block and on the first error, close and remove the producer, then exit the loop
   (let [error-ch (-> producer-buffer :producer :client :error-ch)]
-	   (go-loop []
-	    (if-let [error-val (<! error-ch)]
+	   (go
+      (if-let [error-val (<! error-ch)]
        (do 
          ;(error (first error-val) (first error-val))
          (prn "removing producer for " key-val)
@@ -109,23 +139,27 @@
         )))))
      
   
-(defn select-producer-buffer! [topic partition {:keys [producers-ref brokers-metadata producer-error-ch conf] :as state}]
+(defn select-producer-buffer! [connector topic partition {:keys [producers-ref brokers-metadata producer-error-ch conf] :as state}]
   "Select a producer or create one,
    if no broker can be found a RuntimeException is thrown"
   (let [k (str topic ":" partition)]
 	  (if-let [producer (get @producers-ref k)]
    	    producer
 		    (if-let [[partition broker] (select-broker topic partition brokers-metadata)]
-	           (let [producer-buffer (do (prn "Creating producer for " topic) 
-                                    (create-producer-buffer topic partition producer-error-ch broker conf))]
+	           (let [producer-buffer (create-producer-buffer connector topic partition producer-error-ch broker conf)]
 	              (add-remove-on-error-listener! producers-ref topic k producer-buffer brokers-metadata)
-                (dosync (alter producers-ref (fn [x] (assoc x k producer-buffer))))
-               producer-buffer)
+                
+                (dosync 
+                        (alter producers-ref (fn [x] (if (get @producers-ref k) 
+                                                       (do (close-producer-buffer! producer-buffer) x) 
+                                                       (assoc x k producer-buffer)))))
+               
+                producer-buffer)
 	           (throw (RuntimeException. "No brokers could be found in the broker metadata"))))))
 
 	     
 
-(defn- send-msg-retry [state {:keys [topic] :as msg}]
+(defn- send-msg-retry [{:keys [state] :as connector} {:keys [topic] :as msg}]
   "Try sending the message to any of the producers till all of the producers have been trieds"
     (let [partitions (-> state :brokers-metadata (get topic))]
       (if (or (empty? partitions) (= partitions 0))
@@ -134,7 +168,7 @@
       (loop [partitions-1 partitions i 0] 
         (if-let [partition (first partitions-1)]
           (let [sent (try 
-						            (let [producer-buffer (select-producer-buffer! topic state)]
+						            (let [producer-buffer (select-producer-buffer! connector topic state)]
                           (prn "retry sending message to " (:host producer-buffer))
 						              (send-to-buffer state msg)
 						              true)
@@ -143,40 +177,49 @@
               (recur (rest partitions) (inc i))))
           (throw (RuntimeException. (str "The message for topic " topic " could not be sent")))))))
 
-(defn send-msg [{:keys [state]} topic ^bytes bts]
+(defn send-msg [{:keys [state] :as connector} topic ^bytes bts]
   (if (> (-> state :brokers-metadata deref count) 0)
 	  (let [partition (select-rr-partition! topic state)
-	        producer-buffer (select-producer-buffer! topic partition state)
+	        producer-buffer (select-producer-buffer! connector topic partition state)
 	        ]
 	    (try
        (send-to-buffer producer-buffer (message topic partition bts))
        (catch Exception e
          (do (error e e)
            ;here we try all of the producers, if all fail we throw an exception
-           (send-msg-retry state (message topic partition bts))
+           (send-msg-retry connector (message topic partition bts))
            
            ))))
          
    (throw (RuntimeException. (str "No brokers available")))))
 
-(defn close-producer-buffer! [{:keys [producer]}]
+(defn close-producer-buffer! [{:keys [producer ch-source]}]
   (try
-		    (do 
-	        (shutdown producer))
+		    (do
+          (close! ch-source) ;cause the buffer to cleanout
+          (shutdown producer))
       (catch Exception e (error e (str "Error while shutdown " producer)))))
 
-(defn close [{:keys [state]}]
+(defn close [{:keys [state] :as connector}]
   "Close all producers and channels created for the connected"
   (stop-fixdelay (:metadata-fixdelay state))
   
+  ;(stop-fixdelay (:retry-cache-ch state))
+	(close-retry-cache connector)
+  (close-send-cache connector)
+ 
   (doseq [producer-buffer (deref (:producers-ref state))]
-    (close-producer-buffer! producer-buffer)))
+    (close-producer-buffer! producer-buffer))
+  
+  (close-send-cache connector))
 
 
-(defn create-connector [bootstrap-brokers conf]
+(defn create-connector [bootstrap-brokers {:keys [acks] :or {acks 0} :as conf}]
   (let [brokers-metadata (ref (get-metadata bootstrap-brokers conf))
         producer-error-ch (chan)
         producer-ref (ref {})
+        send-cache (if (> acks 0) (create-send-cache conf))
+        retry-cache (create-retry-cache conf)
         state {:producers-ref producer-ref
                :brokers-metadata brokers-metadata
                :topic-partition-ref (ref {})
@@ -208,24 +251,45 @@
 							    (fixdelay 5000
 							              (try
 							                (update-metadata)
-							                (catch Exception e (error e e))))]
+							                (catch Exception e (error e e))))
+                  
+        connector {:bootstrap-brokers bootstrap-brokers :send-cache send-cache :retry-cache retry-cache
+                   :state (assoc state :metadata-fixdelay metadata-fixdelay) }
+        
+                  ;;every 10 seconds check for any data in the retry cache and resend the messages 
+				retry-cache-ch (fixdelay 15000
+										      (try
+										         (doseq [{:keys [topic v key-val] :as v} (retry-cache-seq connector)]
+                                (if v
+                                  (do (prn "Retry messages for " v)
+													           (doseq [{:keys [bts]} v]
+												                (send-msg connector topic bts))
+												             
+										                  (delete-from-retry-cache connector key-val))))
+										         (catch Exception e (error e e))))]
     
+    ;listen to any producer errors, this can be sent from any producer
+    ;update metadata, close the producer and write the messages in its buff cache to the 
     (go-loop []
       (when-let [error-val (<! producer-error-ch)]
         (try
 	        (let [{:keys [key-val producer v topic]} error-val]
+            ;persist to retry cache
+            (write-to-retry-cache connector topic v)
+           
 		        (update-metadata)
 		        (info "removing failed producer " (:broker producer) " and updating metadata")
 		        (dosync 
 	                 (alter producer-ref (fn [m] (dissoc m key-val))))
-            ;TODO retry message sent
-	          (shutdown producer))
+          
+            ;close producer and cause the buffer to be flushed
+            (close-producer-buffer!  producer))
           (catch Exception e (error e e)))))
-	        
-        
-    
-    {:bootstrap-brokers bootstrap-brokers
-     :state (assoc state :metadata-fixdelay metadata-fixdelay) }
+	    
+   
+          
+      
+     (assoc connector :retry-cache-ch retry-cache-ch)
     ))
  
 
