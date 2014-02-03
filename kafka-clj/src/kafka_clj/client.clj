@@ -55,6 +55,8 @@
 (defn send-to-buffer [{:keys [ch-source]} msg]
   (>!! ch-source msg))
 
+(defonce counter (AtomicInteger. 1))
+
 (defn create-producer-buffer [connector topic partition producer-error-ch {:keys [host port]} {:keys [batch-num-messages queue-buffering-max-ms] :or 
                                                                    {batch-num-messages 100 queue-buffering-max-ms 1000} :as conf}]
   "Creates a producer and buffered-chan with a go loop that will read off the buffered chan and send to the producer.
@@ -67,6 +69,7 @@
         
         handle-send-message-error (fn [e producer conf offset v]
                                     (error e e)
+                                    (prn "handle-send-message-error: v " v)
                                     (>!! producer-error-ch {:key-val (str topic ":" partition) :error e :producer {:producer producer ::buff-ch buff-ch} 
                                                             :offset offset :v v :topic topic})
                                     )]
@@ -79,11 +82,12 @@
              (if-let [v (<! read-ch)]
                (do 
                   (if (instance? ProduceResponse v) ;ProduceResponse [correlation-id topic partition error-code offset])
-	                 (let [{:keys [correlation-id topic partition]} v]
-	                   (if (> (:error-code v) 0)
+                   (let [{:keys [correlation-id topic partition offset]} v]
+                     (prn "produce response " v)
+	                   (if (or (> (:error-code v) 0) (= (mod (.getAndIncrement counter) 3) 0))
 		                  (handle-send-message-error 
 		                    (RuntimeException. (str "Response error " (:error-code v))) 
-		                    producer conf (get-sent-message connector topic partition correlation-id) v ))
+		                    producer conf offset (get-sent-message connector topic partition correlation-id)))
 		                  (remove-sent-message connector topic partition correlation-id)))
 		                  (recur))))
     
@@ -257,15 +261,14 @@
                    :state (assoc state :metadata-fixdelay metadata-fixdelay) }
         
                   ;;every 10 seconds check for any data in the retry cache and resend the messages 
-				retry-cache-ch (fixdelay 15000
+				retry-cache-ch (fixdelay 5000
 										      (try
-										         (doseq [{:keys [topic v key-val] :as v} (retry-cache-seq connector)]
-                                (if v
-                                  (do (prn "Retry messages for " v)
-													           (doseq [{:keys [bts]} v]
-												                (send-msg connector topic bts))
+										         (doseq [retry-msg (retry-cache-seq connector)]
+                                 (do (prn "Retry messages for " (:topic retry-msg) " " (:key-val retry-msg))
+													           (doseq [{:keys [bts]} (:v retry-msg)]
+                                        (send-msg connector (:topic retry-msg) bts))
 												             
-										                  (delete-from-retry-cache connector key-val))))
+										                  (delete-from-retry-cache connector (:key-val retry-msg))))
 										         (catch Exception e (error e e))))]
     
     ;listen to any producer errors, this can be sent from any producer
@@ -273,8 +276,10 @@
     (go-loop []
       (when-let [error-val (<! producer-error-ch)]
         (try
+          (prn "producer error producer-error-ch")
 	        (let [{:keys [key-val producer v topic]} error-val]
             ;persist to retry cache
+            (prn "write to retry cache ")
             (write-to-retry-cache connector topic v)
            
 		        (update-metadata)

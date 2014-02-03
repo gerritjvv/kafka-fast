@@ -8,9 +8,18 @@
   (try (.close ^DB (:db retry-cache))
        (catch Exception e (error e e))))
 
+(defn- format-val [m-vals]
+  "Fix bug in DBMap that all keys return null when used as keywords"
+  (into {}
+    (map (fn [k v]
+           [(-> k name keyword) v])
+         (keys m-vals)
+         (vals m-vals))))
+      
+        
 (defn retry-cache-seq [{:keys [retry-cache]}]
     "Returns a sequence of values with format {:topic topic :v v} v is the value that was sent to write-to-retry-cache"
-    (vals (:cache retry-cache)))
+    (map format-val (vals (:cache retry-cache))))
 
 (defn delete-from-retry-cache [{:keys [retry-cache]} key-val]
   (.remove ^Map (:cache retry-cache) key-val))
@@ -23,10 +32,14 @@
          msg-val {:topic topic :v v}
          key-val (hash msg-val)]
      (.put map key-val (assoc msg-val :key-val key-val))
-     (.commit db)))
+     (.commit db)
+     ;for now on each write we compact the db, this is a retry cache so the performance
+     ;hit should not matter to much
+     (.compact db)
+     ))
 
 
-(defn create-retry-cache [{:keys [retry-cache-file retry-cache-delete-on-exit] :or {retry-cache-delete-on-exit false retry-cache-file "/tmp/kafka-retry-cache"}}]
+(defn _create-retry-cache [{:keys [retry-cache-file retry-cache-delete-on-exit] :or {retry-cache-delete-on-exit false retry-cache-file "/tmp/kafka-retry-cache"}}]
  (let [file (clojure.java.io/file  retry-cache-file)
        ^DBMaker dbmaker (DBMaker/newFileDB file)
        _ (if retry-cache-delete-on-exit (.deleteFilesAfterClose dbmaker)) ;for testing
@@ -37,6 +50,13 @@
        map (-> db (.getTreeMap "kafka-retry-cache"))]
       {:db db :file file :cache map}))
 
+(defn create-retry-cache [{:keys [retry-cache-file] :or {retry-cache-file "/tmp/kafka-retry-cache"} :as conf}]
+  (try
+    (_create-retry-cache conf)
+    (catch Exception e (do ;delete the file and recreate
+                         (clojure.java.io/delete-file retry-cache-file)
+                         (_create-retry-cache conf)))))
+  
 (defn remove-sent-message [{:keys [send-cache]} topic partition corr-id] 
   (if-let [^HTreeMap cache (:cache send-cache)]
 	    (.remove cache (str corr-id ":" topic ":" partition))))
@@ -44,7 +64,7 @@
 (defn cache-sent-messages [{:keys [send-cache] } offsets]
   "Offsets is expected to have format [[corr-id msgs]...]
    msgs is a list of messages, and corr-id a long value"
-  (if-let [^HTreeMap cache (:cache send-cache)]
+  (if-let [^Map cache (:cache send-cache)]
     (doseq [[corr-id msgs] offsets]
 	    (let [{:keys [topic partition]} (first msgs)]
 	       (.put cache (str corr-id ":" topic ":" partition) msgs)))))
