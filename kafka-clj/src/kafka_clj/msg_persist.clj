@@ -5,7 +5,10 @@
            [java.util Map]))
 
 (defn close-retry-cache [{:keys [retry-cache]}]
-  (try (.close ^DB (:db retry-cache))
+  (try (do
+         
+         (.close ^DB (:db retry-cache)))
+       
        (catch Exception e (error e e))))
 
 (defn- format-val [m-vals]
@@ -22,7 +25,6 @@
     (map format-val (vals (:cache retry-cache))))
 
 (defn delete-from-retry-cache [{:keys [retry-cache]} key-val]
-  (prn "delete-from-retry-cache " key-val)
   (let [^DB db (:db retry-cache)
          ^Map m (:cache retry-cache)]
     ;delete whole map
@@ -80,7 +82,6 @@
         k (str corr-id ":" topic ":" partition)
         msgs (.get cache k)]
      (if msgs (.remove cache corr-id))
-     (prn "get-sent-message " corr-id " count msgs " (count msgs))
     msgs))
 
 (defn create-send-cache [{:keys [send-cache-size-limit

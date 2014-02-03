@@ -81,7 +81,7 @@
           (if (instance? ProduceResponse v) ;ProduceResponse [correlation-id topic partition error-code offset])
              (let [{:keys [correlation-id topic partition offset]} v]
                 (debug "produce response " v)
-	              (if (> (:error-code v) 0) 
+	              (if (> (:error-code v) 0)
 		              (handle-send-message-error 
 		                    (RuntimeException. (str "Response error " (:error-code v))) 
 		                    producer conf offset (get-sent-message connector topic partition correlation-id)))
