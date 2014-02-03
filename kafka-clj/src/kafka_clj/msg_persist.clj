@@ -22,7 +22,16 @@
     (map format-val (vals (:cache retry-cache))))
 
 (defn delete-from-retry-cache [{:keys [retry-cache]} key-val]
-  (.remove ^Map (:cache retry-cache) key-val))
+  (prn "delete-from-retry-cache " key-val)
+  (let [^DB db (:db retry-cache)
+         ^Map m (:cache retry-cache)]
+    ;delete whole map
+    (.remove m key-val);remove key
+    (.commit db)
+    (.compact db)))
+    
+    
+    
 
 (defn write-to-retry-cache [{:keys [retry-cache]} topic v]
   ;here v can be a function, that when called should return the msg sent, or a sequence of messages
@@ -32,11 +41,7 @@
          msg-val {:topic topic :v v}
          key-val (hash msg-val)]
      (.put map key-val (assoc msg-val :key-val key-val))
-     (.commit db)
-     ;for now on each write we compact the db, this is a retry cache so the performance
-     ;hit should not matter to much
-     (.compact db)
-     ))
+     (.commit db)))
 
 
 (defn _create-retry-cache [{:keys [retry-cache-file retry-cache-delete-on-exit] :or {retry-cache-delete-on-exit false retry-cache-file "/tmp/kafka-retry-cache"}}]
@@ -105,7 +110,6 @@
      {:db db :cache cache}))
 
 (defn close-send-cache [{:keys [send-cache]}]
-  (prn "calling close send-cache")
   (try 
     (if send-cache
 		    (.close ^DB (:db send-cache)))
