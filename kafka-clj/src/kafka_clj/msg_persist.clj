@@ -6,8 +6,10 @@
 
 (defn close-retry-cache [{:keys [retry-cache]}]
   (try (do
-         
-         (.close ^DB (:db retry-cache)))
+         ;running this code causes 100% cpu usages,
+         ;for now we use close on JVM shutdown
+         ;(.close (:cache retry-cache))
+         )
        
        (catch Exception e (error e e))))
 

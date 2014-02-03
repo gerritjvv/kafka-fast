@@ -201,11 +201,12 @@
   (stop-fixdelay (:metadata-fixdelay state))
   
   ;(stop-fixdelay (:retry-cache-ch state))
-	(close-retry-cache connector)
+	(close-retry-cache connector) ;here we get 100% cpu use
   (close-send-cache connector)
  
   (doseq [producer-buffer (deref (:producers-ref state))]
-    (close-producer-buffer! producer-buffer)))
+    (close-producer-buffer! producer-buffer))
+  )
 
 
 (defn create-connector [bootstrap-brokers {:keys [acks] :or {acks 0} :as conf}]
