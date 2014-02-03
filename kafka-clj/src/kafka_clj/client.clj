@@ -1,13 +1,13 @@
 (ns kafka-clj.client
   (:gen-class)
-  (:require [fun-utils.core :refer [star-channel buffered-chan fixdelay apply-get-create stop-fixdelay]]
+  (:require [fun-utils.core :refer [star-channel buffered-chan fixdelay apply-get-create stop-fixdelay go-seq]]
             [kafka-clj.produce :refer [producer send-messages message shutdown]]
             [kafka-clj.metadata :refer [get-metadata]]
             [kafka-clj.msg-persist :refer [get-sent-message close-send-cache create-send-cache close-send-cache remove-sent-message
                                            create-retry-cache write-to-retry-cache retry-cache-seq close-retry-cache delete-from-retry-cache]]
-            [clojure.tools.logging :refer [error info]]
+            [clojure.tools.logging :refer [error info debug]]
             [reply.main]
-            [clojure.core.async :refer [chan >! >!! go go-loop close!] :as async])
+            [clojure.core.async :refer [chan >! >!! go close!] :as async])
   (:import [java.util.concurrent.atomic AtomicInteger]
            [kafka_clj.response ProduceResponse]))
 
@@ -55,8 +55,6 @@
 (defn send-to-buffer [{:keys [ch-source]} msg]
   (>!! ch-source msg))
 
-(defonce counter (AtomicInteger. 1))
-
 (defn create-producer-buffer [connector topic partition producer-error-ch {:keys [host port]} {:keys [batch-num-messages queue-buffering-max-ms] :or 
                                                                    {batch-num-messages 100 queue-buffering-max-ms 1000} :as conf}]
   "Creates a producer and buffered-chan with a go loop that will read off the buffered chan and send to the producer.
@@ -78,43 +76,37 @@
     ;if a response from the server (only when ack > 0)
     ; if error-codec > 0 then handle the error
     ; else remove the message from the cache
-    (go-loop []
-             (if-let [v (<! read-ch)]
-               (do 
-                  (if (instance? ProduceResponse v) ;ProduceResponse [correlation-id topic partition error-code offset])
-                   (let [{:keys [correlation-id topic partition offset]} v]
-                     (prn "produce response " v)
-	                   (if (or (> (:error-code v) 0) (= (mod (.getAndIncrement counter) 3) 0))
-		                  (handle-send-message-error 
+    (go-seq 
+       (fn [v]
+          (if (instance? ProduceResponse v) ;ProduceResponse [correlation-id topic partition error-code offset])
+             (let [{:keys [correlation-id topic partition offset]} v]
+                (debug "produce response " v)
+	              (if (> (:error-code v) 0) 
+		              (handle-send-message-error 
 		                    (RuntimeException. (str "Response error " (:error-code v))) 
 		                    producer conf offset (get-sent-message connector topic partition correlation-id)))
-		                  (remove-sent-message connector topic partition correlation-id)))
-		                  (recur))))
+		              (remove-sent-message connector topic partition correlation-id)))) read-ch)
     
     ;;if any error on the tcp client handle error
-    (go-loop []
-      (when-let [[e v] (<! (:error-ch c))]
-		    (if (fn? v) 
+    (go-seq
+      (fn [[e v]]
+        (if (fn? v) 
           (handle-send-message-error 
                     (RuntimeException. (str "Client tcp error " e)) 
                     producer conf v -1)
           (error "Cannot react on message " v))
         
-        (error e e)
-        
-		    (recur)))
+        (error e e))  (:error-ch c))
 		    
     ;send buffered messages
     ;if any exception handle the error
-    (go-loop []
-        (if-let [v (<! buff-ch)]
-             (do
-               (if (> (count v) 0) 
+    (go-seq
+        (fn [v]
+           (if (> (count v) 0) 
                  (do
                    (try 
                        (send-messages connector producer conf v) 
-                       (catch Exception e (handle-send-message-error e producer conf v -1)))))
-                (recur))))
+                       (catch Exception e (handle-send-message-error e producer conf v -1)))))) buff-ch)
     
     {:host host
      :port port
@@ -128,7 +120,7 @@
   (let [error-ch (-> producer-buffer :producer :client :error-ch)]
 	   (go
       (if-let [error-val (<! error-ch)]
-       (do 
+       (do
          ;(error (first error-val) (first error-val))
          (prn "removing producer for " key-val)
          (try 
@@ -213,9 +205,7 @@
   (close-send-cache connector)
  
   (doseq [producer-buffer (deref (:producers-ref state))]
-    (close-producer-buffer! producer-buffer))
-  
-  (close-send-cache connector))
+    (close-producer-buffer! producer-buffer)))
 
 
 (defn create-connector [bootstrap-brokers {:keys [acks] :or {acks 0} :as conf}]
@@ -273,8 +263,8 @@
     
     ;listen to any producer errors, this can be sent from any producer
     ;update metadata, close the producer and write the messages in its buff cache to the 
-    (go-loop []
-      (when-let [error-val (<! producer-error-ch)]
+    (go-seq
+      (fn [error-val]
         (try
           (prn "producer error producer-error-ch")
 	        (let [{:keys [key-val producer v topic]} error-val]
@@ -289,7 +279,7 @@
           
             ;close producer and cause the buffer to be flushed
             (close-producer-buffer!  producer))
-          (catch Exception e (error e e)))))
+          (catch Exception e (error e e)))) producer-error-ch)
 	    
    
           

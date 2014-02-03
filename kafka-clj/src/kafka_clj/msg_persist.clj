@@ -105,6 +105,7 @@
      {:db db :cache cache}))
 
 (defn close-send-cache [{:keys [send-cache]}]
+  (prn "calling close send-cache")
   (try 
     (if send-cache
 		    (.close ^DB (:db send-cache)))
