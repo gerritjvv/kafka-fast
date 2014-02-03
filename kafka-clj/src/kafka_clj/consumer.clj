@@ -9,7 +9,7 @@
             [kafka-clj.metadata :refer [get-metadata]]
             [fun-utils.core :refer [buffered-chan]]
             [clojure.pprint :refer [pprint]]
-            [clojure.core.async :refer [<!! >!! alts!! timeout chan go >! <! close!]])
+            [clojure.core.async :refer [<!! >!! alts!! timeout chan go >! <! close! go-loop]])
   (:import [kafka_clj.fetch_codec FetchMessage FetchError FetchEnd]
            [com.codahale.metrics Meter MetricRegistry Timer Histogram]
            [java.util.concurrent Executors ExecutorService Future Callable]))
@@ -66,7 +66,7 @@
 (defn merge-broker-offsets [state d]
   "D is a collection of messages one per topic partition, that were last consumed from a fetch request,
    state is the broker-offsets {broker {topic [{:partition :offset :topic}]}}
-   The function will merge d with state so that state will contain the latest offsets consumed,
+   The function will merge d with state so that state will contain the latest offsets d,
    and then returns the new state
    "
   ;(info "merge " state " with " d)
@@ -144,42 +144,38 @@
                                         msg   v]
                                       [#{topic (:partition msg)} (assoc msg :topic topic) ]))]
     
-    (loop [resp {} fetch-errors {} t (timeout fetch-timeout)]
+    (loop [resp {} fetch-errors [] t (timeout fetch-timeout)]
       (let [[v c] (alts!! [read-ch error-ch t])]
         (.mark m-consume-reads) ;metrics mark
-        
         (if v
 		      (if (= c read-ch)
-		        (cond (instance? FetchEnd v) (do 
-                                         
-	                                         ;(if (= (dec fetch-count-i) 0)
-	                                             (do (p-close) [(vals resp) fetch-errors]))
-	                                          ;   (recur resp fetch-errors (timeout fetch-timeout) (dec fetch-count-i))))
+		        (cond (instance? FetchEnd v)  (do (p-close) [(vals resp) fetch-errors])
                   :else ;assume FetchMessage
-                     (do
+                  (do
+                     (let [k #{(:topic v) (:partition v)}]
+                       
                        (if (instance? FetchError v)
                          (do
                            (error "Fetch error " v)
-                           (recur resp (assoc k v fetch-errors) (timeout fetch-timeout)))
+                           (recur resp (conj fetch-errors v) (timeout fetch-timeout)))
                          
                          (if-let [partition (:partition v)] 
-                           (let [k #{(:topic v) partition}
-                             latest-offset (get-latest-offset k current-offsets resp)
-                             new-msg? (or (> (:offset v) latest-offset) (= (:offset v) 0)) ]
+                           (let [latest-offset (get-latest-offset k current-offsets resp)
+                                 new-msg? (or (> (:offset v) latest-offset) (= (:offset v) 0)) ]
 		                         (if new-msg?
 			                          (do 
                                    (.update m-message-size (count (:bts v)))
 		                               (>!! msg-ch v)
 		                               (p-send v)))
-		                            ;;(error "Duplicate message " k " latest-offset " latest-offset " message offset " (:offset v)))
-                           
-		                       (recur (if new-msg? (assoc resp k v) resp) fetch-errors (timeout fetch-timeout)))
+                                                      
+		                         (recur (if new-msg? (assoc resp k v) resp) fetch-errors (timeout fetch-timeout)))
                            (error "No partition sent " v)
-                           ))))
-		        (do (p-close) (error "Error while requesting data from " producer " for topics " (keys topic-offsets)) [(vals resp) fetch-errors]))
+                           )))))
+		        (do (p-close) (error "Error while requesting data from " (:broker producer) " for topics " (keys topic-offsets)) [(vals resp) (conj fetch-errors v)]))
 		        (do 
                 (p-close) 
-                (error "Timeout while requesting data from " (:broker producer) " read messages: " resp) [(vals resp) fetch-errors]))))
+                (error "Timeout while requesting data from " (:broker producer) " read messages: " resp) 
+                [(vals resp) (conj fetch-errors (RuntimeException. (str "Timeout while waiting for send response from " (:broker producer) " topic ")))]))))
     
     
     ))
@@ -394,6 +390,7 @@
   "Consume from the current offsets,
    if any error the producers are closed and a reconnect is done, and consumption is tried again
    otherwise the broker-offsets are updated and the next fetch is done"
+  
   (loop [producers producers broker-offsets1 broker-offsets-p]
       ;v is [broker data]
 	      (let [ broker-offsets2 (apply merge-with merge 
@@ -410,13 +407,12 @@
 	                ;;here we need to delete the offsets that have had errors from the storage
 	                ;;or better yet set them to storage
                  ;persist-error-offsets [group-conn broker-offsets errors conf]
+                  (info "Got new consumers " (map :broker producers))
 	                (persist-error-offsets group-conn broker-offsets errors conf)
                   (.stop timer-ctx)
 			            (recur producers broker-offsets)))
 			      (do
-               ;(prn "BRoker offsets 1")
-               ;(clojure.pprint/pprint broker-offsets1)
-	             (if (nil?  (second v)) ; if we were reading data, no need to pause
+               (if (< (reduce #(+ %1 (count %2)  ) 0 (vals v)) 1) ; if we were reading data, no need to pause
 	               (do (info "sleep: " fetch-poll-ms) (<!! (timeout fetch-poll-ms))))
 	             
                (.stop timer-ctx)
@@ -473,7 +469,7 @@
                    (doseq [c consumers]
                      ((:shutdown c))))]
     
-    {:shutdown shutdown :message-ch msg-ch :group-conn group-conn :metrics metrics}))
+    {:shutdown shutdown :message-ch msg-ch :group-conn group-conn :metrics metrics :consumers consumers}))
 
 
 (defn close-consumer [{:keys [shutdown]}]
