@@ -89,7 +89,7 @@
 	             v (doall
 			            ;read the messages inside of this compressed message
 			            (mapcat flatten (map :message (read-messages0 ubuff (count ubytes)))))]
-            (info "decompress " codec   " messages " (count v))
+            ;(info "decompress " codec   " messages " (count v))
              v
              )))
       (tuple {:crc crc :key key-arr :bts val-arr :crc2 crc2}))))

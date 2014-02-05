@@ -452,6 +452,7 @@
   Group management:
       The join is done using either :host-name if its defined in conf, otherwise join is done as (join c) using the host name.
   "
+  (info "Connecting to redis using " (get conf :redis-conf {:heart-beat-freq 10}))
   (let [
         metrics (create-metrics)
         msg-ch (chan 100)
