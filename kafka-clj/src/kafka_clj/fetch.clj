@@ -76,6 +76,7 @@
 
 (declare read-message-set)
 (declare read-messages0)
+(declare read-messages)
 
 (defn read-message [^ByteBuf buff topic-name partition offset state f]
   "Message => Crc MagicByte Attributes Key Value
@@ -103,7 +104,8 @@
         (if ubytes
           (let [ubuff (Unpooled/wrappedBuffer ubytes)]
 	                ;read the messages inside of this compressed message
-			            (read-messages0 ubuff (count ubytes) topic-name partition state f)
+                (read-messages0 ubuff (count ubytes) topic-name partition state f)
+                    
              )))
        
           (f state (->Message topic-name partition offset val-arr))
@@ -120,32 +122,46 @@
   Attributes => int8
   Key => bytes
   Value => bytes"
+  
+  (if (> bts-left 0)
+     (if (> (- bts-left 12) 0)
        (let [offset (.readLong in)
-             message-size (.readInt in)]
-         (if (> message-size bts-left)
-           (do
-             ;if we find a partial message we skip the bytes left
-             (.skipBytes in (- bts-left))
-             state)
-           (read-message in topic-name partition offset state f))))
+             message-size (.readInt in)
+             bts-left2 (- bts-left 12)]
+           (if (> message-size bts-left2)
+	           (do (info "partial message found at " topic-name " " partition " bts-left " bts-left2  " message-size " message-size " readable " (.readableBytes in) ) 
+              
+              (.skipBytes in (if (> bts-left2 (.readableBytes in)) (.readableBytes in) bts-left2)) state)
+            
+	           (read-message in topic-name partition offset state f)))
+         (do (info "bts-left < 12 " bts-left)
+             (.skipBytes in bts-left)
+             state))
+       state))
+             
 
 (defn calc-bytes-read [^ByteBuf buff start-index]
-  (- (.readerIndex buff) start-index))
+    (- (.readerIndex buff) start-index))
 
 (defn read-messages0 [^ByteBuf buff message-set-size topic-name partition state f]
   "Read all the messages till the number of bytes message-set-size have been read"
 	(loop [res state reader-start (.readerIndex buff) bts-left message-set-size]
      (if (> bts-left 0)
-         (recur  (read-message-set buff reader-start bts-left topic-name partition res f) 
-           (.readerIndex buff) 
-           (- bts-left (calc-bytes-read buff reader-start)))
+         (let [resp (read-message-set buff reader-start bts-left topic-name partition res f)]
+           (recur resp
+                  (.readerIndex buff) 
+                  (- bts-left (calc-bytes-read buff reader-start))))
           res)))
 
 (defn read-messages [^ByteBuf buff topic-name partition state f]
   "Read all the messages till the number of bytes message-set-size have been read"
   (let [message-set-size (.readInt buff)]
     ;(prn "message-set-size " message-set-size)
-    (read-messages0 buff message-set-size topic-name partition state f)))
+    (if (> message-set-size (.readableBytes buff))
+      (do 
+        (info "Message-set-size " message-set-size " is bigger than the readable bytes " (.readableBytes buff))
+        state)
+    (read-messages0 buff message-set-size topic-name partition state f))))
             
 
 (defn read-array [^ByteBuf in state f & args]
@@ -163,8 +179,10 @@
        error-code (.readShort in)
        hw-mark-offset (.readLong in)]
    (if (> error-code 0)
-     (read-messages in topic-name partition (f state (->FetchError topic-name partition error-code)) f)
-     (read-messages in topic-name partition state f))))
+     (f state (->FetchError topic-name partition error-code))
+     (if (> (.readableBytes in) 0) 
+       (read-messages in topic-name partition state f)
+       state))))
 
 (defn read-topic [state ^ByteBuf in f]
   (let [topic-name (read-short-string in)]

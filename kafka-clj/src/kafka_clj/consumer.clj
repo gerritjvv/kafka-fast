@@ -159,7 +159,7 @@
   
 (defn send-request-and-wait [producer group-conn topic-offsets msg-ch {:keys [^Histogram m-message-size
                                                                               ^Meter m-consume-reads fetch-timeout] 
-                                                                       :or {fetch-timeout 10000} :as conf}]
+                                                                       :or {fetch-timeout 60000} :as conf}]
   "Returns [the messages, and fetch errors], if any error was or timeout was detected the function returns otherwise it waits for a FetchEnd message
    and returns. 
   "
@@ -174,6 +174,7 @@
                                       [#{topic (:partition msg)} (assoc msg :topic topic) ]))]
     
       (let [[v c] (alts!! [read-ch error-ch (timeout fetch-timeout)])]
+        ;(info "Got message " (count v ) " is read " (= c read-ch) " is error " (= c error-ch))
         (.mark m-consume-reads) ;metrics mark
         (try
 	        (cond 
