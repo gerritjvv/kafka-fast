@@ -1,4 +1,4 @@
-(defproject kafka-clj "0.4.1-SNAPSHOT"
+(defproject kafka-clj "0.4.2-SNAPSHOT"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -9,8 +9,8 @@
   :global-vars {*warn-on-reflection* true
                 *assert* false}
 
-  ;:aot [kafka-clj.client]
-  ;:main kafka-clj.client
+  :aot [kafka-clj.client]
+  :main kafka-clj.client
   :java-source-paths ["java"]  
   :jvm-opts ["-Xmx3g"]
   :plugins [
@@ -18,6 +18,8 @@
          [lein-kibit "0.0.8"] [no-man-is-an-island/lein-eclipse "2.0.0"]
            ]
   :dependencies [
+                 [org.clojars.smee/binary "0.2.5"]
+                 [clojurewerkz/buffy "1.0.0-beta1"]
                  [group-redis "0.1.7-SNAPSHOT"]
                  [org.mapdb/mapdb "0.9.9"]
                  [midje "1.6.0" :scope "test"]

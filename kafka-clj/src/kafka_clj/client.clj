@@ -270,7 +270,9 @@
           (prn "producer error producer-error-ch")
 	        (let [{:keys [key-val producer v topic]} error-val]
             ;persist to retry cache
-            (prn "write to retry cache ")
+            (info "!!! ERROR write to retry cache : "  key-val " " v " " topic)
+            (.printStackTrace (:error error-val))
+            
             (write-to-retry-cache connector topic v)
            
 		        (update-metadata)

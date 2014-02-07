@@ -209,4 +209,44 @@ a different producer buffer, the message once sent is deleted from the retry-cac
 The logic above is created in the create-connector function, and attached to the connector.
 
 The close function will stop all the background logic above.
+
+
+# Consumer Implementation
+
+This section covers more details about the consumer implementation.
+
+## create-fetch-producer
+
+This method creates a connection with a broker over which fetch requests can be sent, and responses read.
+
+```create-fetch-producer broker conf``` where broker is ```{:broker "host" :port 9092}```.
+
+To send a fetch request call ```send-fetch fetch-producer topic-partitions```, topic-partitions have the format ```[ [topic-name [ {:partition 0 :offset 0} {:partition 1 :offset 0} ...]] ... ]```
+Note that the partitions must be held on the broker the request is sent for.
+
+##  read-fetch
+
+To read the response  the read-fetch is used ```read-fetch byte-buff state f```
+
+The function f is applied everytime a message or fetch error is read, and apply as ```(apply f state msg)```,
+the state is accumelated as with reduce so that each state is the result of apply f to a previous message (or the initial state).
+
+So to return a list of messages read fetch can be called as ```read-fetch byte-buff [] conj```
+
+
+## Exmaple
+
+```clojure
+(require '[kafka-clj.fetch :refer [send-fetch read-fetch create-fetch-producer]]:reload)
+(import 'io.netty.buffer.Unpooled)
+
+(def p (create-fetch-producer {:host "localhost" :port 9092} {}))
+
+(send-fetch p [["ping" [{:partition 0 :offset 0}]]])
+
+(def cs [(-> p :client :read-ch) (-> p :client :error-ch)])
+(def vs (alts!! cs))
+
+(read-fetch (Unpooled/wrappedBuffer (first vs)) [] conj )
+```
  

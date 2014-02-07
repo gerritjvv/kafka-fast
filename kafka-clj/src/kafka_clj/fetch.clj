@@ -9,13 +9,17 @@
             [kafka-clj.buff-utils :refer [write-short-string with-size read-short-string read-byte-array codec-from-attributes]]
             [kafka-clj.fetch-codec :refer [fetch-response-decoder bytes-read-status-handler]]
             [kafka-clj.produce :refer [API_KEY_FETCH_REQUEST API_KEY_OFFSET_REQUEST API_VERSION MAGIC_BYTE]]
-            [clojure.core.async :refer [go >! <! chan <!! alts!! timeout]])
+            [clojure.core.async :refer [go >! <! chan >!! <!! alts!! put! timeout]])
   (:import [io.netty.buffer ByteBuf Unpooled PooledByteBufAllocator]
-           [io.netty.handler.codec ByteToMessageDecoder ReplayingDecoder]
+           [io.netty.handler.codec LengthFieldBasedFrameDecoder ByteToMessageDecoder ReplayingDecoder]
            [io.netty.channel ChannelOption]
+           [java.util.concurrent.atomic AtomicInteger]
            [java.util List]
            [kafka_clj.util Util]
            [io.netty.channel.nio NioEventLoopGroup]))
+
+(defrecord Message [topic partition offset bts])
+(defrecord FetchError [topic partition error-codec])
 
 (defn ^ByteBuf write-fecth-request-message [^ByteBuf buff {:keys [max-wait-time min-bytes topics max-bytes]
                                           :or { max-wait-time 1000 min-bytes 1 max-bytes 52428800}}]
@@ -40,7 +44,15 @@
    buff)
 	  
 
-(defn ^ByteBuf write-fetch-request-header [^ByteBuf buff {:keys [client-id correlation-id] :or {client-id "1" correlation-id (int (/ (System/currentTimeMillis) 1000))} :as state}]
+(defonce ^AtomicInteger correlation-id-counter (AtomicInteger.))
+(defn get-unique-corr-id []
+  (let [v (.getAndIncrement correlation-id-counter)]
+    (if (= v (Integer/MAX_VALUE)) ;check overflow
+         (.set correlation-id-counter 0))
+    v))
+
+
+(defn ^ByteBuf write-fetch-request-header [^ByteBuf buff {:keys [client-id] :or {client-id "1"} :as state}]
   "
    RequestMessage => ApiKey ApiVersion CorrelationId ClientId RequestMessage
   ApiKey => int16
@@ -53,7 +65,7 @@
   (-> buff
      (.writeShort (short API_KEY_FETCH_REQUEST))
      (.writeShort (short API_VERSION))
-     (.writeInt (int correlation-id))
+     (.writeInt (int (get-unique-corr-id))) ;the correlation id must always be unique
      ^ByteBuf (write-short-string client-id)
      ^ByteBuf (write-fecth-request-message state)))
 
@@ -65,7 +77,7 @@
 (declare read-message-set)
 (declare read-messages0)
 
-(defn read-message [^ByteBuf buff]
+(defn read-message [^ByteBuf buff topic-name partition offset state f]
   "Message => Crc MagicByte Attributes Key Value
   Crc => int32
   MagicByte => int8
@@ -86,19 +98,19 @@
     ;check attributes, if the message is compressed, uncompress and read messages
     ;else return as is
     (if (> codec 0)
-      (let [ ^"[B" ubytes (try (uncompress codec val-arr) (catch Exception e (do   nil)))
+      (let [ ^"[B" ubytes (try (uncompress codec val-arr) (catch Exception e (do  (.printStackTrace e))))
              ]
-        ;(prn "decompress " codec   " bts " (String. val-arr))
         (if ubytes
           (let [ubuff (Unpooled/wrappedBuffer ubytes)]
-	            (doall 
-			            ;read the messages inside of this compressed message
-			            (mapcat flatten (map :message (read-messages0 ubuff (count ubytes))))))))
-      (tuple {:crc crc :key key-arr :bts val-arr :crc2 crc2}))))
-    
+	                ;read the messages inside of this compressed message
+			            (read-messages0 ubuff (count ubytes) topic-name partition state f)
+             )))
+       
+          (f state (->Message topic-name partition offset val-arr))
+        )))    
         
    
-(defn read-message-set [^ByteBuf in]
+(defn read-message-set [^ByteBuf in reader-start bts-left topic-name partition state f]
   "MessageSet => [Offset MessageSize Message]
   Offset => int64
   MessageSize => int32
@@ -110,24 +122,59 @@
   Value => bytes"
        (let [offset (.readLong in)
              message-size (.readInt in)]
-		        {:offset offset
-		         :message-size message-size
-		         :message (read-message in)}))
+         (if (> message-size bts-left)
+           (do
+             ;if we find a partial message we skip the bytes left
+             (.skipBytes in (- bts-left))
+             state)
+           (read-message in topic-name partition offset state f))))
 
-(defn read-messages0 [^ByteBuf buff message-set-size]
+(defn calc-bytes-read [^ByteBuf buff start-index]
+  (- (.readerIndex buff) start-index))
+
+(defn read-messages0 [^ByteBuf buff message-set-size topic-name partition state f]
   "Read all the messages till the number of bytes message-set-size have been read"
-  (let [reader-start (.readerIndex buff)]
-		  (loop [msgs []]
-		    (if (< (- (.readerIndex buff) reader-start)  message-set-size)
-          (recur (conj msgs (read-message-set buff)))
-          msgs))))
+	(loop [res state reader-start (.readerIndex buff) bts-left message-set-size]
+     (if (> bts-left 0)
+         (recur  (read-message-set buff reader-start bts-left topic-name partition res f) 
+           (.readerIndex buff) 
+           (- bts-left (calc-bytes-read buff reader-start)))
+          res)))
 
-(defn read-messages [^ByteBuf buff]
+(defn read-messages [^ByteBuf buff topic-name partition state f]
   "Read all the messages till the number of bytes message-set-size have been read"
   (let [message-set-size (.readInt buff)]
-    (read-messages0 buff message-set-size)))
+    ;(prn "message-set-size " message-set-size)
+    (read-messages0 buff message-set-size topic-name partition state f)))
             
-        
+
+(defn read-array [^ByteBuf in state f & args]
+  "Calls f with (apply f res args where res starts out as a map
+   and is subsequently the result of calling the prefivous (apply f res args)"
+  (let [len (.readInt in)]
+    (loop [i 0 res state]
+      (if (< i len)
+          (recur (inc i) (apply f res args))
+          res))))
+
+
+(defn read-partition [state topic-name ^ByteBuf in f]
+ (let [partition (.readInt in)
+       error-code (.readShort in)
+       hw-mark-offset (.readLong in)]
+   (if (> error-code 0)
+     (read-messages in topic-name partition (f state (->FetchError topic-name partition error-code)) f)
+     (read-messages in topic-name partition state f))))
+
+(defn read-topic [state ^ByteBuf in f]
+  (let [topic-name (read-short-string in)]
+    (read-array in state read-partition topic-name in f)))
+
+(defn read-fetch [^ByteBuf in state f]
+  "Will return the accumelated result of f"
+ (let [size (.readInt in)
+       correlation-id (.readInt in)]
+     (read-array in state read-topic in f)))
 
 (defn read-fetch-response [^ByteBuf in]
   "
@@ -263,13 +310,8 @@
 
 (defn send-fetch [{:keys [client conf]} topics]
   "topics must have format [[topic [{:partition 0} {:partition 1}...]] ... ]"
-  
   (write! client (fn [^ByteBuf buff]
-                   ;(info "!!!!!!!!!!!!>>>>>>>>>>>>>><<<<<<<<<<< write offset request; " topics)
-                   ;(info "writer index " (.writerIndex buff))
-                   
                    (write-fetch-request buff (merge conf {:topics topics}))
-                   ;(info "after writer index " (.writerIndex buff))
                    ))
   )
 
@@ -320,9 +362,8 @@
                                    ;parameters tha cannot be overwritten
                                    {
 			                             :handlers [
-                                                                 ;bytes-read-status-handler
-			                                                           fetch-response-decoder
-			                                                           #(default-encoder true) 
+                                                    #(LengthFieldBasedFrameDecoder. (Integer/MAX_VALUE) 0 4)
+			                                              #(default-encoder true) 
 			                                                           ]}))]
        {:client c :conf conf :broker {:host host :port port}})))
 

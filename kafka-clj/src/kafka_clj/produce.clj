@@ -144,12 +144,13 @@
 
 (defn send-messages [connector
                      {:keys [client]} 
-                     {:keys [acks] :as conf}
+                     {:keys [acks] :or {acks 0} :as conf}
                      msgs]
   "Send messages by writing them to the tcp client.
    The write is async.
    If the conf properties acks is > 0 the messages will also be written to an inmemory cache,
    the cache expires and has a maximum size, but it allows us to retry failed messages."
+  
   (if (> acks 0)
     (write! client (partial write-message-for-ack connector conf msgs))
 	  (write! client (fn [^ByteBuf buff] 
