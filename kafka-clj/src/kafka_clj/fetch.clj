@@ -1,5 +1,5 @@
 (ns kafka-clj.fetch
-  (:require [clojure.tools.logging :refer [error info]]
+  (:require [clojure.tools.logging :refer [error info debug]]
             [clj-tuple :refer [tuple]]
             [clj-tcp.codec :refer [default-encoder]]
             [clj-tcp.client :refer [client write! read! close-all ALLOCATOR read-print-ch read-print-in]]
@@ -7,7 +7,6 @@
             [kafka-clj.codec :refer [uncompress crc32-int]]
             [kafka-clj.metadata :refer [get-metadata]]
             [kafka-clj.buff-utils :refer [write-short-string with-size read-short-string read-byte-array codec-from-attributes]]
-            [kafka-clj.fetch-codec :refer [fetch-response-decoder bytes-read-status-handler]]
             [kafka-clj.produce :refer [API_KEY_FETCH_REQUEST API_KEY_OFFSET_REQUEST API_VERSION MAGIC_BYTE]]
             [clojure.core.async :refer [go >! <! chan >!! <!! alts!! put! timeout]])
   (:import [io.netty.buffer ByteBuf Unpooled PooledByteBufAllocator]
@@ -129,12 +128,15 @@
              message-size (.readInt in)
              bts-left2 (- bts-left 12)]
            (if (> message-size bts-left2)
-	           (do (info "partial message found at " topic-name " " partition " bts-left " bts-left2  " message-size " message-size " readable " (.readableBytes in) ) 
+	           (do 
+              
+              (debug "partial message found at " topic-name " " partition " bts-left " bts-left2  " message-size " message-size " readable " (.readableBytes in) ) 
               
               (.skipBytes in (if (> bts-left2 (.readableBytes in)) (.readableBytes in) bts-left2)) state)
             
 	           (read-message in topic-name partition offset state f)))
-         (do (info "bts-left < 12 " bts-left)
+         (do 
+             (debug "bts-left < 12 " bts-left)
              (.skipBytes in bts-left)
              state))
        state))
