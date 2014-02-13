@@ -249,4 +249,20 @@ So to return a list of messages read fetch can be called as ```read-fetch byte-b
 
 (read-fetch (Unpooled/wrappedBuffer (first vs)) [] conj )
 ```
+
+
+# Commong errors during use
+
+
+## Message-set-size  aaa  is bigger than the readable bytes  bbbb
+
+Its common for kafka to send partial messages, not so common to send a whole partial message set. This error if seen infrequently ignore, but if you're 
+getting allot of these errors it might point to that your fetch size max bytes is too small and the actual message sets are larger than that value,
+for some reason kafka will still send it but partially.
+
+To fix experiment with increasing the value of the property ```kafka.max-bytes``` slowly, one megabyte at a time. If the value is too big  you'll start getting timeouts.
+
+Also check if the messages being sent can be reduced in size.
+
+ 
  

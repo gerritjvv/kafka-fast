@@ -157,7 +157,7 @@
 	                           (p-send msg)
 						                 (tuple (assoc resp k msg) errors))))
 						         (instance? FetchError msg)
-						         (tuple resp (conj! errors msg))
+						         (tuple resp (conj errors msg))
 						         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
 	               (catch Exception e (prn-fetch-error e state msg))))))]
      (tuple (vals resp-map) error-vec)))
