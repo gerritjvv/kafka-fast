@@ -158,7 +158,6 @@
 (defn read-messages [^ByteBuf buff topic-name partition state f]
   "Read all the messages till the number of bytes message-set-size have been read"
   (let [message-set-size (.readInt buff)]
-    ;(prn "message-set-size " message-set-size)
     (if (> message-set-size (.readableBytes buff))
       (do 
         (info "Message-set-size " message-set-size " is bigger than the readable bytes " (.readableBytes buff))

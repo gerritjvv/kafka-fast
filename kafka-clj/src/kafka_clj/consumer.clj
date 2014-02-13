@@ -137,25 +137,30 @@
   (let [latest-offset (get-latest-offset k current-offsets resp)]
     (or (> (:offset v) latest-offset) (= (:offset v) 0))))
 
+(defn prn-fetch-error [e state msg]
+  (error e (str "Internal Error while reading message: e " e))
+  (error (str "Internal Error while reading message: state " state " for message " msg)))
+
 (defn read-fetch-message [{:keys [p-send]} current-offsets msg-ch v]
   ;read-fetch will return the result of fn which is [resp-vec error-vec]
    (let [[resp-map error-vec] 
-         (read-fetch (Unpooled/wrappedBuffer ^"[B" v) [(transient {}) (transient [])]
-			     (fn [[resp errors] msg]
-             (try
-               (do 
-		             (cond 
-					         (instance? Message msg)
-					         (let [k #{(:topic msg) (:partition msg)}]
-					           (if (is-new-msg? current-offsets resp k msg)   
-		                   (do (>!! msg-ch msg)
-                           (p-send msg)
-					                 (tuple (assoc! resp k msg) errors))))
-					         (instance? FetchError msg)
-					         (tuple resp (conj! errors msg))
-					         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
-               (catch Exception e (.printStackTrace e)))))]
-     (tuple (vals (persistent! resp-map)) (persistent! error-vec))))
+         (read-fetch (Unpooled/wrappedBuffer ^"[B" v) [{} []]
+			     (fn [state msg]
+	            (let [[resp errors] state]
+               (try
+	               (do 
+			             (cond 
+						         (instance? Message msg)
+						         (let [k #{(:topic msg) (:partition msg)}]
+						           (if (is-new-msg? current-offsets resp k msg)   
+			                   (do (>!! msg-ch msg)
+	                           (p-send msg)
+						                 (tuple (assoc resp k msg) errors))))
+						         (instance? FetchError msg)
+						         (tuple resp (conj! errors msg))
+						         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
+	               (catch Exception e (prn-fetch-error e state msg))))))]
+     (tuple (vals resp-map) error-vec)))
   
 (defn send-request-and-wait [producer group-conn topic-offsets msg-ch {:keys [^Histogram m-message-size
                                                                               ^Meter m-consume-reads fetch-timeout] 
