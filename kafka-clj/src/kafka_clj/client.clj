@@ -6,6 +6,7 @@
             [kafka-clj.msg-persist :refer [get-sent-message close-send-cache create-send-cache close-send-cache remove-sent-message
                                            create-retry-cache write-to-retry-cache retry-cache-seq close-retry-cache delete-from-retry-cache]]
             [clojure.tools.logging :refer [error info debug]]
+            [clj-tuple :refer [tuple]]
             [reply.main]
             [clojure.core.async :refer [chan >! >!! go close!] :as async])
   (:import [java.util.concurrent.atomic AtomicInteger]
@@ -55,6 +56,21 @@
 (defn send-to-buffer [{:keys [ch-source]} msg]
   (>!! ch-source msg))
 
+(defn get-latest-msg [messages]
+  "Get the latest message taking care if messages is a seq or vector"
+  (cond 
+    (seq? messages) (first messages)
+    (vector? messages) (last messages)
+    :else (throw (RuntimeException. (str "Collection type not expected here " messages)))))
+
+(defn count-bytes 
+  "An accumulator state function that counts the number of bytes of messages in a vector
+   and if higher than v returns [true acc] [false acc]"
+  ([] 0)
+  ([acc messages v]
+    (let [acc2 (+ acc (count (:bts (get-latest-msg messages))))]
+      (tuple (>= acc2 v) acc2))))
+    
 (defn create-producer-buffer [connector topic partition producer-error-ch {:keys [host port]} {:keys [batch-num-messages queue-buffering-max-ms] :or 
                                                                    {batch-num-messages 100 queue-buffering-max-ms 1000} :as conf}]
   "Creates a producer and buffered-chan with a go loop that will read off the buffered chan and send to the producer.
@@ -63,7 +79,11 @@
         c (:client producer)
         ch-source (chan 100)
         read-ch (-> producer :client :read-ch)
-        buff-ch (buffered-chan ch-source batch-num-messages queue-buffering-max-ms 10)
+                               ;ch-source buffer-count timeout-ms buffer-or-n check-f
+        buff-ch (buffered-chan ch-source batch-num-messages queue-buffering-max-ms 10 (fn ;;do not accumulate more than a megabyte of data
+                                                                                        ([] (count-bytes))
+                                                                                        ([acc v]
+                                                                                             (count-bytes acc v 1048576))))
         
         handle-send-message-error (fn [e producer conf offset v]
                                     (error e e)
