@@ -9,7 +9,7 @@
             [kafka-clj.msg-persist :refer [cache-sent-messages]])
   (:import [java.net InetAddress]
            [java.nio ByteBuffer]
-           [java.util.concurrent.atomic AtomicLong]
+           [java.util.concurrent.atomic AtomicLong AtomicInteger]
            [io.netty.buffer ByteBuf Unpooled ByteBufAllocator]
            [java.nio.channels SocketChannel]
            [java.net InetSocketAddress]
@@ -28,11 +28,11 @@
 
 (defonce ^:constant MAGIC_BYTE (int 0))
 
-(defonce ^AtomicLong corr-counter (AtomicLong.))
+(defonce ^AtomicInteger corr-counter (AtomicInteger.))
 
 (defn ^Long unique-corrid! []
   (let [v (.getAndIncrement corr-counter)]
-    (if (= v Long/MAX_VALUE)
+    (if (= v Integer/MAX_VALUE)
       (do 
         (.set corr-counter 0)
         v)

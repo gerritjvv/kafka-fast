@@ -1,4 +1,4 @@
-(defproject kafka-clj "0.4.5-SNAPSHOT"
+(defproject kafka-clj "0.4.6-SNAPSHOT"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"

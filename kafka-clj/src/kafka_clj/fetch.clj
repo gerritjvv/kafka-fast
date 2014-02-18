@@ -121,26 +121,25 @@
   Attributes => int8
   Key => bytes
   Value => bytes"
-  
-  (if (> bts-left 0)
-     (if (> (- bts-left 12) 0)
-       (let [offset (.readLong in)
-             message-size (.readInt in)
-             bts-left2 (- bts-left 12)]
-           (if (> message-size bts-left2)
-	           (do 
+  (if (and (> (- bts-left 12) 0) (> (.readableBytes in) 12))
+    (let [offset (.readLong in)
+          message-size (.readInt in)
+          bts-left2 (- bts-left 12)]
+          (if (> message-size bts-left2)
+	          (do 
               
-              (debug "partial message found at " topic-name " " partition " bts-left " bts-left2  " message-size " message-size " readable " (.readableBytes in) ) 
+             (debug "partial message found at " topic-name " " partition " bts-left " bts-left2  " message-size " message-size " readable " (.readableBytes in) " offset " offset) 
               
-              (.skipBytes in (if (> bts-left2 (.readableBytes in)) (.readableBytes in) bts-left2)) state)
+             (.skipBytes in (if (> bts-left2 (.readableBytes in)) (.readableBytes in) bts-left2)) state)
             
-	           (read-message in topic-name partition offset state f)))
-         (do 
-             (debug "bts-left < 12 " bts-left)
-             (.skipBytes in bts-left)
-             state))
-       state))
-             
+	          (read-message in topic-name partition offset state f)))
+    (do 
+      ;;skip any possible extra bytes
+      (if (< (.readableBytes in) 12)
+        (do
+          (.skipBytes in (.readableBytes in))))
+      
+      state)))
 
 (defn calc-bytes-read [^ByteBuf buff start-index]
     (- (.readerIndex buff) start-index))
@@ -148,12 +147,17 @@
 (defn read-messages0 [^ByteBuf buff message-set-size topic-name partition state f]
   "Read all the messages till the number of bytes message-set-size have been read"
 	(loop [res state reader-start (.readerIndex buff) bts-left message-set-size]
-     (if (> bts-left 0)
+   
+     (if (and (> bts-left 12) (> (.readableBytes buff) 12))
          (let [resp (read-message-set buff reader-start bts-left topic-name partition res f)]
            (recur resp
                   (.readerIndex buff) 
                   (- bts-left (calc-bytes-read buff reader-start))))
-          res)))
+          (do
+            ;we need to check for excess bytes
+            (if (> bts-left 0)
+              (.skipBytes buff (int bts-left)))
+            res))))
 
 (defn read-messages [^ByteBuf buff topic-name partition state f]
   "Read all the messages till the number of bytes message-set-size have been read"
@@ -175,12 +179,22 @@
           res))))
 
 
+(defn write-to-file [size correlation-id file ^"[B" data]
+  (try (clojure.java.io/delete-file file) (catch Exception e (do )))
+  (with-open [o (java.io.DataOutputStream. (java.io.FileOutputStream. (clojure.java.io/file file)))]
+    (.writeInt o (int size))
+    (.writeInt o (int correlation-id))
+    (.write o data (int 0) (int (count data)))))
+
 (defn read-partition [state topic-name ^ByteBuf in f]
  (let [partition (.readInt in)
        error-code (.readShort in)
        hw-mark-offset (.readLong in)]
    (if (> error-code 0)
-     (f state (->FetchError topic-name partition error-code))
+     (do (f state (->FetchError topic-name partition error-code))
+         ;;even errors have a message set size.
+         (.readInt in))
+     
      (if (> (.readableBytes in) 0) 
        (read-messages in topic-name partition state f)
        state))))
@@ -191,7 +205,8 @@
 
 (defn read-fetch [^ByteBuf in state f]
   "Will return the accumelated result of f"
- (let [size (.readInt in)
+ (let [i (.readerIndex in)
+       size (.readInt in)
        correlation-id (.readInt in)]
      (read-array in state read-topic in f)))
 
