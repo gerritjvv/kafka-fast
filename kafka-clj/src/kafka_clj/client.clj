@@ -71,6 +71,9 @@
     (let [acc2 (+ acc (count (:bts (get-latest-msg messages))))]
       (tuple (>= acc2 v) acc2))))
     
+(defonce t (tuple false false))
+(defn- always-false ([] false) ([_ _] t))
+
 (defn create-producer-buffer [connector topic partition producer-error-ch {:keys [host port]} {:keys [batch-num-messages queue-buffering-max-ms] :or 
                                                                    {batch-num-messages 100 queue-buffering-max-ms 1000} :as conf}]
   "Creates a producer and buffered-chan with a go loop that will read off the buffered chan and send to the producer.
@@ -80,10 +83,7 @@
         ch-source (chan 100)
         read-ch (-> producer :client :read-ch)
                                ;ch-source buffer-count timeout-ms buffer-or-n check-f
-        buff-ch (buffered-chan ch-source batch-num-messages queue-buffering-max-ms 10 (fn ;;do not accumulate more than a megabyte of data
-                                                                                        ([] (count-bytes))
-                                                                                        ([acc v]
-                                                                                             (count-bytes acc v 1048576))))
+        buff-ch (buffered-chan ch-source batch-num-messages queue-buffering-max-ms 10 always-false)
         
         handle-send-message-error (fn [e producer conf offset v]
                                     (error e e)
