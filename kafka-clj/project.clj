@@ -27,7 +27,7 @@
                  [org.clojure/tools.trace "0.7.6"]
                  [org.xerial.snappy/snappy-java "1.1.1-M1"]
                  [org.clojure/tools.logging "0.2.6"]
-                 [clj-tcp "0.2.19-SNAPSHOT"]
+                 [clj-tcp "0.3.0-SNAPSHOT"]
                  [fmap-clojure "LATEST"]
                  [fun-utils "LATEST"]
                  [clj-tuple "0.1.4"]
