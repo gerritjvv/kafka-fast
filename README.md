@@ -79,7 +79,9 @@ Results:
 
 191975 K messages per second.
 
-# Metadata
+# Metadata and offsets
+
+This is more for tooling and UI(s).
 
 ```clojure
 
@@ -87,6 +89,12 @@ Results:
 (require '[kafka-clj.metadata :refer [get-metadata]])
 (get-metadata [{:host "localhost" :port 9092}] {})
 ;; meta data from the brokers {topic [{host port} ...] ... }
+
+(require '[kafka-clj.consumer :refer [get-broker-offsets]])
+
+(get-broker-offsets meta-data ["test123"] {})
+;; sample data {{:host "gvanvuuren-compile", :port 9092} {"test123" ({:offset 0, :error-code 0, :locked false, :partition 0} {:offset 0, :error-code 0, :locked false, :partition 1})}}
+
 
 ```
 
