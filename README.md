@@ -79,6 +79,16 @@ Results:
 
 191975 K messages per second.
 
+# Metadata
+
+```clojure
+
+
+(require '[kafka-clj.metadata :refer [get-metadata]])
+(get-metadata [{:host "localhost" :port 9092}] {})
+;; meta data from the brokers {topic [{host port} ...] ... }
+
+```
 
 # Consumer
 
