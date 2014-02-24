@@ -1,6 +1,6 @@
 # kafka-ui
 
-FIXME
+Very basic kafka-ui
 
 ## Prerequisites
 
@@ -16,4 +16,5 @@ To start a web server for the application, run:
 
 ## License
 
-Copyright © 2014 FIXME
+Copyright © 2014 gerritjvv@gmail.com
+

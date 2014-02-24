@@ -283,4 +283,13 @@ To fix experiment with increasing the value of the property ```kafka.max-bytes``
 Also check if the messages being sent can be reduced in size.
 
  
- 
+## Contact
+
+Email: gerritjvv@gmail.com
+
+Twitter: @gerrit_jvv
+
+## License
+
+
+Distributed under the Eclipse Public License either version 1.0 
