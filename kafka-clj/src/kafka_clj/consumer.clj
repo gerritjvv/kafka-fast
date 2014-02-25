@@ -442,8 +442,10 @@
 	                                            (calculate-locked-offsets topic group-conn broker-offsets1 conf)))
                timer-ctx (.time m-consume-cycle)
                q (consume-brokers! producers group-conn broker-offsets2 msg-ch conf)]
-	       (let [[v errors] q]
-			    (if (> (count (filter #(> (:error-code %) 1) errors)) 0) ;exclude out of range errors
+	       (let [[v errors] q
+               errors2 (filter #(> (:error-code %) 1) errors) ;exclude out of range errors
+               ]
+			    (if (and (not (nil? errors2)) (> (count errors2) 0))
 			      (do
 			         (error "Error close and reconnect: " errors)
             
