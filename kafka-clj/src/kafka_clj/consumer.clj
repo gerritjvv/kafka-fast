@@ -261,7 +261,21 @@
          (throw (RuntimeException. (str "Error reading offsets from " offset-producer " for topic " topic " error: " v))))
        (throw (RuntimeException. (str "Timeout while reading offsets from " offset-producer " for topic " topic))))))
 
-(defn get-broker-offsets [metadata topics conf]
+
+(defn get-create-offset-producer [offset-producers-ref broker conf]
+  (if-let [producer (get @offset-producers-ref broker)]
+    producer
+    (get 
+      (dosync
+	      (alter offset-producers-ref 
+	        (fn [m]
+	          (if-let [producer (get m broker)]
+	            m
+	            (assoc m broker (create-offset-producer broker conf))))))
+      broker)))
+    
+  
+(defn get-broker-offsets [{:keys [offset-producers]} metadata topics conf]
   "Builds the datastructure {broker {topic [{:offset o :partition p} ...] }}"
    (apply merge-with merge
      (for [topic topics] 
@@ -271,9 +285,8 @@
 			        (for [[broker v] by-broker]
 			          ;here we have data {{:host "localhost", :port 1} [[0 {:host "localhost", :port 1}] [1 {:host "localhost", :port 1}]], {:host "abc", :port 1} [[2 {:host "abc", :port 1}]]}
 			          ;doing map first v gives the partitions for a broker
-			          (let [offset-producer (create-offset-producer broker conf)
+			          (let [offset-producer (get-create-offset-producer offset-producers broker conf)
 			                offsets-response (get-offsets offset-producer topic (map first v))]
-			            (shutdown offset-producer)
 			            [broker (transform-offsets topic offsets-response conf)])))))))
 
 (defn create-producers [broker-offsets conf]
@@ -316,7 +329,7 @@
    (merge-broker-offsets broker-offsets v))
 
 
-(defn close-and-reconnect [bootstrap-brokers producers topics errors conf]
+(defn close-and-reconnect [conn bootstrap-brokers producers topics errors conf]
   
   (let [reconnect (some (fn [x] (not (instance? FetchError x))) errors)]
     
@@ -327,7 +340,7 @@
 	
 	  (info "close-and-reconnect: " bootstrap-brokers " topic " topics " reconnect " reconnect)
 	  (if-let [metadata (get-metadata bootstrap-brokers conf)]
-	    (let [broker-offsets (doall (get-broker-offsets metadata topics conf))
+	    (let [broker-offsets (doall (get-broker-offsets conn metadata topics conf))
 	          producers (if reconnect (doall (create-producers broker-offsets conf)) producers)]
 	      [producers broker-offsets])
 	    (throw (RuntimeException. "No metadata from brokers " bootstrap-brokers)))))
@@ -427,7 +440,8 @@
 	       (info "The record " topic " " partition " cannot be found"))))
     (p-close)))
      
-(defn consume-producers! [bootstrap-brokers
+(defn consume-producers! [conn 
+                          bootstrap-brokers
                           group-conn
                           producers topics broker-offsets-p msg-ch {:keys [^Timer m-consume-cycle fetch-poll-ms] 
                                                                     :or {fetch-poll-ms 10000} :as conf}]
@@ -442,14 +456,12 @@
 	                                            (calculate-locked-offsets topic group-conn broker-offsets1 conf)))
                timer-ctx (.time m-consume-cycle)
                q (consume-brokers! producers group-conn broker-offsets2 msg-ch conf)]
-	       (let [[v errors] q
-               errors2 (filter #(> (:error-code %) 1) errors) ;exclude out of range errors
-               ]
-			    (if (and (not (nil? errors2)) (> (count errors2) 0))
+	       (let [[v errors] q]
+			    (if (and (not (nil? errors)) (> (count errors) 0))
 			      (do
 			         (error "Error close and reconnect: " errors)
             
-			         (let [[producers broker-offsets] (close-and-reconnect bootstrap-brokers producers topics errors conf)]
+			         (let [[producers broker-offsets] (close-and-reconnect conn bootstrap-brokers producers topics errors conf)]
 	                ;;here we need to delete the offsets that have had errors from the storage
 	                ;;or better yet set them to storage
                  ;persist-error-offsets [group-conn broker-offsets errors conf]
@@ -468,17 +480,17 @@
 	
 			      ))))
 
-(defn consume [bootstrap-brokers group-conn msg-ch topics conf]
+(defn consume [conn bootstrap-brokers group-conn msg-ch topics conf]
   "Entry point for topic consumption,
    The cluster metadata is requested from the bootstrap-brokers, the topic offsets are sorted per broker.
    For each broker a producer is created that will control the sending and reading from the broker,
    then consume-producers is called in the background that will reconnect if needed,
    the method returns with {:msg-ch and :shutdown (fn []) }, shutdown should be called to stop all consumption for this topic"
   (if-let [metadata (get-metadata bootstrap-brokers {})]
-    (let[broker-offsets (doall (get-broker-offsets metadata topics conf))
+    (let[broker-offsets (doall (get-broker-offsets conn metadata topics conf))
          producers (doall (create-producers broker-offsets conf))
          t (future (try
-                     (consume-producers! bootstrap-brokers group-conn producers topics broker-offsets msg-ch conf)
+                     (consume-producers! conn bootstrap-brokers group-conn producers topics broker-offsets msg-ch conf)
                      (catch Exception e (error e e))))]
       {:msg-ch msg-ch :shutdown (fn [] (future-cancel t))}
       )
@@ -498,6 +510,7 @@
   "
   (info "Connecting to redis using " (get conf :redis-conf {:heart-beat-freq 10}))
   (let [
+        offset-producers (ref {})
         metrics (create-metrics)
         msg-ch (chan 100)
         msg-buff (buffered-chan msg-ch 1000 1000 1000)
@@ -508,14 +521,16 @@
                           (join c)
                           (join c host-name))
                      c)
-        consumers [(consume bootstrap-brokers group-conn msg-ch (into #{} topics) (merge conf metrics))]
+        consumers [(consume {:offset-producers offset-producers} bootstrap-brokers group-conn msg-ch (into #{} topics) (merge conf metrics))]
        
         shutdown (fn []
                    (close group-conn)
+                   (doseq [[_ producer] @offset-producers]
+                           (shutdown producer))
                    (doseq [c consumers]
                      ((:shutdown c))))]
     
-    {:shutdown shutdown :message-ch msg-buff :group-conn group-conn :metrics metrics :consumers consumers}))
+    {:shutdown shutdown :message-ch msg-buff :offset-producers offset-producers :group-conn group-conn :metrics metrics :consumers consumers}))
 
 
 (defn close-consumer [{:keys [shutdown]}]
