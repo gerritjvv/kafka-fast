@@ -18,7 +18,7 @@
            [io.netty.channel.nio NioEventLoopGroup]))
 
 (defrecord Message [topic partition offset bts])
-(defrecord FetchError [topic partition error-codec])
+(defrecord FetchError [topic partition error-code])
 
 (defn ^ByteBuf write-fecth-request-message [^ByteBuf buff {:keys [max-wait-time min-bytes topics max-bytes]
                                           :or { max-wait-time 1000 min-bytes 1 max-bytes 52428800}}]
@@ -191,9 +191,10 @@
        error-code (.readShort in)
        hw-mark-offset (.readLong in)]
    (if (> error-code 0)
-     (do (f state (->FetchError topic-name partition error-code))
+     (let [resp (f state (->FetchError topic-name partition error-code))]
          ;;even errors have a message set size.
-         (.readInt in))
+         (.readInt in)
+         resp)
      
      (if (> (.readableBytes in) 0) 
        (read-messages in topic-name partition state f)

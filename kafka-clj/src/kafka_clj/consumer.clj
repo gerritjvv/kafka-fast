@@ -141,7 +141,7 @@
   (error e (str "Internal Error while reading message: e " e))
   (error (str "Internal Error while reading message: state " state " for message " msg)))
 
-(defn read-fetch-message [{:keys [p-send]} current-offsets msg-ch v]
+(defn read-fetch-message [{:keys [p-send]} current-offsets msg-ch ^Meter m-consume-reads ^Histogram m-message-size v]
   ;read-fetch will return the result of fn which is [resp-vec error-vec]
    (let [fetch-res
          (read-fetch (Unpooled/wrappedBuffer ^"[B" v) [{} []]
@@ -149,20 +149,34 @@
               ;read-fetch will navigate the fetch response calling this function
               ;on each message found, in turn this function will update redis via p-send
               ;and send the message to the message channel (via >!! msg-ch msg)
-	            (let [[resp errors] state]
-               (try
-	               (do 
-			             (cond 
-						         (instance? Message msg)
-						         (let [k #{(:topic msg) (:partition msg)}]
-						           (if (is-new-msg? current-offsets resp k msg)   
-			                   (do (>!! msg-ch msg)
-	                           (p-send msg)
-						                 (tuple (assoc resp k msg) errors))))
-						         (instance? FetchError msg)
-						         (tuple resp (conj errors msg))
-						         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
-	               (catch Exception e (prn-fetch-error e state msg))))))]
+              (if (coll? state)
+		            (let [[resp errors] state]
+	               (try
+		               (do 
+				             (cond
+							         (instance? Message msg)
+							         (let [k #{(:topic msg) (:partition msg)}]
+							           (if (is-new-msg? current-offsets resp k msg)   
+				                   (do 
+                               (>!! msg-ch msg)
+		                           (p-send msg)
+                               (.mark m-consume-reads) ;metrics mark
+                               (.update m-message-size (count (:bts msg)))
+							                 (tuple (assoc resp k msg) errors))
+	                          (tuple resp errors)))
+							         (instance? FetchError msg)
+							         (do (error "Fetch error: " msg) (tuple resp (conj errors msg)))
+							         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
+		               (catch Exception e 
+	                  (do (prn-fetch-error e state msg)
+	                      (tuple resp errors))
+	                  )))
+                  (do (error "State not supported " state)
+                      (try
+                        (throw (RuntimeException. "test"))
+                        (catch Exception e (error e e)))
+                      [{} []])
+                  )))]
      (if (coll? fetch-res)
        (tuple (vals (first fetch-res)) (second fetch-res)) ;[resp-map error-vec]
        (do
@@ -187,12 +201,11 @@
     
       (let [[v c] (alts!! [read-ch error-ch (timeout fetch-timeout)])]
         ;(info "Got message " (count v ) " is read " (= c read-ch) " is error " (= c error-ch))
-        (.mark m-consume-reads) ;metrics mark
         (try
 	        (cond 
 	          (= c read-ch)
             ;;read-fetch will navigate and process the fetch response, sending messages to msg-ch
-	          (read-fetch-message persister current-offsets msg-ch v)
+	          (read-fetch-message persister current-offsets msg-ch m-consume-reads m-message-size v)
 	          (= c error-ch)
 	          (do 
 	            (error v v)
@@ -478,6 +491,7 @@
   (let [
         metrics (create-metrics)
         msg-ch (chan 100)
+        msg-buff (buffered-chan msg-ch 1000 1000)
         redis-conf (get conf :redis-conf {:heart-beat-freq 10})
         group-conn (let [c (create-group-connector (get redis-conf :redis-host "localhost") redis-conf)
                          host-name (get conf :host-name nil) ]
@@ -492,7 +506,7 @@
                    (doseq [c consumers]
                      ((:shutdown c))))]
     
-    {:shutdown shutdown :message-ch msg-ch :group-conn group-conn :metrics metrics :consumers consumers}))
+    {:shutdown shutdown :message-ch msg-buff :group-conn group-conn :metrics metrics :consumers consumers}))
 
 
 (defn close-consumer [{:keys [shutdown]}]
