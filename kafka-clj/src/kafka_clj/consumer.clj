@@ -158,6 +158,7 @@
 							         (let [k #{(:topic msg) (:partition msg)}]
 							           (if (is-new-msg? current-offsets resp k msg)   
 				                   (do 
+                               ;(prn "!!!!!!!!!sending message")
                                (>!! msg-ch msg)
 		                           (p-send msg)
                                (.mark m-consume-reads) ;metrics mark
@@ -168,7 +169,8 @@
 							         (do (error "Fetch error: " msg) (tuple resp (conj errors msg)))
 							         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
 		               (catch Exception e 
-	                  (do (prn-fetch-error e state msg)
+	                  (do (.printStackTrace e)
+                        (prn-fetch-error e state msg)
 	                      (tuple resp errors))
 	                  )))
                   (do (error "State not supported " state)
@@ -314,16 +316,21 @@
    (merge-broker-offsets broker-offsets v))
 
 
-(defn close-and-reconnect [bootstrap-brokers producers topics conf]
-  (doseq [producer producers]
-    (shutdown producer))
-
-  (info "close-and-reconnect: " bootstrap-brokers " topic " topics)
-  (if-let [metadata (get-metadata bootstrap-brokers conf)]
-    (let [broker-offsets (doall (get-broker-offsets metadata topics conf))
-          producers (doall (create-producers broker-offsets conf))]
-      [producers broker-offsets])
-    (throw (RuntimeException. "No metadata from brokers " bootstrap-brokers))))
+(defn close-and-reconnect [bootstrap-brokers producers topics errors conf]
+  
+  (let [reconnect (some (fn [x] (not (instance? FetchError x))) errors)]
+    
+    (if reconnect
+		  (doseq [producer producers]
+		    (shutdown producer)))  
+	  
+	
+	  (info "close-and-reconnect: " bootstrap-brokers " topic " topics " reconnect " reconnect)
+	  (if-let [metadata (get-metadata bootstrap-brokers conf)]
+	    (let [broker-offsets (doall (get-broker-offsets metadata topics conf))
+	          producers (if reconnect (doall (create-producers broker-offsets conf)) producers)]
+	      [producers broker-offsets])
+	    (throw (RuntimeException. "No metadata from brokers " bootstrap-brokers)))))
 
 (defn- ^long coerce-long [v]
   "Will return a long value, if v is a long its returned as is, if its a number its cast to a long,
@@ -417,7 +424,7 @@
 	       (do
 	         (info "updating " topic " " partition " to " record)
 	         (p-send {:topic topic :partition partition :offset (:offset record)}))
-	       (error "The record " topic " " partition " cannot be found"))))
+	       (info "The record " topic " " partition " cannot be found"))))
     (p-close)))
      
 (defn consume-producers! [bootstrap-brokers
@@ -438,9 +445,9 @@
 	       (let [[v errors] q]
 			    (if (> (count errors) 0)
 			      (do
-			         (error "Error close and reconnect1: " errors)
+			         (error "Error close and reconnect: " errors)
             
-			         (let [[producers broker-offsets] (close-and-reconnect bootstrap-brokers producers topics conf)]
+			         (let [[producers broker-offsets] (close-and-reconnect bootstrap-brokers producers topics errors conf)]
 	                ;;here we need to delete the offsets that have had errors from the storage
 	                ;;or better yet set them to storage
                  ;persist-error-offsets [group-conn broker-offsets errors conf]
@@ -491,7 +498,7 @@
   (let [
         metrics (create-metrics)
         msg-ch (chan 100)
-        msg-buff (buffered-chan msg-ch 1000 1000)
+        msg-buff (buffered-chan msg-ch 1000 1000 1000)
         redis-conf (get conf :redis-conf {:heart-beat-freq 10})
         group-conn (let [c (create-group-connector (get redis-conf :redis-host "localhost") redis-conf)
                          host-name (get conf :host-name nil) ]
