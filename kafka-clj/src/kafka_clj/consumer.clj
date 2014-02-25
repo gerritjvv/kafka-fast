@@ -443,7 +443,7 @@
                timer-ctx (.time m-consume-cycle)
                q (consume-brokers! producers group-conn broker-offsets2 msg-ch conf)]
 	       (let [[v errors] q]
-			    (if (> (count errors) 0)
+			    (if (> (count (filter #(> (:error-code %) 1) errors)) 0) ;exclude out of range errors
 			      (do
 			         (error "Error close and reconnect: " errors)
             
