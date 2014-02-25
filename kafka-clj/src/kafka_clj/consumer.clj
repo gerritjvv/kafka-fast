@@ -143,9 +143,12 @@
 
 (defn read-fetch-message [{:keys [p-send]} current-offsets msg-ch v]
   ;read-fetch will return the result of fn which is [resp-vec error-vec]
-   (let [[resp-map error-vec] 
+   (let [fetch-res
          (read-fetch (Unpooled/wrappedBuffer ^"[B" v) [{} []]
 			     (fn [state msg]
+              ;read-fetch will navigate the fetch response calling this function
+              ;on each message found, in turn this function will update redis via p-send
+              ;and send the message to the message channel (via >!! msg-ch msg)
 	            (let [[resp errors] state]
                (try
 	               (do 
@@ -160,7 +163,11 @@
 						         (tuple resp (conj errors msg))
 						         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
 	               (catch Exception e (prn-fetch-error e state msg))))))]
-     (tuple (vals resp-map) error-vec)))
+     (if (coll? fetch-res)
+       (tuple (vals (first fetch-res)) (second fetch-res)) ;[resp-map error-vec]
+       (do
+         (info "No messages consumed " fetch-res)
+         nil))))
   
 (defn send-request-and-wait [producer group-conn topic-offsets msg-ch {:keys [^Histogram m-message-size
                                                                               ^Meter m-consume-reads fetch-timeout] 
@@ -184,6 +191,7 @@
         (try
 	        (cond 
 	          (= c read-ch)
+            ;;read-fetch will navigate and process the fetch response, sending messages to msg-ch
 	          (read-fetch-message persister current-offsets msg-ch v)
 	          (= c error-ch)
 	          (do 
