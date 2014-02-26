@@ -38,18 +38,22 @@
  (defn get-partitions-to-lock [topic broker-offsets members]
    "broker-offsets {broker {topic [{:partition :offset :topic}]}}
     Returns the number of partitions that should be locked"
-   
-   (let [broker-partitions (filter #(= (:topic %) topic) (flatten-broker-partitions broker-offsets))
-         partition-count (count broker-partitions)
-         locked-partition-count (count (filter :locked broker-partitions))
-         e (long (/ partition-count (count members)))
-         l (rem partition-count (count members))]
-     
-     ;(prn "members " members " partition-count " partition-count " locked-partition-count " locked-partition-count " e " e " l " l )
-     [(if (> e locked-partition-count) (count (get-add-partitions broker-partitions e)) 0)
-      (if (> locked-partition-count e) (count (get-remove-partitions broker-partitions (- locked-partition-count e))) 0)
-      l
-      ]))
+   (try
+	   (let [broker-partitions (filter #(= (:topic %) topic) (flatten-broker-partitions broker-offsets))
+	         partition-count (count broker-partitions)
+	         locked-partition-count (count (filter :locked broker-partitions))
+	         e (long (/ partition-count (count members)))
+	         l (rem partition-count (count members))]
+	     
+	     ;(prn "members " members " partition-count " partition-count " locked-partition-count " locked-partition-count " e " e " l " l )
+	     [(if (> e locked-partition-count) (count (get-add-partitions broker-partitions e)) 0)
+	      (if (> locked-partition-count e) (count (get-remove-partitions broker-partitions (- locked-partition-count e))) 0)
+	      l
+	      ])
+    (catch Exception e 
+      (do 
+        (error (str "Error while calculating partitions to lock members: " members " broker-partitions " (filter #(= (:topic %) topic) (flatten-broker-partitions broker-offsets))))
+        [0 0 0]))))
  
  
  ;------- end of partition lock and release api
