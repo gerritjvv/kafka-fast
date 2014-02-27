@@ -271,6 +271,13 @@ So to return a list of messages read fetch can be called as ```read-fetch byte-b
 
 # Commong errors during use
 
+## FetchError error code 1
+
+This means that the offset queried is out of range (does not exist on the broker any more).
+It either means that you are starting up a consumer using old offsets, or if you see this message more than on startup it means
+that the consumer cannot keepup with the producers, and that data is deleted off the brokers before the consumer could consume it.
+
+The solution to this would be to add more consumers and increase the log.retention.bytes and or log.retention.hours on the brokers.
 
 ## Message-set-size  aaa  is bigger than the readable bytes  bbbb
 
