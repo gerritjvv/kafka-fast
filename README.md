@@ -87,12 +87,15 @@ This is more for tooling and UI(s).
 
 
 (require '[kafka-clj.metadata :refer [get-metadata]])
-(get-metadata [{:host "localhost" :port 9092}] {})
+(def metadata (get-metadata [{:host "localhost" :port 9092}] {}))
+(clojure.pprint/pprint metadata)
 ;; meta data from the brokers {topic [{host port} ...] ... }
 
 (require '[kafka-clj.consumer :refer [get-broker-offsets]])
+(require '[kafka-clj.fetch :refer [create-offset-producer])
+(def conn {:offset-producers (ref {})})
 
-(get-broker-offsets meta-data ["test123"] {})
+(get-broker-offsets conn metadata ["test123"] {})
 ;; sample data {{:host "gvanvuuren-compile", :port 9092} {"test123" ({:offset 0, :error-code 0, :locked false, :partition 0} {:offset 0, :error-code 0, :locked false, :partition 1})}}
 
 
