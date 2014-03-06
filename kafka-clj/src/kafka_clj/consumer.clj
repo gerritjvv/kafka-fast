@@ -60,50 +60,28 @@
  
  ;------- end of partition lock and release api
 
-(defn- get-rest-of-partitions [broker topic partition state]
-  "state should be {broker {topic [{:partition :offset :topic}... ] }}
-   This method will return all of the data for a broker topic that does not have :partition == partition"
-  (filter #(not (= (:partition %) partition)) (-> state (get broker) (get topic))))
+(defn replace-partition [partitions offset partition]
+  "partitions = [{:partition :offset ...} ...]
+   partition = Long
+   offset = Long"
+  (let [p1 (first (filter #(= (:partition %) partition) partitions))
+        ps (filter #(not (= (:partition %) partition)) partitions)]
+    (conj ps (assoc p1 :offset offset))))
 
-(defn- get-current-partition [broker topic partition state]
-  "state should be {broker {topic [{:partition :offset :topic}... ] }}
-   This method will return all of the data for a broker topic that does not have :partition == partition"
-  (first (filter #(= (:partition %) partition) (-> state (get broker) (get topic)))))
-
-
-(defn get-partition [broker topic partition state]
-  "state should be {broker {topic [{:partition :offset :topic}... ] }}
-   This method will return all of the data for a broker topic that does not have :partition == partition"
-  (first (filter #(= (:partition %) partition) (-> state (get broker) (get topic)))))
-
-
+            
 (defn merge-broker-offsets [curr-state d]
   "D is a collection of messages one per topic partition, that were last consumed from a fetch request,
    state is the broker-offsets {broker {topic [{:partition :offset :topic}]}}
    The function will merge d with state so that state will contain the latest offsets d,
    and then returns the new state
    "
-  ;(info "merge " state " with " d)
-  ;(prn "state d " d) 
-  ;(clojure.pprint/pprint curr-state)
-  (let [r (reduce (fn [state [broker messages]]
-                    (reduce (fn [state {:keys [topic partition offset error-code]}]
-                              ;note that the record fomr which the keys are drawn does not have the locked key
-                              ;(info "$$$$ current record " (get-current-partition broker topic partition state))
-                              (merge-with merge
-                                 state
-			                           (if (or (not error-code) (= error-code 0))
-                                   {broker
-			                                 {topic
-			                                      (conj (get-rest-of-partitions broker topic partition state)
-			                                            {:offset (inc offset) :locked (:locked (get-current-partition broker topic partition state))
-                                                   :partition partition :error-code (if error-code error-code 0)  })
-                                         }
-                                      })))
-                            curr-state messages))
-          curr-state d)]
-    ;(clojure.pprint/pprint ["r " r])
-    r))
+  (reduce (fn [state1 [broker messages]]
+          (reduce (fn [state {:keys [topic offset partition]}]
+                    ;;find and replace the partition in state format {:host "broker", :port 9092} {"topic" [{:offset 0, :error-code 0, :locked true, :partition 4} {:offset 0, :error-code 0, :locked true, :partition 5}]}}
+                    (assoc-in state [broker topic] (replace-partition (-> state (get broker) (get topic)) offset partition)) 
+                    
+                    ) state1 messages))
+         curr-state d))
 
 (defn- get-latest-offset [k current-offsets resp]
   "Helper function for send-request-and-wait, k is searched in resp, if no entry current-offsets is searched, and if none is found 0 is returned"
@@ -301,6 +279,7 @@
       broker)))
     
   
+
 (defn get-broker-offsets [{:keys [offset-producers]} metadata topics conf]
   "Builds the datastructure {broker {topic [{:offset o :partition p} ...] }}"
    (apply merge-with merge
@@ -386,6 +365,18 @@
   (.mark m-redis-reads)
   (coerce-long 
          (persistent-get group-conn (clojure.string/join "/" [topic partition]))))
+
+(defn- get-rest-of-partitions [broker topic partition state]
+  "state should be {broker {topic [{:partition :offset :topic}... ] }}
+   This method will return all of the data for a broker topic that does not have :partition == partition"
+  (filter #(not (= (:partition %) partition)) (-> state (get broker) (get topic))))
+
+
+(defn get-partition [broker topic partition state]
+  "state should be {broker {topic [{:partition :offset :topic}... ] }}
+   This method will return all of the data for a broker topic that does not have :partition == partition"
+  (first (filter #(= (:partition %) partition) (-> state (get broker) (get topic)))))
+
 
 (defn change-partition-lock [group-conn broker-offsets broker topic partition locked? conf]
   "broker-offsets = {broker {topic [{:partition :offset :topic}]}}
@@ -499,6 +490,7 @@
 	                                            (calculate-locked-offsets topic group-conn broker-offsets1 conf)))
                timer-ctx (.time m-consume-cycle)
                q (consume-brokers! producers group-conn broker-offsets2 msg-ch conf)]
+         
 	       (let [[v errors] q]
 			    (if (and (not (nil? errors)) (> (count errors) 0))
 			      (do
