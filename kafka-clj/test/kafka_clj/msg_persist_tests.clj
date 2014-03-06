@@ -3,6 +3,7 @@
                                            create-send-cache cache-sent-messages get-sent-message]])
   (:use midje.sweet))
 
+
 (facts "test msg-persist"
   
   (fact "Test retry cache"

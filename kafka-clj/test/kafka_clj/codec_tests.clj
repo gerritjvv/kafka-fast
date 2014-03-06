@@ -2,6 +2,7 @@
   (:require [kafka-clj.codec :refer :all])
   (:use midje.sweet))
 
+
 (facts "Test codecs"
        
        (fact "Test crc32"
