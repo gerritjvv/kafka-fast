@@ -126,13 +126,15 @@ The library used for redis is https://github.com/gerritjvv/group-redis
 ;https://github.com/gerritjvv/group-redis
 (def c (consumer [{:host "localhost" :port 9092}] ["ping"] {:use-earliest true :max-bytes 1073741824 :metadata-timeout 60000 :redis-conf {:redis-host "localhost" :heart-beat 10} }))
 
+
 ;create a lazy sequence of messages
 (defn lazy-ch [c]
   (lazy-seq (cons (read-msg c) (lazy-ch c))))
 
 ;the messages returned are FetchMessage [topic partition ^bytes bts offset locked]
 
-(doseq [msg (take 10 (lazy-ch c))]
+;we flatten here because messages are sent in batches
+(doseq [msg (take 10 (flatten (lazy-ch c)))]
   (prn (String. (:bts msg))))
  
 ```
