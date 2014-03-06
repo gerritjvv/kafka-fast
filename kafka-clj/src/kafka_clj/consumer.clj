@@ -78,7 +78,7 @@
   (reduce (fn [state1 [broker messages]]
           (reduce (fn [state {:keys [topic offset partition]}]
                     ;;find and replace the partition in state format {:host "broker", :port 9092} {"topic" [{:offset 0, :error-code 0, :locked true, :partition 4} {:offset 0, :error-code 0, :locked true, :partition 5}]}}
-                    (assoc-in state [broker topic] (replace-partition (-> state (get broker) (get topic)) offset partition)) 
+                    (assoc-in state [broker topic] (replace-partition (-> state (get broker) (get topic)) (inc offset) partition)) 
                     
                     ) state1 messages))
          curr-state d))
@@ -135,14 +135,15 @@
 
 (defn read-fetch-message [{:keys [p-send]} current-offsets msg-ch ^Meter m-consume-reads ^Histogram m-message-size v]
   ;read-fetch will return the result of fn which is [resp-vec error-vec]
-   (let [fetch-res
-         (read-fetch (Unpooled/wrappedBuffer ^"[B" v) [{} []]
+   (let [
+         fetch-res
+         (read-fetch (Unpooled/wrappedBuffer ^"[B" v) [{} [] 0]
 			     (fn [state msg]
               ;read-fetch will navigate the fetch response calling this function
               ;on each message found, in turn this function will update redis via p-send
               ;and send the message to the message channel (via >!! msg-ch msg)
               (if (coll? state)
-		            (let [[resp errors] state]
+		            (let [[resp errors cnt] state]
 	               (try
 		               (do 
 				             (cond
@@ -150,32 +151,30 @@
 							         (let [k #{(:topic msg) (:partition msg)}]
 							           (if (is-new-msg? current-offsets resp k msg)   
 				                   (do 
-                               ;(prn "!!!!!!!!!sending message")
                                (>!! msg-ch msg)
 		                           (p-send msg)
                                (.mark m-consume-reads) ;metrics mark
                                (.update m-message-size (count (:bts msg)))
-							                 (tuple (assoc resp k msg) errors))
-	                          (tuple resp errors)))
+							                 (tuple (assoc resp k msg) errors (inc cnt)))
+	                          (tuple resp errors (inc cnt))))
 							         (instance? FetchError msg)
-							         (do (error "Fetch error: " msg) (tuple resp (conj errors msg)))
+							         (do (error "Fetch error: " msg) (tuple resp (conj errors msg) cnt))
 							         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
 		               (catch Exception e 
 	                  (do (.printStackTrace e)
                         (prn-fetch-error e state msg)
-	                      (tuple resp errors))
+	                      (tuple resp errors cnt))
 	                  )))
                   (do (error "State not supported " state)
-                      (try
-                        (throw (RuntimeException. "test"))
-                        (catch Exception e (error e e)))
-                      [{} []])
+                      [{} [] 0])
                   )))]
-     (if (coll? fetch-res)
-       (tuple (vals (first fetch-res)) (second fetch-res)) ;[resp-map error-vec]
-       (do
-         (info "No messages consumed " fetch-res)
-         nil))))
+       (if (coll? fetch-res)
+          (let [[resp errors cnt] fetch-res]
+            (info "Messages read " cnt)
+	          (tuple (vals resp) errors)) ;[resp-map error-vec]
+	       (do
+	         (info "No messages consumed " fetch-res)
+	         nil))))
   
 
 (defn- get-locked-partitions [topic-offsets]
@@ -325,7 +324,8 @@
           (pmap #(vector (:broker %)  (consume-broker % group-conn (get broker-offsets (:broker %)) msg-ch conf)) 
                     producers))
    (finally
-     (info ">>>>>>>>>>>>>>>>>>>>> END CONSUME BROKERS!"))))
+     (info ">>>>>>>>>>>>>>>>>>>>> END CONSUME BROKERS!")
+     )))
 
 (defn update-broker-offsets [broker-offsets v]
   "
