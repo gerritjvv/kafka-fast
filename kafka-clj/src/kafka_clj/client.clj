@@ -8,8 +8,6 @@
             [clojure.tools.logging :refer [error info debug]]
             [clj-tuple :refer [tuple]]
             [reply.main]
-            [fileape.core :as fileape]
-            [clj-json.core :as json]
             [clojure.core.async :refer [chan >! >!! go close!] :as async])
   (:import [java.util.concurrent.atomic AtomicInteger]
            [kafka_clj.response ProduceResponse]))
