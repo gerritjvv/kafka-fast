@@ -15,6 +15,8 @@
            [java.net InetSocketAddress]
            [kafka_clj.util Util]))
 
+
+
 (defrecord Producer [client host port])
 (defrecord Message [topic partition ^bytes bts])
 
@@ -88,6 +90,7 @@
   ;use the buffer allocator to get a new buffer
   (let [^ByteBufAllocator alloc (.alloc buff)
         msg-buff (.buffer alloc (int 1024))]
+    
     (try 
 		    (let [_ (write-message-set msg-buff correlation-id 0 msgs) ;write msgs to msg-buff
 			        arr (byte-array (- (.writerIndex msg-buff) (.readerIndex msg-buff) ))]
@@ -127,6 +130,9 @@
 			           (.writeInt buff (int (count partition-group)))  ;partition count
 		             (for [[partition partition-msgs] partition-group]
 			             (do (.writeInt buff (int partition))       ;partition
+                    
+    ;TODO we have duplicate messages here
+                  
 				             (if (= codec 0)
 				                   (with-size buff write-message-set correlation-id codec msgs)
 				                   (with-size buff write-compressed-message-set  correlation-id codec msgs))))))))))))

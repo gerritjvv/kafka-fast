@@ -5,9 +5,9 @@
             :url "http://www.eclipse.org/legal/epl-v10.html"}
 
   :javac-options ["-target" "1.6" "-source" "1.6" "-Xlint:-options"]
-  :warn-on-reflection true
-  :global-vars {*warn-on-reflection* true
-                *assert* false}
+  ;:warn-on-reflection true
+  ;:global-vars {*warn-on-reflection* true
+   ;             *assert* false}
 
   :aot [kafka-clj.client]
   :main kafka-clj.client
@@ -33,6 +33,7 @@
                  [fun-utils "LATEST"]
                  [clj-tuple "0.1.4"]
                  [clj-json "0.5.3"]
+                 [clj-json "0.5.3"]
                  [com.codahale.metrics/metrics-core "3.0.1"]
                  
                 
@@ -41,4 +42,6 @@
                   ;                            com.sun.jdmk/jmxtools
                    ;                           com.sun.jmx/jmxri]]
                  ;[org.apache.curator/curator-test "2.3.0" :scope "test" ]
+                 [fileape "0.3.0-SNAPSHOT"]
+                 [org.apache.hadoop/hadoop-client "2.2.0"]
                  [org.clojure/clojure "1.5.1" :scope "provided"]])

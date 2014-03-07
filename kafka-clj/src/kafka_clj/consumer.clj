@@ -14,7 +14,8 @@
   (:import [kafka_clj.fetch Message FetchError]
            [com.codahale.metrics Meter MetricRegistry Timer Histogram]
            [java.util.concurrent Executors ExecutorService Future Callable]
-           [io.netty.buffer Unpooled]))
+           [io.netty.buffer Unpooled]
+           [java.io File DataOutputStream]))
 
              
  ;------- partition lock and release api
@@ -47,7 +48,7 @@
 	         e (long (/ partition-count (count members)))
 	         l (rem partition-count (count members))]
 	     
-	     (info "members " members " partition-count " partition-count " locked-partition-count " locked-partition-count " e " e " l " l )
+	     ;(info "members " members " partition-count " partition-count " locked-partition-count " locked-partition-count " e " e " l " l )
 	     [(if (> e locked-partition-count) (count (get-add-partitions broker-partitions e)) 0)
 	      (if (> locked-partition-count e) (count (get-remove-partitions broker-partitions (- locked-partition-count e))) 0)
 	      l
@@ -151,6 +152,8 @@
 							         (let [k #{(:topic msg) (:partition msg)}]
 							           (if (is-new-msg? current-offsets resp k msg)   
 				                   (do 
+                              ;(if (= cnt 0)
+                               ;(write-timestamp msg))
                                (>!! msg-ch msg)
 		                           (p-send msg)
                                (.mark m-consume-reads) ;metrics mark
@@ -170,7 +173,7 @@
                   )))]
        (if (coll? fetch-res)
           (let [[resp errors cnt] fetch-res]
-            (info "Messages read " cnt)
+            ;(info "Messages read " cnt)
 	          (tuple (vals resp) errors)) ;[resp-map error-vec]
 	       (do
 	         (info "No messages consumed " fetch-res)
@@ -194,7 +197,7 @@
   "
   (let [locked-partitions (get-locked-partitions topic-offsets)]
       (do
-	      (info "!!!!!!send fetch " (:broker producer) " "  locked-partitions)
+	      ;(info "!!!!!!send fetch " (:broker producer) " "  locked-partitions)
 			  (send-fetch producer locked-partitions)
 			  
 			  (let [
@@ -232,7 +235,7 @@
       (send-request-and-wait producer group-conn topic-offsets msg-ch conf)
       (catch Exception e (error e e))
       (finally (do
-                 (info ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> end consume-broker " (:broker producer) " <<<<<<<<<<<<<<<<<<<<<<<<")
+                 ;(info ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> end consume-broker " (:broker producer) " <<<<<<<<<<<<<<<<<<<<<<<<")
                  ))))
 
 
@@ -324,7 +327,7 @@
           (pmap #(vector (:broker %)  (consume-broker % group-conn (get broker-offsets (:broker %)) msg-ch conf)) 
                     producers))
    (finally
-     (info ">>>>>>>>>>>>>>>>>>>>> END CONSUME BROKERS!")
+     ;(info ">>>>>>>>>>>>>>>>>>>>> END CONSUME BROKERS!")
      )))
 
 (defn update-broker-offsets [broker-offsets v]
@@ -455,7 +458,7 @@
                                  broker-offsets1))]
         
 					
-	          (clojure.pprint/pprint broker-offsets1)  
+	          ;(clojure.pprint/pprint broker-offsets1)  
 	          broker-offsets1
 	          
 	        ))

@@ -8,6 +8,8 @@
             [clojure.tools.logging :refer [error info debug]]
             [clj-tuple :refer [tuple]]
             [reply.main]
+            [fileape.core :as fileape]
+            [clj-json.core :as json]
             [clojure.core.async :refer [chan >! >!! go close!] :as async])
   (:import [java.util.concurrent.atomic AtomicInteger]
            [kafka_clj.response ProduceResponse]))
@@ -194,6 +196,9 @@
           (throw (RuntimeException. (str "The message for topic " topic " could not be sent")))))))
 
 (defn send-msg [{:keys [state] :as connector} topic ^bytes bts]
+   
+  ;@TODO messages are duplicates here
+  
   (if (> (-> state :brokers-metadata deref count) 0)
 	  (let [partition (select-rr-partition! topic state)
 	        producer-buffer (select-producer-buffer! connector topic partition state)
