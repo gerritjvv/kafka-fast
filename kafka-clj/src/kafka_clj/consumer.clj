@@ -46,7 +46,7 @@
 	         partition-count (count broker-partitions)
 	         locked-partition-count (count (filter :locked broker-partitions))
            ;only count members of the same group consuming the same topic
-           member-count (filter (fn [m] (some #(= topic %) (:sub-groups m))) members)
+           member-count (count (filter (fn [m] (some #(= topic %) (-> m :val :sub-groups))) members))
 	         e (long (/ partition-count member-count))
 	         l (rem partition-count member-count)]
 	     
@@ -57,6 +57,7 @@
 	      ])
     (catch Exception e 
       (do 
+        (.printStackTrace e)
         (error (str "Error while calculating partitions to lock members: " members " broker-partitions " (filter #(= (:topic %) topic) (flatten-broker-partitions broker-offsets))))
         [0 0 0]))))
  
