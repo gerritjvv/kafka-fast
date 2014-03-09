@@ -45,10 +45,12 @@
 	   (let [broker-partitions (filter #(= (:topic %) topic) (flatten-broker-partitions broker-offsets))
 	         partition-count (count broker-partitions)
 	         locked-partition-count (count (filter :locked broker-partitions))
-	         e (long (/ partition-count (count members)))
-	         l (rem partition-count (count members))]
+           ;only count members of the same group consuming the same topic
+           member-count (filter (fn [m] (some #(= topic %) (:sub-groups m))) members)
+	         e (long (/ partition-count member-count))
+	         l (rem partition-count member-count)]
 	     
-	     ;(info "members " members " partition-count " partition-count " locked-partition-count " locked-partition-count " e " e " l " l )
+	     (info "members " members " partition-count " partition-count " locked-partition-count " locked-partition-count " e " e " l " l )
 	     [(if (> e locked-partition-count) (count (get-add-partitions broker-partitions e)) 0)
 	      (if (> locked-partition-count e) (count (get-remove-partitions broker-partitions (- locked-partition-count e))) 0)
 	      l
@@ -548,7 +550,7 @@
         msg-ch (chan 100)
         msg-buff (buffered-chan msg-ch 1000 1000 1000)
         redis-conf (get conf :redis-conf {:heart-beat-freq 10})
-        group-conn (let [c (create-group-connector (get redis-conf :redis-host "localhost") redis-conf)
+        group-conn (let [c (create-group-connector (get redis-conf :redis-host "localhost") (assoc redis-conf :sub-groups topics))
                          host-name (get conf :host-name nil) ]
                      (if (nil? host-name)
                           (join c)
