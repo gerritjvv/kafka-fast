@@ -277,12 +277,15 @@
                   ;;every 10 seconds check for any data in the retry cache and resend the messages 
 				retry-cache-ch (fixdelay 5000
 										      (try
-										         (doseq [retry-msg (retry-cache-seq connector)]
+                            (do
+                             (doseq [retry-msg (retry-cache-seq connector)]
                                  (do (prn "Retry messages for " (:topic retry-msg) " " (:key-val retry-msg))
+                                   (if (coll? (:v retry-msg))
 													           (doseq [{:keys [bts]} (:v retry-msg)]
                                         (send-msg connector (:topic retry-msg) bts))
-												             
-										                  (delete-from-retry-cache connector (:key-val retry-msg))))
+                                     (error "Invalid retry value " retry-msg))
+												              
+										                  (delete-from-retry-cache connector (:key-val retry-msg)))))
 										         (catch Exception e (error e e))))]
     
     ;listen to any producer errors, this can be sent from any producer
@@ -296,7 +299,8 @@
             (info "!!! ERROR write to retry cache : "  key-val " " v " " topic)
             (.printStackTrace (:error error-val))
             
-            (write-to-retry-cache connector topic v)
+            (if (coll? v) ;only write valid messages to the retry cache
+              (write-to-retry-cache connector topic v))
            
 		        (update-metadata)
 		        (info "removing failed producer " (:broker producer) " and updating metadata")
