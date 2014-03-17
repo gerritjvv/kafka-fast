@@ -1,4 +1,4 @@
-(defproject kafka-clj "0.5.2-SNAPSHOT"
+(defproject kafka-clj "0.7.0-SNAPSHOT"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -40,5 +40,5 @@
                   ;                            com.sun.jdmk/jmxtools
                    ;                           com.sun.jmx/jmxri]]
                  ;[org.apache.curator/curator-test "2.3.0" :scope "test" ]
-                 [org.apache.hadoop/hadoop-client "2.2.0"]
+                 ;[org.apache.hadoop/hadoop-core "0.20.2"]
                  [org.clojure/clojure "1.5.1" :scope "provided"]])
