@@ -8,6 +8,7 @@
             [kafka-clj.fetch :refer [create-fetch-producer create-offset-producer send-offset-request send-fetch read-fetch]]
             [kafka-clj.metadata :refer [get-metadata]]
             [fun-utils.core :refer [buffered-chan]]
+            [kafka-clj.produce :refer [metadata-request-producer]]
             [clojure.pprint :refer [pprint]]
             [clojure.core.async :refer [<!! >!! alts!! timeout chan go >! <! close! go-loop]]
             [clj-tuple :refer [tuple]])
@@ -341,7 +342,7 @@
    (merge-broker-offsets broker-offsets v))
 
 
-(defn close-and-reconnect [conn bootstrap-brokers producers topics errors conf]
+(defn close-and-reconnect [conn metadata-producers producers topics errors conf]
   
   (let [reconnect (some (fn [x] (not (instance? FetchError x))) errors)]
     
@@ -350,12 +351,12 @@
 		    (shutdown producer)))  
 	  
 	
-	  (info "close-and-reconnect: " bootstrap-brokers " topic " topics " reconnect " reconnect)
-	  (if-let [metadata (get-metadata bootstrap-brokers conf)]
+	  (info "close-and-reconnect: " metadata-producers " topic " topics " reconnect " reconnect)
+	  (if-let [metadata (get-metadata metadata-producers conf)]
 	    (let [broker-offsets (doall (get-broker-offsets conn metadata topics conf))
 	          producers (if reconnect (doall (create-producers broker-offsets conf)) producers)]
 	      [producers broker-offsets])
-	    (throw (RuntimeException. "No metadata from brokers " bootstrap-brokers)))))
+	    (throw (RuntimeException. "No metadata from brokers " metadata-producers)))))
 
 (defn- ^long coerce-long [v]
   "Will return a long value, if v is a long its returned as is, if its a number its cast to a long,
@@ -487,7 +488,7 @@
 
      
 (defn consume-producers! [conn 
-                          bootstrap-brokers
+                          metadata-producers
                           group-conn
                           producers topics broker-offsets-p msg-ch {:keys [^Timer m-consume-cycle fetch-poll-ms] 
                                                                     :or {fetch-poll-ms 10000} :as conf}]
@@ -513,7 +514,7 @@
 			      (do
 			         (error "Error close and reconnect: " errors)
             
-			         (let [[producers broker-offsets] (close-and-reconnect conn bootstrap-brokers producers topics errors conf)]
+			         (let [[producers broker-offsets] (close-and-reconnect conn metadata-producers producers topics errors conf)]
 	                (info "Got new consumers " (map :broker producers))
 	                (persist-error-offsets group-conn broker-offsets errors conf)
                   (.stop timer-ctx)
@@ -527,21 +528,21 @@
 	
 			      )))
 
-(defn consume [conn bootstrap-brokers group-conn msg-ch topics conf]
+(defn consume [conn metadata-producers group-conn msg-ch topics conf]
   "Entry point for topic consumption,
-   The cluster metadata is requested from the bootstrap-brokers, the topic offsets are sorted per broker.
+   The cluster metadata is requested from the metadata-producers, the topic offsets are sorted per broker.
    For each broker a producer is created that will control the sending and reading from the broker,
    then consume-producers is called in the background that will reconnect if needed,
    the method returns with {:msg-ch and :shutdown (fn []) }, shutdown should be called to stop all consumption for this topic"
-  (if-let [metadata (get-metadata bootstrap-brokers {})]
+  (if-let [metadata (get-metadata metadata-producers conf)]
     (let[broker-offsets (doall (get-broker-offsets conn metadata topics conf))
          producers (doall (create-producers broker-offsets conf))
          t (future (try
-                     (consume-producers! conn bootstrap-brokers group-conn producers topics broker-offsets msg-ch conf)
+                     (consume-producers! conn metadata-producers group-conn producers topics broker-offsets msg-ch conf)
                      (catch Exception e (error e e))))]
       {:msg-ch msg-ch :shutdown (fn [] (future-cancel t))}
       )
-     (throw (Exception. (str "No metadata from brokers " bootstrap-brokers)))))
+     (throw (Exception. (str "No metadata from brokers " metadata-producers)))))
 
 (defn create-metrics []
        {:m-consume-reads (.meter metrics-registry (str "kafka-consumer.consume-#" (System/nanoTime)))
@@ -562,13 +563,14 @@
         msg-ch (chan 100)
         msg-buff (buffered-chan msg-ch 1000 1000 1000)
         redis-conf (get conf :redis-conf {:heart-beat-freq 10})
+        metadata-producers (map #(metadata-request-producer (:host %) (:port %) conf) bootstrap-brokers)
         group-conn (let [c (create-group-connector (get redis-conf :redis-host "localhost") (assoc redis-conf :sub-groups topics))
                          host-name (get conf :host-name nil) ]
                      (if (nil? host-name)
                           (join c)
                           (join c host-name))
                      c)
-        consumers [(consume {:offset-producers offset-producers} bootstrap-brokers group-conn msg-ch (into #{} topics) (merge conf metrics))]
+        consumers [(consume {:offset-producers offset-producers} metadata-producers group-conn msg-ch (into #{} topics) (merge conf metrics))]
        
         shutdown (fn []
                    (close group-conn)

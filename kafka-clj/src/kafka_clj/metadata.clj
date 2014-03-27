@@ -49,37 +49,31 @@
       (send-metadata-request producer conf)
       (catch Exception e (error e e))))
 
-(defn get-broker-metadata [broker {:keys [metadata-timeout] :or {metadata-timeout 10000} :as conf}]
+(defn get-broker-metadata [metadata-producer {:keys [metadata-timeout] :or {metadata-timeout 10000} :as conf}]
    "
    Creates a metadata-request-producer, sends a metadata request to the broker and waits for a result,
    if no result in $metadata-timeout or an error an exception is thrown, otherwise the result of
    (convert-metadata-response resp) is returned.
    "
-   (let [{:keys [host port]} broker
-         producer (metadata-request-producer host port conf)
+   (let [producer metadata-producer
          read-ch  (-> producer :client :read-ch)
          error-ch (-> producer :client :error-ch)]
-	    (try
-          (do 
-            (send-update-metadata producer conf)
+	      (send-update-metadata producer conf)
 	          ;wait for response or timeout
 	          (let [[v c] (alts!! [read-ch error-ch (timeout metadata-timeout)])]
 	             (if v
 	               (if (= c read-ch)  (convert-metadata-response v)
-	                 (throw (Exception. (str "Error reading metadata from producer " broker  " error " v))))
-	               (throw (Exception. (str "timeout reading from producer " broker ))))))
-          (finally 
-            (shutdown producer)))))
-
+	                 (throw (Exception. (str "Error reading metadata from producer " metadata-producer  " error " v))))
+	               (throw (Exception. (str "timeout reading from producer " metadata-producer)))))))
            
-(defn get-metadata [brokers conf]
+(defn get-metadata [metadata-producers conf]
   "Iterate through the brokers, and the first one that returns a metadata response is used"
-     (if-let [broker (first brokers)]
+     (if-let [metadata-producer (first metadata-producers)]
        (try
-         (get-broker-metadata broker conf)
+         (get-broker-metadata metadata-producer conf)
          (catch Exception e (do (.printStackTrace e)
                                 (error "error " e)
-                                  (if (rest brokers) (get-metadata (rest brokers) conf)
+                                  (if (rest metadata-producers) (get-metadata (rest metadata-producers) conf)
                                   (error e e)))))
        (prn "No brokers")
        ))
