@@ -58,6 +58,7 @@
    (let [producer metadata-producer
          read-ch  (-> producer :client :read-ch)
          error-ch (-> producer :client :error-ch)]
+        (info "producer " producer)
 	      (send-update-metadata producer conf)
 	          ;wait for response or timeout
 	          (let [[v c] (alts!! [read-ch error-ch (timeout metadata-timeout)])]
