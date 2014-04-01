@@ -18,6 +18,12 @@
   (count (get brokers-metadata topic)))
 
 
+(defn smart-get [x k]
+  (if (or (delay? x) (future? x))
+    (get @x k)
+    (get x k)))
+
+
 (defn select-rr-partition! [topic {:keys [topic-partition-ref brokers-metadata] :as state}]
   "If a counter does not exist in the topic-partition-ref it will be created
    and set using commute, the return result is an increment on the topic counter
@@ -155,16 +161,23 @@
         )))))
      
   
-(defn find-hashed-connection [k producers upper-limit]
+(defn find-hashed-connection [broker k producers upper-limit]
   "Finds the value with a key that when hashed and moded against upper-limit is the same for k
    this is an optimization for hashed partitioning where the original keys are stored in the producers-ref
    i.e. topic:partition but the connections are created on (mod (hash k) upper-limit)"
   (let [hashed-k (hash k)
 	     [_ producer] (first 
-                       (filter (fn [[producer-k v]]
-                         (= (mod (hash producer-k) upper-limit) (mod hashed-k upper-limit))) producers))]
+                       (filter (fn [[producer-k {:keys [host port]}]]
+                                 (and (= host (smart-get broker :host)) (= port (smart-get broker :port))
+                                    (= (mod (hash producer-k) upper-limit) (mod hashed-k upper-limit)))) producers))]
       producer))
+
 	             
+(defn find-producer [broker k producers]
+  (let [[_ producer] (first 
+                       (filter (fn [_ v] (= (smart-get v :host) (smart-get broker :host)))
+                         producers))]
+        producer))
              
 (defn select-producer-buffer! [connector topic partition {:keys [producers-ref brokers-metadata producer-error-ch conf] :as state}]
   "Select a producer or create one,
@@ -177,13 +190,13 @@
                            (fn [x] 
                              (if-let [producer (get @producers-ref k)]
                                x ; return map the producer already exists
-                               (if-let [producer (find-hashed-connection k @producers-ref (get conf :producer-connections-max 12))]
-                                 (assoc x k producer) ; found a producer based on hash 
-                                 (assoc x k (delay 
-	                                            (let [[partition broker] (select-broker topic partition brokers-metadata)
-	                                                  producer-buffer (create-producer-buffer connector topic partition producer-error-ch broker conf)]
-		                                             (add-remove-on-error-listener! producers-ref topic k producer-buffer brokers-metadata)
-	                                               producer-buffer))))))))
+                               (let [[partition broker] (select-broker topic partition brokers-metadata)]
+	                               (if-let [producer (find-hashed-connection broker k @producers-ref (get conf :producer-connections-max 4))]
+	                                 (assoc x k producer) ; found a producer based on hash and broker for the same partition
+	                                 (assoc x k (delay ;else create a new producer
+		                                            (let [producer-buffer (create-producer-buffer connector topic partition producer-error-ch broker conf)]
+			                                             (add-remove-on-error-listener! producers-ref topic k producer-buffer brokers-metadata)
+		                                               producer-buffer)))))))))
             k)))))
 	     
 
@@ -259,11 +272,11 @@
                                (into {} (filter (complement nil?)
                                             (map (fn [[k producer-buffer]]
 								                                                    (let [[topic partition] (clojure.string/split k #"\:")
-								                                                          host (:host producer-buffer)]
-								                                                      (if (some #(= (:host %) host) (get metadata topic))
+								                                                          host (smart-get producer-buffer :host)]
+								                                                      (if (some #(= (:host %) host) (smart-get metadata topic))
 								                                                        [k producer-buffer]
 								                                                        (do
-                                                                          (prn "closing producer " host " topic " topic)
+                                                                          (prn "closing producer " host " topic " topic " prodbuffer " producer-buffer)
 								                                                          (close-producer-buffer! producer-buffer)
 								                                                          nil))))
                                               m))))
@@ -271,7 +284,7 @@
                           (let [metadata (get-metadata metadata-producers conf)]
 	                          (dosync 
                               (alter brokers-metadata (fn [x] metadata))
-                              (alter producer-ref (fn [x] (update-producers @metadata @x)))
+                              (alter producer-ref (fn [x] (update-producers metadata x)))
                               )))
                            
         metadata-fixdelay 
