@@ -58,7 +58,6 @@
    (let [producer metadata-producer
          read-ch  (-> producer :client :read-ch)
          error-ch (-> producer :client :error-ch)]
-        (info "producer " producer)
 	      (send-update-metadata producer conf)
 	          ;wait for response or timeout
 	          (let [[v c] (alts!! [read-ch error-ch (timeout metadata-timeout)])]
@@ -75,9 +74,7 @@
          (catch Exception e (do (.printStackTrace e)
                                 (error "error " e)
                                   (if (rest metadata-producers) (get-metadata (rest metadata-producers) conf)
-                                  (error e e)))))
-       (prn "No brokers")
-       ))
+                                  (error e e)))))))
 
 
      

@@ -570,6 +570,7 @@
                           (join c)
                           (join c host-name))
                      c)
+        
         consumers [(consume {:offset-producers offset-producers} metadata-producers group-conn msg-ch (into #{} topics) (merge conf metrics))]
        
         shutdown (fn []

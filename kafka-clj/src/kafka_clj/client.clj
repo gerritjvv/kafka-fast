@@ -1,7 +1,7 @@
 (ns kafka-clj.client
   (:gen-class)
   (:require [fun-utils.core :refer [star-channel buffered-chan fixdelay apply-get-create stop-fixdelay go-seq]]
-            [kafka-clj.produce :refer [producer send-messages message shutdown]]
+            [kafka-clj.produce :refer [producer metadata-request-producer send-messages message shutdown]]
             [kafka-clj.metadata :refer [get-metadata]]
             [kafka-clj.msg-persist :refer [get-sent-message close-send-cache create-send-cache close-send-cache remove-sent-message
                                            create-retry-cache write-to-retry-cache retry-cache-seq close-retry-cache delete-from-retry-cache]]
@@ -155,24 +155,36 @@
         )))))
      
   
+(defn find-hashed-connection [k producers upper-limit]
+  "Finds the value with a key that when hashed and moded against upper-limit is the same for k
+   this is an optimization for hashed partitioning where the original keys are stored in the producers-ref
+   i.e. topic:partition but the connections are created on (mod (hash k) upper-limit)"
+  (let [hashed-k (hash k)
+	     [_ producer] (first 
+                       (filter (fn [[producer-k v]]
+                         (= (mod (hash producer-k) upper-limit) (mod hashed-k upper-limit))) producers))]
+      producer))
+	             
+             
 (defn select-producer-buffer! [connector topic partition {:keys [producers-ref brokers-metadata producer-error-ch conf] :as state}]
   "Select a producer or create one,
    if no broker can be found a RuntimeException is thrown"
   (let [k (str topic ":" partition)]
 	  (if-let [producer (get @producers-ref k)]
-   	    producer
-		    (if-let [[partition broker] (select-broker topic partition brokers-metadata)]
-	           (let [producer-buffer (create-producer-buffer connector topic partition producer-error-ch broker conf)]
-	              (add-remove-on-error-listener! producers-ref topic k producer-buffer brokers-metadata)
-                
-                (dosync 
-                        (alter producers-ref (fn [x] (if (get @producers-ref k) 
-                                                       (do (close-producer-buffer! producer-buffer) x) 
-                                                       (assoc x k producer-buffer)))))
-               
-                producer-buffer)
-	           (throw (RuntimeException. "No brokers could be found in the broker metadata"))))))
-
+   	    @producer
+		    (deref 
+          (get (dosync (alter producers-ref 
+                           (fn [x] 
+                             (if-let [producer (get @producers-ref k)]
+                               x ; return map the producer already exists
+                               (if-let [producer (find-hashed-connection k @producers-ref (get conf :producer-connections-max 12))]
+                                 (assoc x k producer) ; found a producer based on hash 
+                                 (assoc x k (delay 
+	                                            (let [[partition broker] (select-broker topic partition brokers-metadata)
+	                                                  producer-buffer (create-producer-buffer connector topic partition producer-error-ch broker conf)]
+		                                             (add-remove-on-error-listener! producers-ref topic k producer-buffer brokers-metadata)
+	                                               producer-buffer))))))))
+            k)))))
 	     
 
 (defn- send-msg-retry [{:keys [state] :as connector} {:keys [topic] :as msg}]
@@ -184,7 +196,7 @@
       (loop [partitions-1 partitions i 0] 
         (if-let [partition (first partitions-1)]
           (let [sent (try 
-						            (let [producer-buffer (select-producer-buffer! connector topic state)]
+						            (let [producer-buffer (select-producer-buffer! connector topic partition state)]
                           (prn "retry sending message to " (:host producer-buffer))
 						              (send-to-buffer state msg)
 						              true)
@@ -194,9 +206,6 @@
           (throw (RuntimeException. (str "The message for topic " topic " could not be sent")))))))
 
 (defn send-msg [{:keys [state] :as connector} topic ^bytes bts]
-   
-  ;@TODO messages are duplicates here
-  
   (if (> (-> state :brokers-metadata deref count) 0)
 	  (let [partition (select-rr-partition! topic state)
 	        producer-buffer (select-producer-buffer! connector topic partition state)
@@ -233,7 +242,9 @@
 
 
 (defn create-connector [bootstrap-brokers {:keys [acks] :or {acks 0} :as conf}]
-  (let [brokers-metadata (ref (get-metadata bootstrap-brokers conf))
+  (let [
+        metadata-producers (map #(metadata-request-producer (:host %) (:port %) conf) bootstrap-brokers)
+        brokers-metadata (ref (get-metadata metadata-producers conf))
         producer-error-ch (chan)
         producer-ref (ref {})
         send-cache (if (> acks 0) (create-send-cache conf))
@@ -243,7 +254,6 @@
                :topic-partition-ref (ref {})
                :producer-error-ch producer-error-ch
                :conf conf}
-        
         ;go through each producer, if it does not exist in the metadata, the producer is closed, otherwise we keep it.
         update-producers (fn [metadata m] 
                                (into {} (filter (complement nil?)
@@ -258,10 +268,10 @@
 								                                                          nil))))
                                               m))))
         update-metadata (fn [] 
-                          (let [metadata (get-metadata bootstrap-brokers conf)]
+                          (let [metadata (get-metadata metadata-producers conf)]
 	                          (dosync 
                               (alter brokers-metadata (fn [x] metadata))
-                              (alter producer-ref (fn [x] (update-producers metadata x)))
+                              (alter producer-ref (fn [x] (update-producers @metadata @x)))
                               )))
                            
         metadata-fixdelay 
@@ -271,7 +281,7 @@
 							                (update-metadata)
 							                (catch Exception e (error e e))))
                   
-        connector {:bootstrap-brokers bootstrap-brokers :send-cache send-cache :retry-cache retry-cache
+        connector {:bootstrap-brokers metadata-producers :send-cache send-cache :retry-cache retry-cache
                    :state (assoc state :metadata-fixdelay metadata-fixdelay) }
         
                   ;;every 10 seconds check for any data in the retry cache and resend the messages 
@@ -287,7 +297,6 @@
 												              
 										                  (delete-from-retry-cache connector (:key-val retry-msg)))))
 										         (catch Exception e (error e e))))]
-    
     ;listen to any producer errors, this can be sent from any producer
     ;update metadata, close the producer and write the messages in its buff cache to the 
     (go-seq

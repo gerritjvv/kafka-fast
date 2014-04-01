@@ -211,6 +211,7 @@
        correlation-id (.readInt in)]
      (read-array in state read-topic in f)))
 
+(comment 
 (defn read-fetch-response [^ByteBuf in]
   "
 	RequestOrResponse => Size (RequestMessage | ResponseMessage)
@@ -250,7 +251,7 @@
                            ))])))
         }
      ))
-
+)
 
 (defn write-offset-request-message [^ByteBuf buff {:keys [topics max-offsets use-earliest] :or {use-earliest false max-offsets 10}}]
   "

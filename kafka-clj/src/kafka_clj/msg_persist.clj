@@ -70,10 +70,11 @@
   (if-let [^HTreeMap cache (:cache send-cache)]
 	    (.remove cache (str corr-id ":" topic ":" partition))))
 
-(defn cache-sent-messages [{:keys [send-cache] } offsets]
+(defn cache-sent-messages
   "Offsets is expected to have format [[corr-id msgs]...]
    msgs is a list of messages (of maps with keys topic partition), and corr-id a long value
    For any msgs sequence all messages must be from the same partition."
+   [{:keys [send-cache] } offsets]
   (if-let [^Map cache (:cache send-cache)]
     (doseq [[corr-id msgs] offsets]
 	    (let [{:keys [topic partition]} (first msgs)]

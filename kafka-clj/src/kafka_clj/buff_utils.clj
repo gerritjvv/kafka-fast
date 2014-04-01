@@ -24,8 +24,6 @@
     (.writeBytes (.getBytes (str s) "UTF-8"))))
 
 (defn with-size [^ByteBuf buff f & args]
-  "apply f and then write len-bytes-written-by-f bytes-written-by-f
-   and returns the result returned by f"
   (let [pos (.writerIndex buff)]
     (.writeInt buff (int -1))
     (let [resp (apply f buff args)]

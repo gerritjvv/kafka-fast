@@ -33,27 +33,6 @@
 	                        })
 
 (defn read-metadata-response [^ByteBuf in]
-  "
-		RequestOrResponse => Size (RequestMessage | ResponseMessage)
-		    Size => int32
-
-	   Response => CorrelationId ResponseMessage
-	    CorrelationId => int32
-
-		MetadataResponse => [Broker][TopicMetadata]
-		  Broker => NodeId Host Port
-		  NodeId => int32
-		  Host => string
-		  Port => int32
-		  TopicMetadata => TopicErrorCode TopicName [PartitionMetadata]
-		  TopicErrorCode => int16
-		  PartitionMetadata => PartitionErrorCode PartitionId Leader Replicas Isr
-		  PartitionErrorCode => int16
-		  PartitionId => int32
-		  Leader => int32
-		  Replicas => [int32]
-		  Isr => [int32]
-		"
   (let [size (.readInt in)                     ;request size
         correlation-id (.readInt in)           ;correlation id
         broker-count (.readInt in)             ;broker array len
@@ -91,7 +70,6 @@
  
    "
   (proxy [ReplayingDecoder]
-    ;decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out)
     []
     (decode [ctx ^ByteBuf in ^List out] 
             ;(info "read metadata response")
