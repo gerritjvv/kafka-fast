@@ -173,6 +173,9 @@
 			                             {
 			                             :reuse-client true 
                                    :write-buff 100
+                                   :read-buff 100
+                                   :write-group-threads 4
+                                   :read-group-threads 1
                                    }
                                    ;merge conf
                                    conf

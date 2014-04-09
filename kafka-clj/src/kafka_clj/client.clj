@@ -104,14 +104,19 @@
     ; else remove the message from the cache
     (go-seq 
        (fn [v]
-          (if (instance? ProduceResponse v) ;ProduceResponse [correlation-id topic partition error-code offset])
-             (let [{:keys [correlation-id topic partition offset]} v]
-                (debug "produce response " v)
-	              (if (> (:error-code v) 0)
-		              (handle-send-message-error 
-		                    (RuntimeException. (str "Response error " (:error-code v))) 
-		                    producer conf offset (get-sent-message connector topic partition correlation-id)))
-		              (remove-sent-message connector topic partition correlation-id)))) read-ch)
+         (try
+	          (if (instance? ProduceResponse v) ;ProduceResponse [correlation-id topic partition error-code offset])
+	             (let [{:keys [correlation-id topic partition offset]} v]
+	                (debug "produce response " v)
+                  (if (> (:error-code v) 0)
+			              (if (:send-cache connector)
+                       (handle-send-message-error 
+			                       (RuntimeException. (str "Response error " (:error-code v))) 
+			                          producer conf offset (get-sent-message connector topic partition correlation-id))
+                       (error "Message received (even though acks " (:acks conf) " msg " v))) ; TODO send error back to connection and exit
+			              (remove-sent-message connector topic partition correlation-id)))
+           (catch Exception e (error e e)))) 
+       read-ch)
     
     ;;if any error on the tcp client handle error
     (go-seq

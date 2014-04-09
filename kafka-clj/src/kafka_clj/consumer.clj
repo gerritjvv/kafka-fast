@@ -1,7 +1,7 @@
 (ns kafka-clj.consumer
 
   (:require
-            [group-redis.core :refer [create-group-connector join get-members close reentrant-lock release persistent-set* persistent-get]]
+            [group-redis.core :refer [create-group-connector add-sub-group remove-sub-group join get-members close reentrant-lock release persistent-set* persistent-get]]
             [clojure.tools.logging :refer [info error]]
             [clj-tcp.client :refer [client write! read! close-all close-client]]
             [kafka-clj.produce :refer [shutdown message]]
@@ -200,7 +200,6 @@
   "Returns [the messages, and fetch errors], if any error was or timeout was detected the function returns otherwise it waits for a FetchEnd message
    and returns. 
   "
-  ;(info "!!!! calling get-locked-partitions with " topic-offsets)
   (let [locked-partitions (get-locked-partitions topic-offsets)]
       (do
 	      (info "!!!!!!send fetch " (:broker producer) " "  locked-partitions)
@@ -305,18 +304,10 @@
 (defn create-producers [broker-offsets conf]
   "Returns created producers"
     (for [broker (keys broker-offsets)]
-          (create-fetch-producer broker conf)
+          (do 
+            (info "create fech producer " broker)
+            (create-fetch-producer broker conf))
           ))
-
-(defonce ^ExecutorService exec-service (Executors/newCachedThreadPool))
-
-(defn future-f-call [^ExecutorService service ^Callable f]
-  (.submit service f))
-
-(defn wait-futures [futures]
-  (doall 
-    (for [[broker ^Future fu] futures]
-      [broker (.get fu)])))
 
 (defn consume-brokers! [producers group-conn broker-offsets msg-ch conf]
   "
@@ -342,7 +333,7 @@
    (merge-broker-offsets broker-offsets v))
 
 
-(defn close-and-reconnect [conn metadata-producers producers topics errors conf]
+(defn close-and-reconnect [conn metadata-producers producers topics-ref errors conf]
   
   (let [reconnect (some (fn [x] (not (instance? FetchError x))) errors)]
     
@@ -351,9 +342,9 @@
 		    (shutdown producer)))  
 	  
 	
-	  (info "close-and-reconnect: " metadata-producers " topic " topics " reconnect " reconnect)
+	  (info "close-and-reconnect: " metadata-producers " topics " @topics-ref " reconnect " reconnect)
 	  (if-let [metadata (get-metadata metadata-producers conf)]
-	    (let [broker-offsets (doall (get-broker-offsets conn metadata topics conf))
+	    (let [broker-offsets (doall (get-broker-offsets conn metadata @topics-ref conf))
 	          producers (if reconnect (doall (create-producers broker-offsets conf)) producers)]
 	      [producers broker-offsets])
 	    (throw (RuntimeException. "No metadata from brokers " metadata-producers)))))
@@ -425,8 +416,6 @@
   "broker-offsets have format  {broker {topic [{:partition :offset :topic}]}}
    calculate which offsets should be consumed based on the locks and other members
    returns the broker-offsets marked as locked or not as locked."
-  ;(info "host " (get conf :host-name))
-  
   (let [
         broker-partitions (filter #(= (:topic %) topic) (flatten-broker-partitions init-broker-offsets))
         [locked-n remove-n l] (get-partitions-to-lock topic init-broker-offsets (get-members group-conn))
@@ -487,20 +476,41 @@
     (p-close)))
 
      
+(defn check-update-broker-offsets 
+     "If a topic does not exist in the broker-offsets, the broker-offsets are retreived again from the brokers for the topic.
+      The result is merged into broker-offsets and the new map returned"
+     [conn metadata-producers broker-offsets topics conf]
+       ;broker-offsets has format:  {{:host "gvanvuuren-compile", :port 9092} {"ping" #'kafka-clj.client/c 
+       ;                              ({:offset 0, :error-code 0, :locked false, :partition 0})}}
+       
+       
+      (let [broker-offset-topics (into #{} (flatten (map keys (vals broker-offsets)))) ;get all the topics in the broker offsets
+            topics-diff (clojure.set/difference (set topics) broker-offset-topics) ;the topics that are not in broker-offset-topics
+            ]
+        (prn "topics-diff " topics-diff)
+        (if-not (empty? topics-diff)
+          (let [ metadata (get-metadata metadata-producers conf) 
+                 broker-offsets-new (doall (get-broker-offsets conn metadata topics-diff conf)) ]
+            ;download the metadata and calculate the broker offsets then merge in with previous
+            (merge-with (partial merge-with merge) broker-offsets broker-offsets-new))
+          broker-offsets)))
+
 (defn consume-producers! [conn 
                           metadata-producers
                           group-conn
-                          producers topics broker-offsets-p msg-ch {:keys [^Timer m-consume-cycle fetch-poll-ms] 
+                          producers topics-ref broker-offsets-p msg-ch {:keys [^Timer m-consume-cycle fetch-poll-ms] 
                                                                     :or {fetch-poll-ms 10000} :as conf}]
   "Consume from the current offsets,
    if any error the producers are closed and a reconnect is done, and consumption is tried again
    otherwise the broker-offsets are updated and the next fetch is done"
   
-  (loop [producers producers broker-offsets1 broker-offsets-p]
-      ;v is [broker data]
-       ;(info "11 broker-offsets1 " broker-offsets1)
-	      (let [ broker-offsets2 (apply merge-with merge 
-	                                            (for [topic topics] (calculate-locked-offsets topic group-conn 
+  (loop [producers producers broker-offsets-q broker-offsets-p]
+       ;broker-offsets has format:  {{:host "gvanvuuren-compile", :port 9092} {"ping" #'kafka-clj.client/c 
+       ;                              ({:offset 0, :error-code 0, :locked false, :partition 0})}}
+       (let [topics @topics-ref
+             broker-offsets1 (check-update-broker-offsets conn metadata-producers broker-offsets-q topics conf)
+             broker-offsets2 (apply merge-with merge 
+	                                            (for [topic @topics-ref] (calculate-locked-offsets topic group-conn 
                                                                    ;;we need to remove all other topics from the offset map
                                                                    (into {} (for [[broker topics] broker-offsets1  
                                                                                   [topic1 offsets] topics :when (= topic1 topic) ] [broker {topic offsets}]))
@@ -514,7 +524,7 @@
 			      (do
 			         (error "Error close and reconnect: " errors)
             
-			         (let [[producers broker-offsets] (close-and-reconnect conn metadata-producers producers topics errors conf)]
+			         (let [[producers broker-offsets] (close-and-reconnect conn metadata-producers producers topics-ref errors conf)]
 	                (info "Got new consumers " (map :broker producers))
 	                (persist-error-offsets group-conn broker-offsets errors conf)
                   (.stop timer-ctx)
@@ -528,17 +538,17 @@
 	
 			      )))
 
-(defn consume [conn metadata-producers group-conn msg-ch topics conf]
+(defn consume [conn metadata-producers group-conn msg-ch topics-ref conf]
   "Entry point for topic consumption,
    The cluster metadata is requested from the metadata-producers, the topic offsets are sorted per broker.
    For each broker a producer is created that will control the sending and reading from the broker,
    then consume-producers is called in the background that will reconnect if needed,
    the method returns with {:msg-ch and :shutdown (fn []) }, shutdown should be called to stop all consumption for this topic"
   (if-let [metadata (get-metadata metadata-producers conf)]
-    (let[broker-offsets (doall (get-broker-offsets conn metadata topics conf))
+    (let[broker-offsets (doall (get-broker-offsets conn metadata @topics-ref conf))
          producers (doall (create-producers broker-offsets conf))
          t (future (try
-                     (consume-producers! conn metadata-producers group-conn producers topics broker-offsets msg-ch conf)
+                     (consume-producers! conn metadata-producers group-conn producers topics-ref broker-offsets msg-ch conf)
                      (catch Exception e (error e e))))]
       {:msg-ch msg-ch :shutdown (fn [] (future-cancel t))}
       )
@@ -550,7 +560,30 @@
         :m-redis-writes (.meter metrics-registry (str "kafka-consumer.redis-writes-#" (System/nanoTime)))
         :m-message-size (.histogram metrics-registry (str "kafka-consumer.msg-size-#" (System/nanoTime)))
         :m-consume-cycle (.timer metrics-registry (str "kafka-consume.cycle-#" (System/nanoTime)))})
-        
+     
+(defn remove-topic 
+  "Removes a topic from the topics-ref and a sub-group from the redis group-conn"
+  [{:keys [conf topics-ref group-conn]} topic]
+  (let [host-name (get conf :host-name nil)]
+   (remove-sub-group group-conn topic)   
+   (if (nil? host-name) ;we rejoin to update the subgroups
+       (join group-conn)
+       (join group-conn host-name)))  
+  (dosync 
+    (alter topics-ref disj topic)))
+  
+(defn add-topic 
+  "Adds a topic from the topics-ref and a sub-group from the redis group-conn"
+  [{:keys [conf topics-ref group-conn]} topic]
+
+  (let [host-name (get conf :host-name nil)]
+   (add-sub-group group-conn topic)   
+   (if (nil? host-name) ;we rejoin to update the subgroups
+       (join group-conn)
+       (join group-conn host-name)))
+  (dosync 
+    (alter topics-ref conj topic)))
+  
 (defn consumer [bootstrap-brokers topics conf]
  "Creates a consumer and starts consumption
   Group management:
@@ -558,6 +591,7 @@
   "
   (info "Connecting to redis using " (get conf :redis-conf {:heart-beat-freq 10}))
   (let [
+        topics-ref (ref (into #{} topics)) ;keep topic reference to allow dynamic remove and update of topics
         offset-producers (ref {})
         metrics (create-metrics)
         msg-ch (chan 100)
@@ -571,7 +605,7 @@
                           (join c host-name))
                      c)
         
-        consumers [(consume {:offset-producers offset-producers} metadata-producers group-conn msg-ch (into #{} topics) (merge conf metrics))]
+        consumers [(consume {:offset-producers offset-producers} metadata-producers group-conn msg-ch topics-ref (merge conf metrics))]
        
         shutdown (fn []
                    (close group-conn)
@@ -580,7 +614,7 @@
                    (doseq [c consumers]
                      ((:shutdown c))))]
     
-    {:shutdown shutdown :message-ch msg-buff :offset-producers offset-producers :group-conn group-conn :metrics metrics :consumers consumers}))
+    {:shutdown shutdown :message-ch msg-buff :offset-producers offset-producers :group-conn group-conn :metrics metrics :consumers consumers :topics-ref topics-ref}))
 
 
 (defn close-consumer [{:keys [shutdown]}]
