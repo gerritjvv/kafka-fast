@@ -139,6 +139,19 @@ The library used for redis is https://github.com/gerritjvv/group-redis
  
 ```
 
+### Dynamically Adding/Removing topics 
+
+```clojure
+
+(add-topic c "mytopic")
+;;ads the topic mytopic to the open connection c for consumption
+
+(remove-topic c "mytopic")
+;;stops consuming from mytopic on connection c
+
+
+```
+
 ##Consumer metrics
 
 The api uses http://metrics.codahale.com/ for metrics.
