@@ -478,7 +478,7 @@
      
 (defn release-left-topics-locks 
   "Check if there are any topics in broker-offsets that are not in topics, if so, the locks for those topics are released"
-  [{:keys [group-conn]} metadata-producers broker-offsets topics conf]
+  [{:keys [group-conn] :as conn} metadata-producers broker-offsets topics conf]
   (let [broker-offset-topics (into #{} (flatten (map keys (vals broker-offsets))))
         topics-left (clojure.set/difference broker-offset-topics (set topics))]
     ;(release-partition group-conn topic partition conf)
@@ -623,7 +623,7 @@
                           (join c host-name))
                      c)
         
-        consumers [(consume {:offset-producers offset-producers} metadata-producers group-conn msg-ch topics-ref (merge conf metrics))]
+        consumers [(consume {:offset-producers offset-producers :group-conn group-conn} metadata-producers group-conn msg-ch topics-ref (merge conf metrics))]
        
         shutdown (fn []
                    (close group-conn)
