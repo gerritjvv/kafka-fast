@@ -476,6 +476,22 @@
     (p-close)))
 
      
+(defn release-left-topics-locks 
+  "Check if there are any topics in broker-offsets that are not in topics, if so, the locks for those topics are released"
+  [{:keys [group-conn]} metadata-producers broker-offsets topics conf]
+  (let [broker-offset-topics (into #{} (flatten (map keys (vals broker-offsets))))
+        topics-left (clojure.set/difference broker-offset-topics (set topics))]
+    ;(release-partition group-conn topic partition conf)
+    (if (not (empty? topics-left))
+	    (doseq [[_ topic-map] broker-offsets]
+	      (doseq [[topic partitions] topic-map]
+         (if (get topics-left topic)
+		        (doseq [{:keys [partition locked]} partitions]
+	           (if locked
+	             (do
+	               (info ">>>>>>>>>>>>>>>>>>>>>>>>>>> calling release on " topic "/" partition)
+	               (release-partition group-conn topic partition conf))))))))))
+
 (defn check-update-broker-offsets 
      "If a topic does not exist in the broker-offsets, the broker-offsets are retreived again from the brokers for the topic.
       The result is merged into broker-offsets and the new map returned"
@@ -487,7 +503,6 @@
       (let [broker-offset-topics (into #{} (flatten (map keys (vals broker-offsets)))) ;get all the topics in the broker offsets
             topics-diff (clojure.set/difference (set topics) broker-offset-topics) ;the topics that are not in broker-offset-topics
             ]
-        (prn "topics-diff " topics-diff)
         (if-not (empty? topics-diff)
           (let [ metadata (get-metadata metadata-producers conf) 
                  broker-offsets-new (doall (get-broker-offsets conn metadata topics-diff conf)) ]
@@ -507,6 +522,9 @@
   (loop [producers producers broker-offsets-q broker-offsets-p]
        ;broker-offsets has format:  {{:host "gvanvuuren-compile", :port 9092} {"ping" #'kafka-clj.client/c 
        ;                              ({:offset 0, :error-code 0, :locked false, :partition 0})}}
+       ;release any topics that are not consumed anymore
+       (release-left-topics-locks conn metadata-producers broker-offsets-q @topics-ref conf)
+       
        (let [topics @topics-ref
              broker-offsets1 (check-update-broker-offsets conn metadata-producers broker-offsets-q topics conf)
              broker-offsets2 (apply merge-with merge 
