@@ -202,7 +202,7 @@
   "
   (let [locked-partitions (get-locked-partitions topic-offsets)]
       (do
-	      (info "!!!!!!send fetch " (:broker producer) " "  locked-partitions)
+	      (prn "!!!!!!send fetch " (:broker producer) " "  locked-partitions)
 			  (send-fetch producer locked-partitions)
 			  
 			  (let [
@@ -252,6 +252,7 @@
      {(:topic topic-data)
             (doall (for [{:keys [partition error-code offsets]} partitions]
                      {:offset (if use-earliest (last offsets) (first offsets))
+                      :all-offsets offsets
                       :error-code error-code
                       :locked false
                       :partition partition}))}))
