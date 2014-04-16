@@ -3,6 +3,7 @@
     [kafka-clj.metadata :refer [get-metadata]]
     [kafka-clj.produce :refer [metadata-request-producer]]
     [group-redis.core :refer [create-group-connector close persistent-get]]
+    [clojure.core.reducers :as r]
     ))
 
 ;utility functions to calculate lag and monitor kafka topic consumption
@@ -35,15 +36,21 @@
  
 
 (defn get-topic-offset-pointers [group-connector topic partitions]
-   (reduce (fn [state {:keys [offset partition]}] (conj state {:offset offset :partition partition :offset-pointer (get-offset-pointer group-connector topic partition)})) [] partitions))
+   (r/fold (fn 
+             ([] [])
+             ([state {:keys [offset partition]}] (conj state {:offset offset :partition partition :offset-pointer (get-offset-pointer group-connector topic partition)}))) partitions))
 
 
 
 (defn calculate-offset-pointers
   "Returns the offset"
   [group-connector offsets]
-  (reduce (fn [broker-state [broker topics]]
+  (r/fold (fn 
+             ([] {})
+             ([broker-state [broker topics]]
               (assoc broker-state 
-                 broker (reduce (fn [topic-state [topic partitions]]
-                                       (assoc topic-state topic (get-topic-offset-pointers group-connector topic partitions))) {} topics))) {} offsets))
+                 broker (r/fold (fn
+                                  ([] {})
+                                  ([topic-state [topic partitions]]
+                                       (assoc topic-state topic (get-topic-offset-pointers group-connector topic partitions)))) (vec topics))))) (vec offsets)))
 
