@@ -88,7 +88,7 @@ This is more for tooling and UI(s).
 
 (require '[kafka-clj.metadata :refer [get-metadata]])
 (require '[kafka-clj.produce :refer [metadata-request-producer]])
-
+(require '[kafka-clj.consumer :refer [get-broker-offsets]])
 
 (def metadata-producer (metadata-request-producer "hb02" 9092 {}))
 
