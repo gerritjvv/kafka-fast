@@ -202,7 +202,7 @@
   "
   (let [locked-partitions (get-locked-partitions topic-offsets)]
       (do
-	      (prn "!!!!!!send fetch " (:broker producer) " "  locked-partitions)
+	      (info "!!!!!!send fetch " (:broker producer) " "  locked-partitions)
 			  (send-fetch producer locked-partitions)
 			  
 			  (let [
@@ -542,10 +542,9 @@
                                                                    (into {} (for [[broker topics] broker-offsets1  
                                                                                   [topic1 offsets] topics :when (= topic1 topic) ] [broker {topic offsets}]))
                                                                    conf)))
-             producers2  (doall (create-producers-if-needed broker-offsets2 producers conf))
-             _ (do (prn "prodcers2 "  (map :broker producers2)))
-               timer-ctx (.time m-consume-cycle)
-               q (consume-brokers! producers2 group-conn broker-offsets2 msg-ch conf)]
+              producers2  (doall (create-producers-if-needed broker-offsets2 producers conf))
+              timer-ctx (.time m-consume-cycle)
+              q (consume-brokers! producers2 group-conn broker-offsets2 msg-ch conf)]
          
          
 	       (let [[v errors] q]
