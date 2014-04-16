@@ -310,6 +310,14 @@
             (create-fetch-producer broker conf))
           ))
 
+(defn create-producers-if-needed [broker-offsets producers conf]
+  (for [broker-k (keys broker-offsets)]
+    (if-let [producer (first (filter (fn [{:keys [broker]}] (= broker broker-k)) producers))]
+      producer
+      (create-fetch-producer broker-k conf))))
+    
+
+
 (defn consume-brokers! [producers group-conn broker-offsets msg-ch conf]
   "
    Broker-offsets should be {broker {topic [{:offset o :partition p} ...] }}
@@ -534,8 +542,10 @@
                                                                    (into {} (for [[broker topics] broker-offsets1  
                                                                                   [topic1 offsets] topics :when (= topic1 topic) ] [broker {topic offsets}]))
                                                                    conf)))
+             producers2  (doall (create-producers-if-needed broker-offsets2 producers conf))
+             _ (do (prn "prodcers2 "  (map :broker producers2)))
                timer-ctx (.time m-consume-cycle)
-               q (consume-brokers! producers group-conn broker-offsets2 msg-ch conf)]
+               q (consume-brokers! producers2 group-conn broker-offsets2 msg-ch conf)]
          
          
 	       (let [[v errors] q]
@@ -547,13 +557,13 @@
 	                (info "Got new consumers " (map :broker producers))
 	                (persist-error-offsets group-conn broker-offsets errors conf)
                   (.stop timer-ctx)
-			            (recur producers broker-offsets)))
+			            (recur producers2 broker-offsets)))
 			      (do
                (if (< (reduce #(+ %1 (count %2)  ) 0 (vals v)) 1) ; if we were reading data, no need to pause
 	               (do (info "sleep: " fetch-poll-ms) (<!! (timeout fetch-poll-ms))))
 	             
                (.stop timer-ctx)
-               (recur producers (update-broker-offsets broker-offsets2 v)))))
+               (recur producers2 (update-broker-offsets broker-offsets2 v)))))
 	
 			      )))
 
