@@ -9,6 +9,8 @@
             [kafka-clj.metadata :refer [get-metadata]]
             [fun-utils.core :refer [buffered-chan]]
             [kafka-clj.produce :refer [metadata-request-producer]]
+            [group-redis.core :refer [host-name]]
+            [group-redis.partition :refer [controlled-assignments]]
             [clojure.pprint :refer [pprint]]
             [clojure.core.async :refer [<!! >!! alts!! timeout chan go >! <! close! go-loop]]
             [clj-tuple :refer [tuple]])
@@ -422,21 +424,20 @@
 
 
 (defn calculate-locked-offsets [topic group-conn init-broker-offsets conf]
-  (let [ids (for [[broker topics] init-broker-offsets
-                  [topic partitions] topics
-                  partition partitions] (:partition partition))
-        offsets (controlled-assignments connector host-name topic ids)
+  (let [
+        partitions (filter #(= (:topic %) topic) (flatten-broker-partitions init-broker-offsets))
+        ids (map :partition partitions)
+        offsets (controlled-assignments group-conn host-name topic ids)
         assigned-offsets (set (get offsets host-name))]
-    ;for each offset for the current host set lock
-    (into {}
-      (for [[broker topics] init-broker-offsets]
-        [broker 
-            (into {}
-               (for [[topic partitions] topics]
-                 [topic 
-                    (for [partition partitions] 
-                      (assoc partition :locked (if (assigned-offsets (:partition partition)) true false)))]))]))))
-  
+    ;change-partition-lock [group-conn broker-offsets broker topic partition locked? conf]
+    (loop [ps partitions broker-offsets1 init-broker-offsets]
+      (if-let [record (first ps)]
+        (let [{:keys [topic broker partition locked]} record
+              locked (if (assigned-offsets partition) true false)]
+          (recur (rest ps) (change-partition-lock group-conn broker-offsets1 broker topic partition locked conf)))
+        broker-offsets1))))
+    
+      
 (defn persist-error-offsets [group-conn broker-offsets errors conf]
   (let [{:keys [p-close p-send]} (get-persister group-conn conf)
         offsets (flatten-broker-partitions broker-offsets)]
@@ -507,7 +508,7 @@
 	                                            (doall (pmap #(calculate-locked-offsets % group-conn 
                                                                    ;;we need to remove all other topics from the offset map
                                                                    (into {} (for [[broker topics] broker-offsets1  
-                                                                                  [topic1 offsets] topics :when (= topic1 topic) ] [broker {topic offsets}]))
+                                                                                  [topic1 offsets] topics :when (= topic1 %) ] [broker {% offsets}]))
                                                                    conf) @topics-ref)))
               producers2  (doall (create-producers-if-needed broker-offsets2 producers conf))
               timer-ctx (.time m-consume-cycle)

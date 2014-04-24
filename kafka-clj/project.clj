@@ -41,4 +41,4 @@
                    ;                           com.sun.jmx/jmxri]]
                  ;[org.apache.curator/curator-test "2.3.0" :scope "test" ]
                  ;[org.apache.hadoop/hadoop-core "0.20.2"]
-                 [org.clojure/clojure "1.6.0" :scope "provided"]])
+                 [org.clojure/clojure "1.5.1" :scope "provided"]])
