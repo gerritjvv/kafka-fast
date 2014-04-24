@@ -1,4 +1,4 @@
-(defproject kafka-clj "0.9.4"
+(defproject kafka-clj "1.0.0-SNAPSHOT"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -21,7 +21,7 @@
   :dependencies [
                  [org.clojars.smee/binary "0.2.5"]
                  [clojurewerkz/buffy "1.0.0-beta1"]
-                 [group-redis "0.5.0"]
+                 [group-redis "0.6.0-SNAPSHOT"]
                  [org.mapdb/mapdb "0.9.9"]
                  [midje "1.6.0" :scope "test"]
                  [reply "0.3.0" :scope "provided"]
@@ -41,4 +41,4 @@
                    ;                           com.sun.jmx/jmxri]]
                  ;[org.apache.curator/curator-test "2.3.0" :scope "test" ]
                  ;[org.apache.hadoop/hadoop-core "0.20.2"]
-                 [org.clojure/clojure "1.5.1" :scope "provided"]])
+                 [org.clojure/clojure "1.6.0" :scope "provided"]])
