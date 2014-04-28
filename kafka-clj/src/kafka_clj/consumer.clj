@@ -422,12 +422,14 @@
     (reentrant-lock group-conn (str topic "/" partition))))
 
 
+;global cached offsets for a topic
+(def cached-offsets (ref {}))
 
-(defn calculate-locked-offsets [topic group-conn init-broker-offsets conf]
+(defn calculate-locked-offsets [topic group-conn init-broker-offsets conf cached-offsets]
   (let [
         partitions (filter #(= (:topic %) topic) (flatten-broker-partitions init-broker-offsets))
         ids (map :partition partitions)
-        offsets (controlled-assignments group-conn host-name topic ids)
+        offsets (controlled-assignments group-conn host-name topic ids cached-offsets)
         assigned-offsets (set (get offsets host-name))]
     ;change-partition-lock [group-conn broker-offsets broker topic partition locked? conf]
     (loop [ps partitions broker-offsets1 init-broker-offsets]
@@ -435,7 +437,7 @@
         (let [{:keys [topic broker partition locked]} record
               locked (if (assigned-offsets partition) true false)]
           (recur (rest ps) (change-partition-lock group-conn broker-offsets1 broker topic partition locked conf)))
-        broker-offsets1))))
+        {:broker-offsets broker-offsets1 :cached-offsets offsets}))))
     
       
 (defn persist-error-offsets [group-conn broker-offsets errors conf]
@@ -495,7 +497,7 @@
    if any error the producers are closed and a reconnect is done, and consumption is tried again
    otherwise the broker-offsets are updated and the next fetch is done"
   
-  (loop [producers producers broker-offsets-q broker-offsets-p]
+  (loop [producers producers broker-offsets-q broker-offsets-p  cached-offsets1 nil]
        ;broker-offsets has format:  {{:host "gvanvuuren-compile", :port 9092} {"ping" #'kafka-clj.client/c 
        ;                              ({:offset 0, :error-code 0, :locked false, :partition 0})}}
        ;release any topics that are not consumed anymore
@@ -503,16 +505,20 @@
        
        (let [topics @topics-ref
              broker-offsets1 (check-update-broker-offsets conn metadata-producers broker-offsets-q topics conf)
-             broker-offsets2 (apply merge-with merge 
+             {:keys [broker-offsets cached-offsets]} 
+                                        (apply merge-with merge 
                                               ;each topic must be done in a different thread
 	                                            (doall (pmap #(calculate-locked-offsets % group-conn 
                                                                    ;;we need to remove all other topics from the offset map
                                                                    (into {} (for [[broker topics] broker-offsets1  
                                                                                   [topic1 offsets] topics :when (= topic1 %) ] [broker {% offsets}]))
-                                                                   conf) @topics-ref)))
-              producers2  (doall (create-producers-if-needed broker-offsets2 producers conf))
-              timer-ctx (.time m-consume-cycle)
-              q (consume-brokers! producers2 group-conn broker-offsets2 msg-ch conf)]
+                                                                   conf cached-offsets1) @topics-ref)))
+             broker-offsets2 broker-offsets 
+             
+             ;_ (do (debug "offsets " cached-offsets))
+             producers2  (doall (create-producers-if-needed broker-offsets2 producers conf))
+             timer-ctx (.time m-consume-cycle)
+             q (consume-brokers! producers2 group-conn broker-offsets2 msg-ch conf)]
          
          
 	       (let [[v errors] q]
@@ -524,13 +530,13 @@
 	                (info "Got new consumers " (map :broker producers))
 	                (persist-error-offsets group-conn broker-offsets errors conf)
                   (.stop timer-ctx)
-			            (recur producers2 broker-offsets)))
+			            (recur producers2 broker-offsets cached-offsets)))
 			      (do
                (if (< (reduce #(+ %1 (count %2)  ) 0 (vals v)) 1) ; if we were reading data, no need to pause
 	               (do (info "sleep: " fetch-poll-ms) (<!! (timeout fetch-poll-ms))))
 	             
                (.stop timer-ctx)
-               (recur producers2 (update-broker-offsets broker-offsets2 v)))))
+               (recur producers2 (update-broker-offsets broker-offsets2 v) cached-offsets))))
 	
 			      )))
 

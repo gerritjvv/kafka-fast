@@ -379,6 +379,9 @@
   ([{:keys [host port]} conf]
     (create-fetch-producer host port conf))
   ([host port conf]
+    (if (not (and host port))
+      (throw (RuntimeException. (str "A host and port must be supplied: host " host " port " port))))
+    
     (let [
           ;read-group (NioEventLoopGroup. )
           ;write-group read-group
