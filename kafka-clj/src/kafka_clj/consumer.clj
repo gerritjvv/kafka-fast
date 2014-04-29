@@ -437,7 +437,7 @@
         (let [{:keys [topic broker partition locked]} record
               locked (if (assigned-offsets partition) true false)]
           (recur (rest ps) (change-partition-lock group-conn broker-offsets1 broker topic partition locked conf)))
-        {:broker-offsets broker-offsets1 :cached-offsets offsets}))))
+        {:broker-offsets broker-offsets1 :cached-offsets {topic offsets}}))))
     
       
 (defn persist-error-offsets [group-conn broker-offsets errors conf]
@@ -506,16 +506,22 @@
        (let [topics @topics-ref
              broker-offsets1 (check-update-broker-offsets conn metadata-producers broker-offsets-q topics conf)
              {:keys [broker-offsets cached-offsets]} 
-                                        (apply merge-with merge 
+                                        (apply merge-with (fn [a b] 
+                                                            (if 
+                                                              (and (associative? a) (associative? b))
+                                                              (merge-with merge a b)
+                                                              b))
                                               ;each topic must be done in a different thread
-	                                            (doall (pmap #(calculate-locked-offsets % group-conn 
-                                                                   ;;we need to remove all other topics from the offset map
-                                                                   (into {} (for [[broker topics] broker-offsets1  
-                                                                                  [topic1 offsets] topics :when (= topic1 %) ] [broker {% offsets}]))
-                                                                   conf cached-offsets1) @topics-ref)))
+	                                            (doall (pmap (fn [x];x = topic
+	                                                             (calculate-locked-offsets x group-conn 
+	                                                                   ;;we need to remove all other topics from the offset map
+	                                                                   (into {} (for [[broker topics] broker-offsets1  
+	                                                                                  [topic1 offsets] topics :when (= topic1 x) ] [broker {x offsets}]))
+	                                                                   conf (get cached-offsets1 x) )) 
+                                                      @topics-ref)))
              broker-offsets2 broker-offsets 
              
-             ;_ (do (debug "offsets " cached-offsets))
+             ;_ (do (info "offsets " broker-offsets))
              producers2  (doall (create-producers-if-needed broker-offsets2 producers conf))
              timer-ctx (.time m-consume-cycle)
              q (consume-brokers! producers2 group-conn broker-offsets2 msg-ch conf)]

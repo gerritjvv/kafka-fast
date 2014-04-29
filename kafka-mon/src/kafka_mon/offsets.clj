@@ -28,8 +28,11 @@
         metadata-producers (for [{:keys [host port]} broker-list]
 	                             (metadata-request-producer host port {}))
 	      meta (get-metadata metadata-producers conf)
+       _ (do (prn "Meta " meta))
 	      offsets (get-broker-offsets {:offset-producers (ref {})} meta topics {:use-earliest false})
+       _ (do (prn "Offsets " offsets))
 	      g (create-group-connector redis-host)]
+     (prn "DONE")
      (try
        (let [pointers (calculate-offset-pointers g offsets)]
          (cond 
