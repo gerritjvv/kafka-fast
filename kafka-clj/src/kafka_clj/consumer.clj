@@ -12,6 +12,7 @@
             [group-redis.core :refer [host-name]]
             [group-redis.partition :refer [controlled-assignments]]
             [clojure.pprint :refer [pprint]]
+            [clojure.core.reducers :as r]
             [clojure.core.async :refer [<!! >!! alts!! timeout chan go >! <! close! go-loop]]
             [clj-tuple :refer [tuple]])
   (:import [kafka_clj.fetch Message FetchError]
@@ -230,7 +231,8 @@
 				            (error "timeout reading from " (:broker producer))
 				            [[] [{:error (RuntimeException. (str "Timeout while waiting for " (:broker producer)))}]] 
 				            ))
-			         (finally ((:p-close persister)))))))))
+			         (finally (do ((:p-close persister))
+                             (info "End of request for broker " (:broker producer) )))))))))
 
 
 (defn consume-broker [producer group-conn topic-offsets msg-ch conf]
@@ -317,25 +319,42 @@
     (if-let [producer (first (filter (fn [{:keys [broker]}] (= broker broker-k)) producers))]
       producer
       (create-fetch-producer broker-k conf))))
-    
 
+(defn- parallel-broker-consume [group-conn broker-offsets msg-ch conf {:keys [broker] :as producer}]
+  (info "inside parallel broker consume")
+  (vector broker  (consume-broker producer group-conn (get broker-offsets broker) msg-ch conf)))
 
-(defn consume-brokers! [producers group-conn broker-offsets msg-ch conf]
+(defn ^Callable callable 
+  "Returns a function as a Callable that applies (f i)"
+  [f i] 
+  (fn [] (f i) ))
+
+(defn pmap-exec 
+  "Calls (f i) inside a thread where i is a item in the list l for each i in l, this returns a list of Future
+   Then calls .get on each future, the result is a lazy list of results from futures that needs to be run in reduce or doall"
+  [^ExecutorService exec f l]
+  (r/map (fn [^Future v] (.get v 5 java.util.concurrent.TimeUnit/MINUTES))
+    (doall (map (fn [i] (.submit exec (callable f i))) l))))
+
+(defn consume-brokers! [producers exec group-conn broker-offsets msg-ch conf]
   "
    Broker-offsets should be {broker {topic [{:offset o :partition p} ...] }}
    Consume brokers and returns a list of lists that contains the last messages consumed, or -1 -2 where errors are concerned
    the data structure returned is {broker -1|-2|[{:offset o topic: a} {:offset o topic a} ... ] ...}
   "
   (try
-    (reduce 
-      (fn [[state errors] [broker [msgs msg-errors]]]
-         [(merge state {broker msgs}) (if (> (count msg-errors) 0) (apply conj errors msg-errors) errors)])
-          [{} []];initial value
-          (pmap #(vector (:broker %)  (consume-broker % group-conn (get broker-offsets (:broker %)) msg-ch conf)) 
+    (r/fold 
+      (fn
+        ([] [{} []])
+        ([[state errors] [broker [msgs msg-errors]]]
+         [(merge state {broker msgs}) (if (> (count msg-errors) 0) (apply conj errors msg-errors) errors)]))
+          (pmap-exec exec
+            (partial parallel-broker-consume group-conn  broker-offsets msg-ch conf)
                     producers))
    (finally
      ;(info ">>>>>>>>>>>>>>>>>>>>> END CONSUME BROKERS!")
      )))
+
 
 (defn update-broker-offsets [broker-offsets v]
   "
@@ -422,8 +441,6 @@
     (reentrant-lock group-conn (str topic "/" partition))))
 
 
-;global cached offsets for a topic
-(def cached-offsets (ref {}))
 
 (defn calculate-locked-offsets [topic group-conn init-broker-offsets conf cached-offsets]
   (let [
@@ -496,55 +513,61 @@
   "Consume from the current offsets,
    if any error the producers are closed and a reconnect is done, and consumption is tried again
    otherwise the broker-offsets are updated and the next fetch is done"
-  
-  (loop [producers producers broker-offsets-q broker-offsets-p  cached-offsets1 nil]
-       ;broker-offsets has format:  {{:host "gvanvuuren-compile", :port 9092} {"ping" #'kafka-clj.client/c 
-       ;                              ({:offset 0, :error-code 0, :locked false, :partition 0})}}
-       ;release any topics that are not consumed anymore
-       (release-left-topics-locks conn metadata-producers broker-offsets-q @topics-ref conf)
-       
-       (let [topics @topics-ref
-             broker-offsets1 (check-update-broker-offsets conn metadata-producers broker-offsets-q topics conf)
-             {:keys [broker-offsets cached-offsets]} 
-                                        (apply merge-with (fn [a b] 
-                                                            (if 
-                                                              (and (associative? a) (associative? b))
-                                                              (merge-with merge a b)
-                                                              b))
-                                              ;each topic must be done in a different thread
-	                                            (doall (pmap (fn [x];x = topic
-	                                                             (calculate-locked-offsets x group-conn 
-	                                                                   ;;we need to remove all other topics from the offset map
-	                                                                   (into {} (for [[broker topics] broker-offsets1  
-	                                                                                  [topic1 offsets] topics :when (= topic1 x) ] [broker {x offsets}]))
-	                                                                   conf (get cached-offsets1 x) )) 
-                                                      @topics-ref)))
-             broker-offsets2 broker-offsets 
+  (let [exec (Executors/newCachedThreadPool)]
              
-             ;_ (do (info "offsets " broker-offsets))
-             producers2  (doall (create-producers-if-needed broker-offsets2 producers conf))
-             timer-ctx (.time m-consume-cycle)
-             q (consume-brokers! producers2 group-conn broker-offsets2 msg-ch conf)]
-         
-         
-	       (let [[v errors] q]
-			    (if (and (not (nil? errors)) (> (count errors) 0))
-			      (do
-			         (error "Error close and reconnect: " errors)
-            
-			         (let [[producers broker-offsets] (close-and-reconnect conn metadata-producers producers topics-ref errors conf)]
-	                (info "Got new consumers " (map :broker producers))
-	                (persist-error-offsets group-conn broker-offsets errors conf)
-                  (.stop timer-ctx)
-			            (recur producers2 broker-offsets cached-offsets)))
-			      (do
-               (if (< (reduce #(+ %1 (count %2)  ) 0 (vals v)) 1) ; if we were reading data, no need to pause
-	               (do (info "sleep: " fetch-poll-ms) (<!! (timeout fetch-poll-ms))))
-	             
-               (.stop timer-ctx)
-               (recur producers2 (update-broker-offsets broker-offsets2 v) cached-offsets))))
-	
-			      )))
+	  (loop [producers producers broker-offsets-q broker-offsets-p  cached-offsets1 nil]
+	       ;broker-offsets has format:  {{:host "gvanvuuren-compile", :port 9092} {"ping" #'kafka-clj.client/c 
+	       ;                              ({:offset 0, :error-code 0, :locked false, :partition 0})}}
+	       ;release any topics that are not consumed anymore
+	       (release-left-topics-locks conn metadata-producers broker-offsets-q @topics-ref conf)
+	       (info " >>>>>>>>>>>>>>>>>>>>>>>>>>>>> loop ")
+	       (let [topics @topics-ref
+	             broker-offsets1 (check-update-broker-offsets conn metadata-producers broker-offsets-q topics conf)
+	             {:keys [broker-offsets cached-offsets]} 
+	                                        (r/fold 
+	                                            (fn
+	                                               ([] {})
+	                                               ([a b] 
+	                                                 (if 
+	                                                   (and (associative? a) (associative? b))
+	                                                   (merge-with (partial merge-with merge) a b)
+	                                                   b)))
+	                                              ;each topic must be done in a different thread
+		                                                 (pmap-exec
+	                                                           exec
+	                                                           (fn [x];x = topic
+		                                                             (calculate-locked-offsets x group-conn 
+		                                                                   ;;we need to remove all other topics from the offset map
+		                                                                   (into {} (for [[broker topics] broker-offsets1  
+		                                                                                  [topic1 offsets] topics :when (= topic1 x) ] [broker {x offsets}]))
+		                                                                   conf (get cached-offsets1 x) )) 
+	                                                      @topics-ref))
+	             _ (do (info "cached-offsets : " cached-offsets))
+	             broker-offsets2 broker-offsets 
+	             ;_ (do (info "offsets " broker-offsets))
+	             producers2  (doall (create-producers-if-needed broker-offsets2 producers conf))
+	             timer-ctx (.time m-consume-cycle)
+	             q (consume-brokers! producers2 exec group-conn broker-offsets2 msg-ch conf)]
+	         
+	         
+		       (let [[v errors] q]
+				    (if (and (not (nil? errors)) (> (count errors) 0))
+				      (do
+				         (error "Error close and reconnect: " errors)
+	            
+				         (let [[producers broker-offsets] (close-and-reconnect conn metadata-producers producers topics-ref errors conf)]
+		                (info "Got new consumers " (map :broker producers))
+		                (persist-error-offsets group-conn broker-offsets errors conf)
+	                  (.stop timer-ctx)
+				            (recur producers2 broker-offsets cached-offsets)))
+				      (do
+	               (if (< (reduce #(+ %1 (count %2)  ) 0 (vals v)) 1) ; if we were reading data, no need to pause
+		               (do (info "sleep: " fetch-poll-ms) (<!! (timeout fetch-poll-ms))))
+		             
+	               (.stop timer-ctx)
+	               (recur producers2 (update-broker-offsets broker-offsets2 v) cached-offsets))))
+		
+				      ))))
 
 (defn consume [conn metadata-producers group-conn msg-ch topics-ref conf]
   "Entry point for topic consumption,
