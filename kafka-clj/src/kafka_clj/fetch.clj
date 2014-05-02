@@ -22,7 +22,14 @@
 
 (defn ^ByteBuf write-fecth-request-message [^ByteBuf buff {:keys [max-wait-time min-bytes topics max-bytes]
                                           :or { max-wait-time 1000 min-bytes 1 max-bytes 52428800}}]
-  "FetchRequest => ReplicaId MaxWaitTime MinBytes [TopicName [Partition FetchOffset MaxBytes]]  ReplicaId => int32  MaxWaitTime => int32  MinBytes => int32  TopicName => string  Partition => int32  FetchOffset => int64  MaxBytes => int32"
+  "FetchRequest => ReplicaId MaxWaitTime MinBytes [TopicName [Partition FetchOffset MaxBytes]]
+  ReplicaId => int32
+  MaxWaitTime => int32
+  MinBytes => int32
+  TopicName => string
+  Partition => int32
+  FetchOffset => int64
+  MaxBytes => int32"
   ;(prn "!!!!!!!!!!!!!!!!!!!! max bytes " max-bytes)
   ;(info "min-bytes " min-bytes " max-wait-time " max-wait-time)
   (-> buff

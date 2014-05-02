@@ -314,15 +314,14 @@
             (create-fetch-producer broker conf))
           ))
 
-(defn create-producers-if-needed [broker-offsets producers conf]
-  (for [broker-k (keys broker-offsets)]
-    (if-let [producer (first (filter (fn [{:keys [broker]}] (= broker broker-k)) producers))]
-      producer
-      (create-fetch-producer broker-k conf))))
-
-(defn- parallel-broker-consume [group-conn broker-offsets msg-ch conf {:keys [broker] :as producer}]
-  (info "inside parallel broker consume")
-  (vector broker  (consume-broker producer group-conn (get broker-offsets broker) msg-ch conf)))
+(defn create-producers-if-needed 
+  "Return a lazy sequence of producer sequences: if the producers-multipler is 2 then we will have [[producer1, producer2] [producer1, producer2] ...]"
+  [broker-offsets producers conf]
+  (let [producer-mult (get conf :producers-multiplier 2)]
+	  (for [broker-k (keys broker-offsets)]
+	    (if-let [producer-seq (first (filter (fn [{:keys [broker]}] (= broker broker-k)) producers))]
+	      producer-seq
+	      (take producer-mult (repeatedly #(create-fetch-producer broker-k conf)))))))
 
 (defn ^Callable callable 
   "Returns a function as a Callable that applies (f i)"
@@ -336,25 +335,59 @@
   (r/map (fn [^Future v] (.get v 5 java.util.concurrent.TimeUnit/MINUTES))
     (doall (map (fn [i] (.submit exec (callable f i))) l))))
 
+(defn- split-offsets 
+  "Offsets is {topic v topic2 v ..}, the topics are partitioned by Ceil(total-topics/producer-count) 
+  @TODO this split offset does not evenly split when odd numbers, sometimes an odd nubmer will get left out"
+  [offsets producer-count]
+  (let [t (-> offsets keys count)
+        p (let [p (-> t (/ producer-count) (Math/ceil))] (if (> p 0) p 1))]
+        (partition-all p (seq offsets))))
+   
+(defn- parallel-broker-consume 
+  "
+   break offsets into N groups depending on the number of topics
+   offsets = (get broker-offsets broker) 
+   is {topic1 v topic2 v topicN v}
+   Returns [broker [msgs errors]] where msgs is [{:topic :partition :error-code ...} ...]
+   Note that broker will always be the same value and that all the producers-seq must belong to the same broker
+  "
+  [exec group-conn broker-offsets msg-ch conf producers-seq]
+  (let [broker (:broker (first producers-seq))
+        offsets (get broker-offsets broker)
+        offset-splits (split-offsets offsets (count producers-seq))
+        producer-splits (partition-all 2 (interleave producers-seq offset-splits)) ;get ([producer splits] ...) 
+        ]
+    ;sanity check
+    (if (not= (count producer-splits) (count producers-seq))
+      (throw (RuntimeException. (str "Internal error: producer splits count " (count producer-splits) " producer-seq count " (count producers-seq)))))
+    
+    (let [consume-resps ;contains [[msgs errors] ... ]
+           (pmap-exec
+					      exec
+					      (fn [[producer p-offsets]]
+					         (consume-broker producer group-conn p-offsets msg-ch conf))
+					      producer-splits)]
+      (vector broker 
+       (r/fold (fn ([] [[] []])
+                  ([[msgs errors] [msgs2 errors2]] 
+                    [(into msgs msgs2) (into errors errors2)] )) consume-resps)))))
+
 (defn consume-brokers! [producers exec group-conn broker-offsets msg-ch conf]
   "
    Broker-offsets should be {broker {topic [{:offset o :partition p} ...] }}
    Consume brokers and returns a list of lists that contains the last messages consumed, or -1 -2 where errors are concerned
-   the data structure returned is {broker -1|-2|[{:offset o topic: a} {:offset o topic a} ... ] ...}
+   the data structure returned is {broker [{:offset o topic: a} {:offset o topic a} ... ] ...}
   "
-  (try
+  (let [v
     (r/fold 
-      (fn
-        ([] [{} []])
-        ([[state errors] [broker [msgs msg-errors]]]
-         [(merge state {broker msgs}) (if (> (count msg-errors) 0) (apply conj errors msg-errors) errors)]))
+          (fn
+	        ([] [{} []])
+	        ([[state errors] [broker [msgs msg-errors]]]
+	         [(merge state {broker msgs}) (if (> (count msg-errors) 0) (apply conj errors msg-errors) errors)]))
           (pmap-exec exec
-            (partial parallel-broker-consume group-conn  broker-offsets msg-ch conf)
-                    producers))
-   (finally
-     ;(info ">>>>>>>>>>>>>>>>>>>>> END CONSUME BROKERS!")
-     )))
-
+            (partial parallel-broker-consume exec group-conn  broker-offsets msg-ch conf)
+                    producers))]
+    v))
 
 (defn update-broker-offsets [broker-offsets v]
   "
@@ -523,7 +556,7 @@
 	       (info " >>>>>>>>>>>>>>>>>>>>>>>>>>>>> loop ")
 	       (let [topics @topics-ref
 	             broker-offsets1 (check-update-broker-offsets conn metadata-producers broker-offsets-q topics conf)
-	             {:keys [broker-offsets cached-offsets]} 
+	             {:keys [broker-offsets cached-offsets]}  ;calculate the new broker offsets if any added to the topics-ref, and get the cached offsets
 	                                        (r/fold 
 	                                            (fn
 	                                               ([] {})
@@ -542,16 +575,16 @@
 		                                                                                  [topic1 offsets] topics :when (= topic1 x) ] [broker {x offsets}]))
 		                                                                   conf (get cached-offsets1 x) )) 
 	                                                      @topics-ref))
-	             _ (do (info "cached-offsets : " cached-offsets))
+	             ;_ (do (info "cached-offsets : " cached-offsets))
 	             broker-offsets2 broker-offsets 
-	             ;_ (do (info "offsets " broker-offsets))
+              
 	             producers2  (doall (create-producers-if-needed broker-offsets2 producers conf))
 	             timer-ctx (.time m-consume-cycle)
 	             q (consume-brokers! producers2 exec group-conn broker-offsets2 msg-ch conf)]
 	         
-	         
-		       (let [[v errors] q]
-				    (if (and (not (nil? errors)) (> (count errors) 0))
+           
+	         (let [[v errors] q]
+				    (if (not-empty errors)
 				      (do
 				         (error "Error close and reconnect: " errors)
 	            
