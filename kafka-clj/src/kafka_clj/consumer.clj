@@ -13,7 +13,7 @@
             [group-redis.partition :refer [controlled-assignments]]
             [clojure.pprint :refer [pprint]]
             [clojure.core.reducers :as r]
-            [clojure.core.async :refer [<!! >!! alts!! timeout chan go >! <! close! go-loop]]
+            [clojure.core.async :refer [<!! >!! alts!! alts! timeout chan go >! <! close! go-loop]]
             [clj-tuple :refer [tuple]])
   (:import [kafka_clj.fetch Message FetchError]
            [com.codahale.metrics Meter MetricRegistry Timer Histogram]
@@ -319,9 +319,11 @@
   [broker-offsets producers conf]
   (let [producer-mult (get conf :producers-multiplier 2)]
 	  (for [broker-k (keys broker-offsets)]
-	    (if-let [producer-seq (first (filter (fn [{:keys [broker]}] (= broker broker-k)) producers))]
+	    (if-let [producer-seq (first (filter (fn [[{:keys [broker]} & _]] (= broker broker-k)) producers))]
 	      producer-seq
-	      (take producer-mult (repeatedly #(create-fetch-producer broker-k conf)))))))
+	      (let [producers (take producer-mult (repeatedly #(create-fetch-producer broker-k conf)))]
+         (info "using producers " producers)
+         producers)))))
 
 (defn ^Callable callable 
   "Returns a function as a Callable that applies (f i)"
