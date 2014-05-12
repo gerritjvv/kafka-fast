@@ -327,15 +327,17 @@
 
 (defn ^Callable callable 
   "Returns a function as a Callable that applies (f i)"
-  [f i] 
-  (fn [] (f i) ))
+  [f i error-handler] 
+  (fn [] (try (f i) (catch Exception e (error-handler e))))) 
 
 (defn pmap-exec 
   "Calls (f i) inside a thread where i is a item in the list l for each i in l, this returns a list of Future
    Then calls .get on each future, the result is a lazy list of results from futures that needs to be run in reduce or doall"
-  [^ExecutorService exec f l]
-  (r/map (fn [^Future v] (.get v 5 java.util.concurrent.TimeUnit/MINUTES))
-    (doall (map (fn [i] (.submit exec (callable f i))) l))))
+  [error-handler ^ExecutorService exec f l]
+  (try 
+	  (r/map (fn [^Future v] (.get v 5 java.util.concurrent.TimeUnit/MINUTES))
+	    (doall (map (fn [i] (.submit exec (callable f i error-handler))) l)))
+   (catch Exception e (error-handler e))))
 
 (defn- split-offsets 
   "Offsets is {topic v topic2 v ..}, the topics are partitioned by Ceil(total-topics/producer-count) 
@@ -353,7 +355,7 @@
    Returns [broker [msgs errors]] where msgs is [{:topic :partition :error-code ...} ...]
    Note that broker will always be the same value and that all the producers-seq must belong to the same broker
   "
-  [exec group-conn broker-offsets msg-ch conf producers-seq]
+  [error-handler exec group-conn broker-offsets msg-ch conf producers-seq]
   (let [broker (:broker (first producers-seq))
         offsets (get broker-offsets broker)
         offset-splits (split-offsets offsets (count producers-seq))
@@ -365,6 +367,7 @@
     
     (let [consume-resps ;contains [[msgs errors] ... ]
            (pmap-exec
+                error-handler
 					      exec
 					      (fn [[producer p-offsets]]
 					         (consume-broker producer group-conn p-offsets msg-ch conf))
@@ -374,7 +377,7 @@
                   ([[msgs errors] [msgs2 errors2]] 
                     [(into msgs msgs2) (into errors errors2)] )) consume-resps)))))
 
-(defn consume-brokers! [producers exec group-conn broker-offsets msg-ch conf]
+(defn consume-brokers! [error-handler producers exec group-conn broker-offsets msg-ch conf]
   "
    Broker-offsets should be {broker {topic [{:offset o :partition p} ...] }}
    Consume brokers and returns a list of lists that contains the last messages consumed, or -1 -2 where errors are concerned
@@ -386,8 +389,10 @@
 	        ([] [{} []])
 	        ([[state errors] [broker [msgs msg-errors]]]
 	         [(merge state {broker msgs}) (if (> (count msg-errors) 0) (apply conj errors msg-errors) errors)]))
-          (pmap-exec exec
-            (partial parallel-broker-consume exec group-conn  broker-offsets msg-ch conf)
+          (pmap-exec 
+            error-handler
+            exec
+            (partial parallel-broker-consume error-handler exec group-conn  broker-offsets msg-ch conf)
                     producers))]
     v))
 
@@ -543,8 +548,8 @@
 (defn consume-producers! [conn 
                           metadata-producers
                           group-conn
-                          producers topics-ref broker-offsets-p msg-ch {:keys [^Timer m-consume-cycle fetch-poll-ms] 
-                                                                    :or {fetch-poll-ms 10000} :as conf}]
+                          producers topics-ref broker-offsets-p msg-ch {:keys [^Timer m-consume-cycle fetch-poll-ms error-handler] 
+                                                                    :or {fetch-poll-ms 10000 error-handler (fn [e] (error e e) (System/exit -1) )} :as conf}]
   "Consume from the current offsets,
    if any error the producers are closed and a reconnect is done, and consumption is tried again
    otherwise the broker-offsets are updated and the next fetch is done"
@@ -569,6 +574,7 @@
 	                                                   b)))
 	                                              ;each topic must be done in a different thread
 		                                                 (pmap-exec
+                                                             error-handler
 	                                                           exec
 	                                                           (fn [x];x = topic
 		                                                             (calculate-locked-offsets x group-conn 
@@ -582,7 +588,7 @@
               
 	             producers2  (doall (create-producers-if-needed broker-offsets2 producers conf))
 	             timer-ctx (.time m-consume-cycle)
-	             q (consume-brokers! producers2 exec group-conn broker-offsets2 msg-ch conf)]
+	             q (consume-brokers! error-handler producers2 exec group-conn broker-offsets2 msg-ch conf)]
 	         
            
 	         (let [[v errors] q]

@@ -117,7 +117,17 @@ Redis was chosen over zookeeper because:
 
 
 The library used for redis is https://github.com/gerritjvv/group-redis
- 
+
+
+## Error Handling
+
+All connections and network io is async, meaning that you cannot rely on try catch to get at errors. 
+An error-handler function taking a single argument of type Exception can be sent as part of the conf map 
+
+e.g ```clojure {:error-handler (fn [e] (prn "error " e ))}```
+
+A default implementation is provided that prints out the error and runs ```clojure (System/exit -1)``
+` 
 ```clojure
 
 (require '[kafka-clj.consumer :refer [consumer read-msg]])
