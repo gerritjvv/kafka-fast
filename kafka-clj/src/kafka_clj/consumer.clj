@@ -142,50 +142,53 @@
   (error e (str "Internal Error while reading message: e " e))
   (error (str "Internal Error while reading message: state " state " for message " msg)))
 
+(def byte_array_class (Class/forName "[B"))(defn byte-array? [arr] (instance? byte_array_class arr))
+
 (defn read-fetch-message [{:keys [p-send]} current-offsets msg-ch ^Meter m-consume-reads ^Histogram m-message-size v]
   ;read-fetch will return the result of fn which is [resp-vec error-vec]
-   (let [
-         fetch-res
-         (read-fetch (Unpooled/wrappedBuffer ^"[B" v) [{} [] 0]
-			     (fn [state msg]
-              ;read-fetch will navigate the fetch response calling this function
-              ;on each message found, in turn this function will update redis via p-send
-              ;and send the message to the message channel (via >!! msg-ch msg)
-              (if (coll? state)
-		            (let [[resp errors cnt] state]
-	               (try
-		               (do 
-				             (cond
-							         (instance? Message msg)
-							         (let [k #{(:topic msg) (:partition msg)}]
-							           (if (is-new-msg? current-offsets resp k msg)   
-				                   (do 
-                              ;(if (= cnt 0)
-                               ;(write-timestamp msg))
-                               (>!! msg-ch msg)
-		                           (p-send msg)
-                               (.mark m-consume-reads) ;metrics mark
-                               (.update m-message-size (count (:bts msg)))
-							                 (tuple (assoc resp k msg) errors (inc cnt)))
-	                          (tuple resp errors (inc cnt))))
-							         (instance? FetchError msg)
-							         (do (error "Fetch error: " msg) (tuple resp (conj errors msg) cnt))
-							         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
-		               (catch Exception e 
-	                  (do (.printStackTrace e)
-                        (prn-fetch-error e state msg)
-	                      (tuple resp errors cnt))
-	                  )))
-                  (do (error "State not supported " state)
-                      [{} [] 0])
-                  )))]
-       (if (coll? fetch-res)
-          (let [[resp errors cnt] fetch-res]
-            ;(info "Messages read " cnt)
-	          (tuple (vals resp) errors)) ;[resp-map error-vec]
-	       (do
-	         (info "No messages consumed " fetch-res)
-	         nil))))
+  (if (byte-array? v)
+	  (let [
+	         fetch-res
+	         (read-fetch (Unpooled/wrappedBuffer ^"[B" v) [{} [] 0]
+				     (fn [state msg]
+	              ;read-fetch will navigate the fetch response calling this function
+	              ;on each message found, in turn this function will update redis via p-send
+	              ;and send the message to the message channel (via >!! msg-ch msg)
+	              (if (coll? state)
+			            (let [[resp errors cnt] state]
+		               (try
+			               (do 
+					             (cond
+								         (instance? Message msg)
+								         (let [k #{(:topic msg) (:partition msg)}]
+								           (if (is-new-msg? current-offsets resp k msg)   
+					                   (do 
+	                              ;(if (= cnt 0)
+	                               ;(write-timestamp msg))
+	                               (>!! msg-ch msg)
+			                           (p-send msg)
+	                               (.mark m-consume-reads) ;metrics mark
+	                               (.update m-message-size (count (:bts msg)))
+								                 (tuple (assoc resp k msg) errors (inc cnt)))
+		                          (tuple resp errors (inc cnt))))
+								         (instance? FetchError msg)
+								         (do (error "Fetch error: " msg) (tuple resp (conj errors msg) cnt))
+								         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
+			               (catch Exception e 
+		                  (do (.printStackTrace e)
+	                        (prn-fetch-error e state msg)
+		                      (tuple resp errors cnt))
+		                  )))
+	                  (do (error "State not supported " state)
+	                      [{} [] 0])
+	                  )))]
+	       (if (coll? fetch-res)
+	          (let [[resp errors cnt] fetch-res]
+	            ;(info "Messages read " cnt)
+		          (tuple (vals resp) errors)) ;[resp-map error-vec]
+		       (do
+		         (info "No messages consumed " fetch-res)
+		         nil)))))
   
 
 (defn- get-locked-partitions [topic-offsets]
