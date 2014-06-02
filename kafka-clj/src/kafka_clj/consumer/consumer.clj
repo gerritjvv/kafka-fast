@@ -12,9 +12,25 @@
     [kafka_clj.fetch Message FetchError]
     [io.netty.buffer Unpooled]))
 
+;;; This namespace requires a running redis and kafka cluster
+;;;;;;;;;;;;;;;;;; USAGE ;;;;;;;;;;;;;;;
+;(use 'kafka-clj.consumer.consumer :reload)
+;(def consumer (consumer-start {:redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}))
+;
+;
+;
+;(publish-work consumer {:producer {:host "localhost" :port 9092} :topic "ping" :partition 0 :offset 0 :len 10})
+;
+;
+;(def res (do-work-unit! consumer))
+;
+;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(def byte_array_class (Class/forName "[B"))
-(defn byte-array? [arr] (instance? byte_array_class arr))
+
+
+(def- byte_array_class (Class/forName "[B"))
+(defn- byte-array? [arr] (instance? byte_array_class arr))
 
 (defn read-fetch-message 
   "read-fetch will return the result of fn which is [resp-vec error-vec]"
@@ -122,8 +138,9 @@
     :work-queue = the queue name from which work units will be taken, the data must be a map with keys :producer :topic :partition :offset :len
     :working-queue = when a work item is taken from the work-queue its placed on the working-queue
     :complete-queue = when an item has been processed the result is placed on the complete-queue
-    :conf = any configuration that will be passed when creating producers"
-  
+    :conf = any configuration that will be passed when creating producers
+   Returns the state map with the :status and :producers updated
+  "
   [{:keys [redis-conn producers work-queue working-queue complete-queue conf] :as state}]
   (try
 	  (let [{:keys [producer topic partition offset len] :as work-unit} (wait-on-work-unit! redis-conn work-queue working-queue)
@@ -140,10 +157,22 @@
    (catch Throwable t (assoc state :status :fail :throwable t))))
     
     
-(defn publish-work [{:keys [redis-conn work-queue]} work-unit]
+(defn publish-work 
+  "Publish a work-unit to the working queue for a consumer connection"
+  [{:keys [redis-conn work-queue]} work-unit]
   {:pre [(and (:producer work-unit) (:topic work-unit) (:partition work-unit) (:offset work-unit) (:len work-unit)
            (let [{:keys [host port]} (:producer work-unit)] (and host port)))]}
   (car/wcar redis-conn 
     (car/lpush work-queue work-unit)))
+
+
+(comment 
+  
+(use 'kafka-clj.consumer.consumer :reload)
+(def consumer (consumer-start {:redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}))
+(publish-work consumer {:producer {:host "localhost" :port 9092} :topic "ping" :partition 0 :offset 0 :len 10})
+(def res (do-work-unit! consumer))
+
+)
     
 
