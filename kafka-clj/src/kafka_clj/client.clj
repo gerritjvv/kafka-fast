@@ -41,7 +41,11 @@
 		           (commute topic-partition-ref (fn [x] 
 		                                          (assoc x topic (AtomicInteger. 0)))))
 		     (select-rr-partition! topic state)))
-    (throw (RuntimeException. (str "The topic " topic " does not exist, please create it first. See http://kafka.apache.org/documentation.html"))))))
+    (do 
+      (error "No topic found " topic " in state map " topic-partition-ref)
+      (error "broker-meta " brokers-metadata)
+      (throw (RuntimeException. 
+             (str "The topic " topic " does not exist, please create it first. See http://kafka.apache.org/documentation.html")))))))
 
 (defn get-broker-from-metadata [topic partition brokers-metadata]
   (-> brokers-metadata (get topic) (get partition)))

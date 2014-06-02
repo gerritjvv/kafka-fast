@@ -16,4 +16,5 @@
   :dependencies [
                  [kafka-clj "0.9.3"]
                  [org.clojure/tools.cli "0.3.0"]
-                 [org.clojure/clojure "1.5.1"]])
+                 [org.clojure/clojure "1.5.1"]
+                 [incanter/incanter-core "1.5.5"]])
