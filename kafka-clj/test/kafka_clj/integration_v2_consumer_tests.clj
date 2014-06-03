@@ -1,6 +1,6 @@
 (ns kafka-clj.integration-v2-consumer-tests
   (:require [kafka-clj.consumer.work-organiser :refer [create-organiser! calculate-new-work get-queue-data]]
-            [kafka-clj.consumer.consumer :refer [consumer-start do-work-unit!]]
+            [kafka-clj.consumer.consumer :refer [consumer-start do-work-unit! wait-and-do-work-unit!]]
             [clojure.tools.logging :refer [info]]
             [clojure.edn :as edn])
   (:use midje.sweet))
@@ -24,7 +24,7 @@
       
       (calculate-new-work org ["ping"])
       (let [consumer (consumer-start {:redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}})
-            res (do-work-unit! consumer (fn [state status resp-data] (assoc state :resp-data resp-data)))
+            res (wait-and-do-work-unit! consumer (fn [state status resp-data] (assoc state :resp-data resp-data)))
             resp-data (:resp-data res)]
         (nil? resp-data) => false
         (:status res) => :ok

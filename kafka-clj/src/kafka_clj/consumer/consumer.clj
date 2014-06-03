@@ -87,7 +87,6 @@
   (let [fetch-timeout (get conf :fetch-timeout 10000)
         {:keys [read-ch error-ch]} client
         [v c] (alts!! [read-ch error-ch (timeout fetch-timeout)])]
-    (prn "handle-response " v " : " c)
     (condp = c
       read-ch (cond 
                 (instance? Reconnected v) (handle-response state conf)
@@ -141,6 +140,13 @@
     (apply f state args)
     (catch Exception t (do (error t t) (assoc state :status :fail)))))
 
+(defn get-work-unit! 
+  "Wait for work to become available in the work queue"
+  [{:keys [redis-conn work-queue working-queue]}]
+  {:pre [redis-conn work-queue working-queue]}
+  (wait-on-work-unit! redis-conn work-queue working-queue))
+
+
 (defn do-work-unit! 
   "state map keys:
     :redis-conn = redis connection params :host :port ... 
@@ -155,9 +161,9 @@
    and added to the complete-queue queue.
    Returns the state map with the :status and :producers updated
   "
-  [{:keys [redis-conn producers work-queue working-queue complete-queue conf] :as state} f-delegate]
+  [{:keys [redis-conn producers work-queue working-queue complete-queue conf] :as state} work-unit f-delegate]
   (try
-	  (let [{:keys [producer topic partition offset len] :as work-unit} (wait-on-work-unit! redis-conn work-queue working-queue)
+	  (let [{:keys [producer topic partition offset len]} work-unit
 	        [producer-conn producers2] (create-producer-if-needed! producers producer conf)]
      (try 
        (do
@@ -174,6 +180,12 @@
                              (assoc state :status :fail :throwable t :producers  producers2)))))
    (catch Throwable t (assoc state :status :fail :throwable t))))
     
+(defn wait-and-do-work-unit! 
+  "Combine waiting for a workunit and performing it in one function
+   The state as returned by do-work-unit! is returned"
+  [state f-delegate]
+  (let [work-unit (get-work-unit! state)]
+    (do-work-unit! state work-unit f-delegate)))
     
 (defn publish-work 
   "Publish a work-unit to the working queue for a consumer connection"
