@@ -9,6 +9,21 @@
      [group-redis.core :refer [persistent-get persistent-set]]
      ))
 
+;;; This namespace requires a running redis and kafka cluster
+;;;;;;;;;;;;;;;;;; USAGE ;;;;;;;;;;;;;;;
+;(use 'kafka-clj.consumer.work-organiser :reload)
+;(def org (create-organiser!   
+;{:bootstrap-brokers [{:host "localhost" :port 9092}]
+; :redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}))
+; (calculate-new-work org ["ping"])
+;
+;
+;(use 'kafka-clj.consumer.consumer :reload)
+;(def consumer (consumer-start {:redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}))
+;
+;(def res (do-work-unit! consumer (fn [state status resp-data] state)))
+;
+
 (defn calculate-work-units 
   "Returns '({:topic :partition :offset :len}) Len is exclusive"
   [producer topic partition max-offset start-offset step]
