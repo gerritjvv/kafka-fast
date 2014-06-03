@@ -9,7 +9,8 @@
     [fun-utils.core :refer [go-seq]]
     [clojure.tools.logging :refer [info error]])
   (:import 
-    [kafka_clj.fetch Message FetchError]
+    [kafka_clj.fetch Message FetchError Poison]
+    [clj_tcp.client Reconnected]
     [io.netty.buffer Unpooled]))
 
 ;;; This namespace requires a running redis and kafka cluster
@@ -29,7 +30,7 @@
 
 
 
-(def- byte_array_class (Class/forName "[B"))
+(defonce byte_array_class (Class/forName "[B"))
 (defn- byte-array? [arr] (instance? byte_array_class arr))
 
 (defn read-fetch-message 
@@ -41,8 +42,6 @@
 	         (read-fetch (Unpooled/wrappedBuffer ^"[B" v) [{} [] 0]
 				     (fn [state msg]
 	              ;read-fetch will navigate the fetch response calling this function
-	              ;on each message found, in turn this function will update redis via p-send
-	              ;and send the message to the message channel (via >!! msg-ch msg)
 	              (if (coll? state)
 			            (let [[resp errors cnt] state]
 		               (try
@@ -81,13 +80,16 @@
 (defn handle-response 
   "Listens to a response after a fetch request has been sent
    Returns [status data]  status can be :ok, :timeout, :error and data is v returned from the channel"
-  [{:keys [client]} conf]
+  [{:keys [client] :as state} conf]
   (let [fetch-timeout (get conf :fetch-timeout 10000)
         {:keys [read-ch error-ch]} client
-        _ (do (prn "READ_CH " read-ch " --- error-ch " error-ch " client " client))
         [v c] (alts!! [read-ch error-ch (timeout fetch-timeout)])]
+    (prn "handle-response " v " : " c)
     (condp = c
-      read-ch (handle-read-response v)
+      read-ch (cond 
+                (instance? Reconnected v) (handle-response state conf)
+                (instance? Poison v) [:fail nil]
+                :ese (handle-read-response v))
       error-ch (handle-error-response v)
       (handle-timeout-response))))
      
@@ -131,6 +133,11 @@
     (car/lpush complete-queue (assoc work-unit :status status :resp-data resp-data))
     (car/lrem working-queue -1 work-unit)))
 
+(defn save-call [f state & args]
+  (try
+    (apply f state args)
+    (catch Exception t (do (error t t) (assoc state :status :fail)))))
+
 (defn do-work-unit! 
   "state map keys:
     :redis-conn = redis connection params :host :port ... 
@@ -139,21 +146,26 @@
     :working-queue = when a work item is taken from the work-queue its placed on the working-queue
     :complete-queue = when an item has been processed the result is placed on the complete-queue
     :conf = any configuration that will be passed when creating producers
+   f-delegate is called as (f-delegate state status resp-data) and should return a state that must have a :status key with values :ok, :fail or :terminate
    Returns the state map with the :status and :producers updated
   "
-  [{:keys [redis-conn producers work-queue working-queue complete-queue conf] :as state}]
+  [{:keys [redis-conn producers work-queue working-queue complete-queue conf] :as state} f-delegate]
   (try
 	  (let [{:keys [producer topic partition offset len] :as work-unit} (wait-on-work-unit! redis-conn work-queue working-queue)
 	        [producer-conn producers2] (create-producer-if-needed! producers producer conf)]
      (try 
        (do
-       (if (not producer-conn) (throw (RuntimeException. "No producer created")))
-       (let [[status resp-data] (fetch-and-wait state work-unit producer-conn)]
-         (publish-work-response! state work-unit status resp-data)
-         (assoc state
-           :status status
-           :producers producers2)))
-       (catch Throwable t (assoc state :status :fail :throwable t :producers  producers2))))
+        (if (not producer-conn) (throw (RuntimeException. "No producer created")))
+        (let [[status resp-data] (fetch-and-wait state work-unit producer-conn)
+              state2 (merge state (save-call f-delegate state status resp-data))
+              ]
+          (publish-work-response! state2 work-unit (:status state2) resp-data)
+          (assoc 
+            state2
+            :producers producers2)))
+        (catch Throwable t (do 
+                             (publish-work-response! state work-unit :fail nil)
+                             (assoc state :status :fail :throwable t :producers  producers2)))))
    (catch Throwable t (assoc state :status :fail :throwable t))))
     
     
@@ -171,7 +183,7 @@
 (use 'kafka-clj.consumer.consumer :reload)
 (def consumer (consumer-start {:redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}))
 (publish-work consumer {:producer {:host "localhost" :port 9092} :topic "ping" :partition 0 :offset 0 :len 10})
-(def res (do-work-unit! consumer))
+(def res (do-work-unit! consumer (fn [state status resp-data] state)))
 
 )
     
