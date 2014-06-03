@@ -29,6 +29,6 @@
         (nil? resp-data) => false
         (:status res) => :ok
         
-        (apply max (map :offset resp-data)) => (map #(-> % :resp-data :offset-read) (get-queue-data org "complete"))
+        (apply max (map :offset resp-data)) => (apply max (map #(-> % :resp-data :offset-read) (get-queue-data org "complete")))
         
         ))))
