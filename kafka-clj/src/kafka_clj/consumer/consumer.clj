@@ -3,7 +3,7 @@
   (:require 
     [taoensso.carmine :as car :refer [wcar]]
     [thread-load.core :as load]
-    [clojure.core.async :refer [go alts!! >!! >! <! timeout]]
+    [clojure.core.async :refer [go alts!! >!! >! <! timeout chan]]
     [kafka-clj.fetch :refer [create-fetch-producer send-fetch read-fetch]]
     [thread-load.core :as tl]
     [clj-tuple :refer [tuple]]
@@ -118,7 +118,8 @@
            (:redis-conf state) (:conf state))]}
   (merge state
     {:redis-conn (merge redis-conf {:host (get redis-conf :redis-host (get redis-conf :host))})
-     :load-pool (tl/create-pool (get conf :consumer-queue-limit 10))
+     :load-pool (tl/create-pool :queue-limit (get conf :consumer-queue-limit 10))
+     :msg-ch (chan 100)
     :producers {}
     :status :ok}))
 
@@ -209,14 +210,20 @@
 
 
 (defn close-consumer! [{:keys [load-pool]}]
-  (shutdown-pool! load-pool 10000))
+  (tl/shutdown-pool load-pool 10000))
 
-;TODO TEST
+;TODO Change init to create the consumer state, the function cannot be passed a created consumer
+; but should be passeda load-pool and msg-ch together with the rest of the configuration, if 
+;fail on init we should return a :terminate
 (defn consume! 
   "Starts the consumer consumption process, by initiating 1+consumer-threads threads, one thread is used to wait for work-units
    from redis, and the other threads are used to process the work-unit, the resp data from each work-unit's processing result is 
    sent to the msg-ch, note that the send to msg-ch is a blocking send, meaning that the whole process will block if msg-ch is full
-   The actual consume! function returns inmediately"
+   The actual consume! function returns inmediately
+
+   Call as (consume! (consumer-start {:redis-conf {:host \"localhost\" :max-active 5 :timeout 1000} :working-queue \"working\" :complete-queue \"complete\" :work-queue \"work\" :conf {}}))
+
+  "
   [{:keys [conf load-pool msg-ch] :as state}]
   {:pre [conf load-pool msg-ch]}
   (let [f-delegate (fn [state status resp-data]
@@ -227,8 +234,16 @@
         consumer-threads (get conf :consumer-threads 2)]
     ;add threads that will consume from the load-pool and run f-delegate, that will in turn put data on the msg-ch
     (dotimes [i consumer-threads]
-      (tl/add-consumer load-pool (fn [state work-unit]
-                                   (do-work-unit! state work-unit f-delegate))))
+      (tl/add-consumer load-pool 
+                                (fn [state & _] ;init
+                                  (info "start consumer thread")
+                                  (assoc (consumer-start state) :status :ok))
+                                (fn [state work-unit] ;exec
+                                   (prn "got work " work-unit)
+                                   (do-work-unit! state work-unit f-delegate))
+                                (fn [state & args] ;fail
+                                  (info "Fail consumer thread: " state " " args)
+                                  (assoc state :status :ok))))
     ;start background wait on redis, publish work-unit to pool
     (start-publish-pool-thread state)
     state))

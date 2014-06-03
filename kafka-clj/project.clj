@@ -32,7 +32,7 @@
                  [fmap-clojure "LATEST"]
                  [fun-utils "LATEST"]
                  [clj-tuple "0.1.4"]
-                 [thread-load "0.1.0-SNAPSHOT"]
+                 [thread-load "0.1.1"]
                  [com.codahale.metrics/metrics-core "3.0.1"]
                  
                 
