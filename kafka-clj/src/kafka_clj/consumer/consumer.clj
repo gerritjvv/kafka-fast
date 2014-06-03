@@ -9,8 +9,8 @@
     [fun-utils.core :refer [go-seq]]
     [clojure.tools.logging :refer [info error]])
   (:import 
-    [kafka_clj.fetch Message FetchError Poison]
-    [clj_tcp.client Reconnected]
+    [kafka_clj.fetch Message FetchError]
+    [clj_tcp.client Reconnected Poison]
     [io.netty.buffer Unpooled]))
 
 ;;; This namespace requires a running redis and kafka cluster
@@ -35,9 +35,9 @@
 
 (defn read-fetch-message 
   "read-fetch will return the result of fn which is [resp-vec error-vec]"
-  [v]
+  [{:keys [topic partition offset len]} v]
   (if (byte-array? v)
-	  (let [
+	  (let [ max-offset (+ offset len)
 	         fetch-res
 	         (read-fetch (Unpooled/wrappedBuffer ^"[B" v) [{} [] 0]
 				     (fn [state msg]
@@ -48,8 +48,11 @@
 			               (do 
 					             (cond
 								         (instance? Message msg)
-								         (let [k #{(:topic msg) (:partition msg)}]
-								                 (tuple (assoc resp k msg) errors (inc cnt)))
+                         ;only include messsages of the same topic partition and lower than max-offset
+								         (if (and (= (:topic msg) topic) (= (:partition msg) partition) (< (:offset msg) max-offset))
+                           (let [k #{(:topic msg) (:partition msg)}]
+                             (tuple (assoc resp k msg) errors (inc cnt)))
+                           (tuple resp errors))
 								         (instance? FetchError msg)
 								         (do (error "Fetch error: " msg) (tuple resp (conj errors msg) cnt))
 								         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
@@ -70,8 +73,8 @@
 (defn handle-error-response [v]
   [:fail v])
 
-(defn handle-read-response [v]
-  (let [[resp-vec error-vec] (read-fetch-message v)]
+(defn handle-read-response [work-unit v]
+  (let [[resp-vec error-vec] (read-fetch-message work-unit v)]
     [:ok resp-vec]))
 
 (defn handle-timeout-response []
@@ -80,7 +83,7 @@
 (defn handle-response 
   "Listens to a response after a fetch request has been sent
    Returns [status data]  status can be :ok, :timeout, :error and data is v returned from the channel"
-  [{:keys [client] :as state} conf]
+  [{:keys [client] :as state} work-unit conf]
   (let [fetch-timeout (get conf :fetch-timeout 10000)
         {:keys [read-ch error-ch]} client
         [v c] (alts!! [read-ch error-ch (timeout fetch-timeout)])]
@@ -89,7 +92,7 @@
       read-ch (cond 
                 (instance? Reconnected v) (handle-response state conf)
                 (instance? Poison v) [:fail nil]
-                :ese (handle-read-response v))
+                :else (handle-read-response work-unit v))
       error-ch (handle-error-response v)
       (handle-timeout-response))))
      
@@ -98,9 +101,9 @@
   "
    Sends a request for the topic and partition to the producer
    Returns [status data]  status can be :ok, :fail and data is v returned from the channel"
-  [state {:keys [topic partition offset len]} producer]
-    (send-fetch producer [[topic {:partition partition :offset offset}]])
-    (handle-response producer (get state :conf)))
+  [state {:keys [topic partition offset len] :as work-unit} producer]
+    (send-fetch producer [[topic [{:partition partition :offset offset}]]])
+    (handle-response producer work-unit (get state :conf)))
 
 
 (defn wait-on-work-unit!
@@ -147,6 +150,9 @@
     :complete-queue = when an item has been processed the result is placed on the complete-queue
     :conf = any configuration that will be passed when creating producers
    f-delegate is called as (f-delegate state status resp-data) and should return a state that must have a :status key with values :ok, :fail or :terminate
+   
+   If the work-unit was successfully processed the work-unit assoced with :resp-data {:offset-read max-message-offset}
+   and added to the complete-queue queue.
    Returns the state map with the :status and :producers updated
   "
   [{:keys [redis-conn producers work-queue working-queue complete-queue conf] :as state} f-delegate]
@@ -159,7 +165,7 @@
         (let [[status resp-data] (fetch-and-wait state work-unit producer-conn)
               state2 (merge state (save-call f-delegate state status resp-data))
               ]
-          (publish-work-response! state2 work-unit (:status state2) resp-data)
+          (publish-work-response! state2 work-unit (:status state2) {:offset-read (apply max (map :offset resp-data))})
           (assoc 
             state2
             :producers producers2)))

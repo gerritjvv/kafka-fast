@@ -14,10 +14,12 @@
   [producer topic partition max-offset start-offset step]
   {:pre [(and (:host producer) (:port producer))]}
   (if (< start-offset max-offset)
-    (cons
-      {:topic topic :partition partition :offset start-offset :len step}
-      (lazy-seq 
-        (calculate-work-units producer topic partition max-offset (+ start-offset step) step)))))
+    (let [t (+ start-offset step)
+          l (if (> t max-offset) (- max-offset start-offset) step)]
+      (cons
+        {:topic topic :partition partition :offset start-offset :len l}
+        (lazy-seq 
+          (calculate-work-units producer topic partition max-offset (+ start-offset l) step))))))
 
 (defn- to-int [s]
   (if (integer? s) 

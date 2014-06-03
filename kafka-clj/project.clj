@@ -36,10 +36,10 @@
                  [com.codahale.metrics/metrics-core "3.0.1"]
                  
                 
-                ; [org.apache.kafka/kafka_2.10 "0.8.0" :scope "test" :exclusions [[javax.mail/mail :extension "jar"]
-                 ;                             [javax.jms/jms :classifier "*"]
-                  ;                            com.sun.jdmk/jmxtools
-                   ;                           com.sun.jmx/jmxri]]
+                 [org.apache.kafka/kafka_2.10 "0.8.0" :scope "test" :exclusions [[javax.mail/mail :extension "jar"]
+                                              [javax.jms/jms :classifier "*"]
+                                              com.sun.jdmk/jmxtools
+                                              com.sun.jmx/jmxri] :scope "test"]
                  ;[org.apache.curator/curator-test "2.3.0" :scope "test" ]
                  ;[org.apache.hadoop/hadoop-core "0.20.2"]
                  [org.clojure/clojure "1.5.1" :scope "provided"]])
