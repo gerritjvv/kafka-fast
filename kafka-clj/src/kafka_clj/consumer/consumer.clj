@@ -102,30 +102,44 @@
    Sends a request for the topic and partition to the producer
    Returns [status data]  status can be :ok, :fail and data is v returned from the channel"
   [state {:keys [topic partition offset len] :as work-unit} producer]
-    (send-fetch producer [[topic [{:partition partition :offset offset}]]])
-    (handle-response producer work-unit (get state :conf)))
+    (io!
+      (send-fetch producer [[topic [{:partition partition :offset offset}]]])
+      (handle-response producer work-unit (get state :conf))))
 
 
 (defn wait-on-work-unit!
   "Blocks on the redis queue till an item becomes availabe, at the same time the item is pushed to the working queue"
   [redis-conn queue working-queue]
-  (car/wcar redis-conn 
-    (car/brpoplpush queue working-queue 0)))
+  (io! (car/wcar redis-conn
+                 (car/brpoplpush queue working-queue 0))))
 
-(defn consumer-start [{:keys [redis-conf conf] :as state}]
+(defn consumer-start
+  "Starts a consumer and returns the consumer state that represents the consumer itself
+   A msg-ch can be provided but if not a (chan 100) will be created and assigned to msg-ch in the state.
+   keys are:
+           :redis-conn the redis connection
+           :load-pool a load pool from tl/create-pool
+           :msg-ch the core.async channel
+           :producers {}
+           :status :ok
+  "
+  [{:keys [redis-conf conf msg-ch] :as state}]
   {:pre [(and 
            (:work-queue state) (:working-queue state) (:complete-queue state)
            (:redis-conf state) (:conf state))]}
   (merge state
     {:redis-conn (merge redis-conf {:host (get redis-conf :redis-host (get redis-conf :host))})
      :load-pool (tl/create-pool :queue-limit (get conf :consumer-queue-limit 10))
-     :msg-ch (chan 100)
+     :msg-ch (if msg-ch msg-ch (chan 100))
     :producers {}
     :status :ok}))
 
 (defn consumer-stop [{:keys [producers work-queue working-queue] :as state}] (assoc state :status :ok))
 
-(defn create-producer-if-needed! [producers producer conf]
+(defn create-producer-if-needed!
+  "If (get producers producer) returns nil a new producer is created.
+  This function returns [producer-connection state]"
+  [producers producer conf]
   (if-let [producer-conn (get producers producer)] 
     [producer-conn producers]
     (let [producer-conn  (create-fetch-producer producer conf)]
@@ -134,9 +148,10 @@
 (defn publish-work-response! 
   "Remove data from the working-queue and publish to the complete-queue"
   [{:keys [redis-conn working-queue complete-queue]} work-unit status resp-data]
-  (car/wcar redis-conn
-    (car/lpush complete-queue (assoc work-unit :status status :resp-data resp-data))
-    (car/lrem working-queue -1 work-unit)))
+  (io!
+    (car/wcar redis-conn
+              (car/lpush complete-queue (assoc work-unit :status status :resp-data resp-data))
+              (car/lrem working-queue -1 work-unit))))
 
 (defn save-call [f state & args]
   (try
@@ -165,23 +180,24 @@
    Returns the state map with the :status and :producers updated
   "
   [{:keys [redis-conn producers work-queue working-queue complete-queue conf] :as state} work-unit f-delegate]
-  (try
-	  (let [{:keys [producer topic partition offset len]} work-unit
-	        [producer-conn producers2] (create-producer-if-needed! producers producer conf)]
-     (try 
-       (do
-        (if (not producer-conn) (throw (RuntimeException. "No producer created")))
-        (let [[status resp-data] (fetch-and-wait state work-unit producer-conn)
-              state2 (merge state (save-call f-delegate state status resp-data))
-              ]
-          (publish-work-response! state2 work-unit (:status state2) {:offset-read (apply max (map :offset resp-data))})
-          (assoc 
-            state2
-            :producers producers2)))
-        (catch Throwable t (do 
-                             (publish-work-response! state work-unit :fail nil)
-                             (assoc state :status :fail :throwable t :producers  producers2)))))
-   (catch Throwable t (assoc state :status :fail :throwable t))))
+  (io!
+    (try
+      (let [{:keys [producer topic partition offset len]} work-unit
+            [producer-conn producers2] (create-producer-if-needed! producers producer conf)]
+        (try
+          (do
+            (if (not producer-conn) (throw (RuntimeException. "No producer created")))
+            (let [[status resp-data] (fetch-and-wait state work-unit producer-conn)
+                  state2 (merge state (save-call f-delegate state status resp-data))
+                  ]
+              (publish-work-response! state2 work-unit (:status state2) {:offset-read (apply max (map :offset resp-data))})
+              (assoc
+                  state2
+                :producers producers2)))
+          (catch Throwable t (do
+                               (publish-work-response! state work-unit :fail nil)
+                               (assoc state :status :fail :throwable t :producers  producers2)))))
+      (catch Throwable t (assoc state :status :fail :throwable t)))))
     
 (defn wait-and-do-work-unit! 
   "Combine waiting for a workunit and performing it in one function
@@ -195,8 +211,9 @@
   [{:keys [redis-conn work-queue]} work-unit]
   {:pre [(and (:producer work-unit) (:topic work-unit) (:partition work-unit) (:offset work-unit) (:len work-unit)
            (let [{:keys [host port]} (:producer work-unit)] (and host port)))]}
-  (car/wcar redis-conn 
-    (car/lpush work-queue work-unit)))
+  (io!
+    (car/wcar redis-conn
+              (car/lpush work-queue work-unit))))
 
 (defn start-publish-pool-thread 
   "Start a future that will wait for a workunit and publish to the thread-pool"
@@ -221,7 +238,7 @@
    sent to the msg-ch, note that the send to msg-ch is a blocking send, meaning that the whole process will block if msg-ch is full
    The actual consume! function returns inmediately
 
-   Call as (consume! (consumer-start {:redis-conf {:host \"localhost\" :max-active 5 :timeout 1000} :working-queue \"working\" :complete-queue \"complete\" :work-queue \"work\" :conf {}}))
+   Call as (consume! {:redis-conf {:host \"localhost\" :max-active 5 :timeout 1000} :working-queue \"working\" :complete-queue \"complete\" :work-queue \"work\" :conf {}})
 
   "
   [{:keys [conf load-pool msg-ch] :as state}]

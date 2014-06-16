@@ -4,7 +4,7 @@
      [taoensso.carmine :as car :refer [wcar]]
      [group-redis.core :as gr]
      [kafka-clj.metadata :refer [get-metadata]]
-     [kafka-clj.produce :refer [metadata-request-producer]]
+     [kafka-clj.produce :refer [metadata-request-producer] :as produce]
      [kafka-clj.consumer :refer [get-broker-offsets]]
      [group-redis.core :refer [persistent-get persistent-set]]
      ))
@@ -24,6 +24,50 @@
 ;(def res (do-work-unit! consumer (fn [state status resp-data] state)))
 ;
 
+
+
+(defn- work-complete-fail!
+  "Side effects: Send data to redis work-queue"
+  [{:keys [work-queue] :as state} w-unit]
+  (io! (car/lpush work-queue w-unit))
+  state)
+
+(defn- work-complete-ok!
+  "If the work complete queue w-unit :status is ok
+   If [diff = (offset + len) - read-offset] > 0 then the work is republished to the work-queue with offset == (inc read-offset) and len == diff
+
+   Side effects: Send data to redis work-queue"
+  [{:keys [work-queue] :as state} {:keys [resp-data offset len] :as w-unit}]
+  {:pre [work-queue resp-data (not-empty (:offset-read resp-data)) offset len]}
+  (let [diff (- (+ (to-int offset) (to-int len)) (to-int (:offset-read resp-data)))]
+    (io!
+      (if (pos? diff)                                         ;if any offsets left, send work to work-queue with :offset = :offset-read :len diff
+        (car/lpush
+          work-queue
+          (assoc (dissoc w-unit :resp-data)  :offset (inc (to-int (:offset-read resp-data)) ) :len diff)
+          )))
+    state))
+
+(defn work-complete-handler!
+  "If the status of the w-unit is :ok the work-unit is checked for remaining work, otherwise its completed, if :fail the work-unit is sent to the work-queue.
+   Must be run inside a redis connection e.g car/wcar redis-conn"
+  [state {:keys [status] :as w-unit}]
+  {:pre [redis-conn (#{:ok :fail status})]}
+  (condp = status
+    :fail (work-complete-fail! state w-unit)
+    (work-complete-ok! state w-unit)))
+
+(defn start-work-complete-processor! [{:keys [redis-conn complete-queue working-queue] :as state}]
+  {:pre [redis-conn complete-queue working-queue]}
+  (future
+    (while (not (Thread/interrupted))
+      (try
+        (car/wcar redis-conn
+                  (when-let [work-unit (car/brpoplpush queue working-queue 0)]
+                    (work-complete-handler! state work-unit)
+                    (car/lrem working-queue -1 work-unit)))
+        (catch Exception e (error e e))))))
+
 (defn calculate-work-units 
   "Returns '({:topic :partition :offset :len}) Len is exclusive"
   [producer topic partition max-offset start-offset step]
@@ -37,18 +81,18 @@
           (calculate-work-units producer topic partition max-offset (+ start-offset l) step))))))
 
 (defn- to-int [s]
-  (if (integer? s) 
-    s 
-    (if (> (count s) 0) 
-      (Long/parseLong (str s))
-      0)))
+  (cond
+    (integer? s) s
+    (empty? s) 0
+    :else (Long/parseLong (str s))))
 
 (defn get-saved-offset 
   "Returns the last saved offset for a topic partition combination"
   [{:keys [group-conn]} topic partition]
   {:pre [group-conn topic partition]}
-  (let [offset (to-int (persistent-get group-conn (str "offsets/" topic "/" partition)))]
-    (if offset offset 0)))
+  (io!
+    (let [offset (to-int (persistent-get group-conn (str "offsets/" topic "/" partition)))]
+      (if offset offset 0))))
 
 (defn add-offsets [state topic offset-datum]
   (try
@@ -57,23 +101,31 @@
 
 
 (defn send-offsets-if-any! 
-  ""
+  "
+  Calculates the work-units for saved-offset -> offset and persist to redis.
+  Side effects: lpush work-units to work-queue
+                set offsets/$topic/$partition = max-offset of work-units
+   "
   [{:keys [group-conn redis-conn work-queue consume-step] :as state :or {consume-step 1000}} broker topic offset-data]
   {:pre [group-conn redis-conn work-queue consume-step (integer? consume-step)]}
   (let [offset-data2 
         (filter (fn [x] (and x (< (:saved-offset x) (:offset x)))) (map (partial add-offsets state topic) offset-data))]
-    (doseq [{:keys [offset partition saved-offset]} offset-data2]
-       ;w-units
-      ;max offset
-      ;push w-units
-      ;save max-offset
-      (let [work-units (calculate-work-units broker topic partition offset saved-offset consume-step)
-            max-offset (apply max (map #(+ (:offset %) (:len %)) work-units))]
-        (car/wcar redis-conn
-          (apply car/lpush work-queue (map #(assoc % :producer broker) work-units))
-          (persistent-set group-conn (str "offsets/" topic "/" partition) max-offset))))))
+    (io!
+      (doseq [{:keys [offset partition saved-offset]} offset-data2]
+        ;w-units
+        ;max offset
+        ;push w-units
+        ;save max-offset
+        (let [work-units (calculate-work-units broker topic partition offset saved-offset consume-step)
+              max-offset (apply max (map #(+ (:offset %) (:len %)) work-units))]
+          (car/wcar redis-conn
+                    (apply car/lpush work-queue (map #(assoc % :producer broker) work-units))
+                    (persistent-set group-conn (str "offsets/" topic "/" partition) max-offset)))))))
         
-(defn calculate-new-work [{:keys [meta-producers conf] :as state} topics]
+(defn calculate-new-work
+  "Accepts the state and returns the state as is.
+   For topics new work is calculated depending on the metadata returned from the producers"
+  [{:keys [meta-producers conf] :as state} topics]
   {:pre [meta-producers conf]}
   (let [meta (get-metadata meta-producers conf)
         offsets (get-broker-offsets state meta topics conf)]
@@ -87,7 +139,9 @@
         state))
 
 
-(defn get-queue-data [{:keys [redis-conn]} queue-name & {:keys [limit] :or {limit -1}}]
+(defn get-queue-data
+  "Helper function that returns the data from a queue using lrange 0 limit"
+  [{:keys [redis-conn]} queue-name & {:keys [limit] :or {limit -1}}]
   (car/wcar redis-conn (car/lrange queue-name 0 limit)))
 
 (defn create-meta-producers! 
@@ -103,11 +157,26 @@
   
   (let [meta-producers (create-meta-producers! bootstrap-brokers conf)
         group-conn (gr/create-group-connector (:host redis-conf) redis-conf)
-        redis-conn redis-conf]
-    (assoc state :meta-producers meta-producers :group-conn group-conn :redis-conn redis-conn :offset-producers (ref {}))))
-    
-    
-    
+        redis-conn redis-conf
+        work-complete-processor-future (start-work-complete-processor! state)
+        ]
+    (assoc state :meta-producers meta-producers :group-conn group-conn :redis-conn redis-conn :offset-producers (ref {})) :work-complete-processor-future work-complete-processor-future))
+
+(defn close-organiser!
+  "Closes the organiser passed in"
+  [{:keys [group-conn meta-producers redis-conn work-complete-processor-future]}]
+  {:pre [group-conn meta-producers redis-conn (future? work-complete-processor-future)]}
+  (future-cancel work-complete-processor-future)
+  (gr/close group-conn)
+  (doseq [producer meta-producers]
+    (produce/shutdown producer)))
+
+;TODO create a background thread that will fight to be master then create an organiser on start and close on fail and shutdown
+
+;TODO test organiser
+;TODO test work compelte processor
+
+;TODO create timeout processor
 (comment
   
   (use 'kafka-clj.consumer.work-organiser :reload)
