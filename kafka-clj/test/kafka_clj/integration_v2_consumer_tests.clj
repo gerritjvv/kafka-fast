@@ -75,5 +75,3 @@
             (prn "complete queue data " (get-queue-data org (:complete-queue org)))
             (apply max (map :offset resp-data)) => (apply max (map #(-> % :resp-data :offset-read) (get-queue-data org (:complete-queue org))))
             ))))
-
-;@TODO create a work complete processor test

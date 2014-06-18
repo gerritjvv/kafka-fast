@@ -130,16 +130,13 @@
       ;push w-units
       ;save max-offset
       (prn "send-offsets-if-any! >>> fuck 1")
-      (let [_ (do (prn "send-offsets-if-any! >>> fuck 2"))
-             work-units (calculate-work-units broker topic partition offset saved-offset consume-step)
-             _ (do (prn "send-offsets-if-any! >>> fuck 3"))
+      (let [ work-units (calculate-work-units broker topic partition offset saved-offset consume-step)
             max-offset (apply max (map #(+ (:offset %) (:len %)) work-units))
-            _ (do (prn "send-offsets-if-any! >>> fuck 4"))]
+            ]
         (prn "send-offsets-if-any! >>> push work-units " work-units)
         (car/wcar redis-conn
                   (apply car/lpush work-queue (map #(assoc % :producer broker) work-units)))
-        (persistent-set group-conn (str "offsets/" topic "/" partition) max-offset)))
-    (prn "send-offsets-if-any! >>> done")))
+        (persistent-set group-conn (str "offsets/" topic "/" partition) max-offset)))))
         
 (defn calculate-new-work
   "Accepts the state and returns the state as is.
@@ -147,20 +144,16 @@
   [{:keys [meta-producers conf] :as state} topics]
   {:pre [meta-producers conf]}
   (let [
-         _ (do (prn "Getting metadata from producers") )
-         meta (get-metadata meta-producers conf)
-        _ (do (prn "Got meta data"))
+        meta (get-metadata meta-producers conf)
         offsets (get-broker-offsets state meta topics conf)
-        _ (do (prn "Got broker offsets"))]
+        ]
         ;;{{:host "gvanvuuren-compile", :port 9092} {"test" ({:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 0} {:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 1})}}
         (doseq [[broker topic-data] offsets]
           (doseq [[topic offset-data] topic-data]
             (try 
               ;we map :offset to max of :offset and :all-offets
-              (do (prn "loop 1")
-                  (send-offsets-if-any! state broker topic (map #(assoc % :offset (apply max (:offset %) (:all-offsets %))) offset-data)))
+              (send-offsets-if-any! state broker topic (map #(assoc % :offset (apply max (:offset %) (:all-offsets %))) offset-data))
               (catch Exception e (do (error e e) (.printStackTrace e)) ))))
-        (prn "Return from calculate-new-work!!!")
         state))
 
 
