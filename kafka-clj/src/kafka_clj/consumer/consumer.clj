@@ -1,5 +1,6 @@
 (ns kafka-clj.consumer.consumer
-  
+  (:import (java.util.concurrent ExecutorService))
+
   (:require 
     [taoensso.carmine :as car :refer [wcar]]
     [thread-load.core :as load]
@@ -8,9 +9,10 @@
     [thread-load.core :as tl]
     [clj-tuple :refer [tuple]]
     [fun-utils.core :refer [go-seq]]
-    [clojure.tools.logging :refer [info error]])
+    [clojure.tools.logging :refer [info error debug]])
   (:import 
     [kafka_clj.fetch Message FetchError]
+    [java.util.concurrent Executors ExecutorService]
     [clj_tcp.client Reconnected Poison]
     [io.netty.buffer Unpooled]))
 
@@ -109,27 +111,34 @@
       (handle-response producer work-unit (get state :conf))))
 
 
+(defn- safe-sleep
+  "Util function that does not print an Interrupted exception but handles by setting the current thread to interrupt"
+  [ms]
+  (try
+    (Thread/sleep ms)
+    (catch InterruptedException i (doto (Thread/currentThread) (.interrupt)))))
+
 (defn wait-on-work-unit!
   "Blocks on the redis queue till an item becomes availabe, at the same time the item is pushed to the working queue"
   [redis-conn queue working-queue]
   (if-let [res (try                                         ;this command throws a SocketTimeoutException if the queue does not exist
                  (car/wcar redis-conn                       ;we check for this condition and continue to block
                            (car/brpoplpush queue working-queue 1000))
-                 (catch java.net.SocketTimeoutException e (do (Thread/sleep 1000) (prn "Timeout on queue " queue " retry ") nil)))]
-    (do (prn "wait-on-work-unit! >>> bla1 ") res)
-    (do (prn "wait-on-work-unit! >>> bla2 " ) (recur redis-conn queue working-queue))))
+                 (catch java.net.SocketTimeoutException e (do (safe-sleep) (debug "Timeout on queue " queue " retry ") nil)))]
+    res
+    (recur redis-conn queue working-queue)))
 
 (defn consumer-start
   "Starts a consumer and returns the consumer state that represents the consumer itself
    A msg-ch can be provided but if not a (chan 100) will be created and assigned to msg-ch in the state.
    keys are:
            :redis-conn the redis connection
-           :load-pool a load pool from tl/create-pool
+           :load-pool a load pool from tl/create-pool or if a load-pool exists in the state the same load pool is used
            :msg-ch the core.async channel
            :producers {}
            :status :ok
   "
-  [{:keys [redis-conf conf msg-ch] :as state}]
+  [{:keys [redis-conf conf msg-ch load-pool] :as state}]
   {:pre [(and 
            (:work-queue state) (:working-queue state) (:complete-queue state)
            (:redis-conf state) (:conf state))]}
@@ -139,7 +148,7 @@
                          :port    (get redis-conf :port 6379)
                          :password (get redis-conf :password)
                          :timeout  (get redis-conf :timeout 4000)}}
-     :load-pool (tl/create-pool :queue-limit (get conf :consumer-queue-limit 10))
+     :load-pool (if load-pool load-pool (tl/create-pool :queue-limit (get conf :consumer-queue-limit 10)))
      :msg-ch (if msg-ch msg-ch (chan 100))
     :producers {}
     :status :ok}))
@@ -228,19 +237,30 @@
     (car/wcar redis-conn
               (car/lpush work-queue work-unit))))
 
+(defn- ^Runnable publish-pool-loop [{:keys [load-pool] :as state}]
+  (fn []
+    (while (not (Thread/interrupted))
+      (try
+        (tl/publish! load-pool (get-work-unit! state))
+        (catch Exception e (error e e))))))
+
 (defn start-publish-pool-thread 
   "Start a future that will wait for a workunit and publish to the thread-pool"
   [{:keys [load-pool] :as state}]
   {:pre [load-pool]}
-  (future 
-    (while (not (Thread/interrupted))
-	    (try
-	      (tl/publish! load-pool (get-work-unit! state))
-       (catch Exception e (error e e))))))
+  (doto (Executors/newSingleThreadExecutor) (.submit (publish-pool-loop state))))
 
 
-(defn close-consumer! [{:keys [load-pool]}]
-  (tl/shutdown-pool load-pool 10000))
+(defn close-consumer! [{:keys [load-pool publish-pool]}]
+  {:pre [load-pool (instance? ExecutorService publish-pool)]}
+  (tl/shutdown-pool load-pool 10000)
+  (.shutdownNow ^ExecutorService publish-pool))
+
+
+(defn- close-for-restart-consumer! [{:keys [load-pool publish-pool]}]
+  {:pre [load-pool (instance? ExecutorService publish-pool)]}
+
+  )
 
 (defn consume!
   "Starts the consumer consumption process, by initiating 1+consumer-threads threads, one thread is used to wait for work-units
@@ -248,40 +268,58 @@
    sent to the msg-ch, note that the send to msg-ch is a blocking send, meaning that the whole process will block if msg-ch is full
    The actual consume! function returns inmediately
 
-   Call as (consume! {:redis-conf {:spec {:host \"localhost\" :timeout-ms 1000} :pool {:max-active 1 :test-on-borrow? true :when-exhausted-action 2}} :working-queue \"working\" :complete-queue \"complete\" :work-queue \"work\" :conf {}})
 
   "
-  [{:keys [conf load-pool msg-ch] :as state}]
-  {:pre [conf load-pool msg-ch]}
+  [{:keys [conf msg-ch] :as state}]
+  {:pre [conf msg-ch (instance? clojure.core.async.impl.channels.ManyToManyChannel msg-ch)]}
   (let [f-delegate (fn [state status resp-data]
+                     ;(prn "!!!>>>>>>>> publishing to msg-ch " msg-ch)
                      (if (= (:status state) :ok)
                        (>!! msg-ch resp-data))
                      (assoc state :status :ok))
-        
-        consumer-threads (get conf :consumer-threads 2)]
+        {:keys [load-pool] :as ret-state} (merge state (consumer-start state) {:restart 0})
+        consumer-threads (get conf :consumer-threads 1)
+        publish-pool (start-publish-pool-thread ret-state)]
     ;add threads that will consume from the load-pool and run f-delegate, that will in turn put data on the msg-ch
     (dotimes [i consumer-threads]
       (tl/add-consumer load-pool 
-                                (fn [state & _] ;init
-                                  (info "start consumer thread")
-                                  (assoc (consumer-start state) :status :ok))
+                                (fn [{:keys [restart] :as state} & _] ;init
+                                  (info "start consumer thread restart " restart)
+                                  (if-not restart
+                                    (assoc ret-state :status :ok :publish-pool publish-pool)
+                                    (assoc (consumer-start state) :status :ok :restart (inc restart) :publish-pool publish-pool)))
                                 (fn [state work-unit] ;exec
-                                   (prn "got work " work-unit)
+                                  ;(prn "got work " work-unit)
                                    (do-work-unit! state work-unit f-delegate))
                                 (fn [state & args] ;fail
                                   (info "Fail consumer thread: " state " " args)
-                                  (assoc state :status :ok))))
+                                  (close-for-restart-consumer! state)
+                                  (assoc (merge state (consumer-start state)) :status :ok))))
     ;start background wait on redis, publish work-unit to pool
-    (start-publish-pool-thread state)
-    state))
+
+    (assoc ret-state :publish-pool publish-pool)))
     
                                    
 (comment 
   
 (use 'kafka-clj.consumer.consumer :reload)
-(def consumer (consumer-start {:redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}))
+(def consumer {:redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}})
 (publish-work consumer {:producer {:host "localhost" :port 9092} :topic "ping" :partition 0 :offset 0 :len 10})
 (def res (wait-and-do-work-unit! consumer (fn [state status resp-data] state)))
+
+(use 'kafka-clj.consumer.consumer :reload)
+
+(require '[clojure.core.async :refer [go alts!! >!! <!! >! <! timeout chan]])
+(def msg-ch (chan 1000))
+
+(def consumer {:redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}})
+(publish-work consumer {:producer {:host "localhost" :port 9092} :topic "ping" :partition 0 :offset 0 :len 10})
+(publish-work consumer {:producer {:host "localhost" :port 9092} :topic "ping" :partition 0 :offset 11 :len 10})
+
+(consume! (assoc consumer :msg-ch msg-ch))
+
+(<!! msg-ch)
+(<!! msg-ch)
 
 )
 
