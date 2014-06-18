@@ -58,7 +58,7 @@
   "If the status of the w-unit is :ok the work-unit is checked for remaining work, otherwise its completed, if :fail the work-unit is sent to the work-queue.
    Must be run inside a redis connection e.g car/wcar redis-conn"
   [{:keys [redis-conn] :as state} {:keys [status] :as w-unit}]
-  (prn "work-complete-handler!>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> " w-unit)
+  ;(prn "work-complete-handler!>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> " w-unit)
   (condp = status
     :fail (work-complete-fail! state w-unit)
     (work-complete-ok! state w-unit)))
@@ -68,6 +68,7 @@
   "Returns a Function that will loop continueously and wait for work on the complete queue"
   [{:keys [redis-conn complete-queue working-queue] :as state}]
   {:pre [redis-conn complete-queue working-queue]}
+  ;@TODO add ATOMIC COUNTER TO COUNT THE NUMBER OF MESSAGES done by the work complete handler
   (fn []
     (while (not (Thread/interrupted))
       (try
@@ -122,14 +123,12 @@
   {:pre [group-conn redis-conn work-queue consume-step (integer? consume-step)]}
   (let [offset-data2 
         (filter (fn [x] (and x (< (:saved-offset x) (:offset x)))) (map (partial add-offsets state topic) offset-data))]
-    (prn "send-offesets-if-any!>>>> start ")
-    (prn "offset-data2 " (first offset-data2) )
     (doseq [{:keys [offset partition saved-offset]} offset-data2]
       ;w-units
       ;max offset
       ;push w-units
       ;save max-offset
-      (prn "send-offsets-if-any! >>> fuck 1")
+      ;producer topic partition max-offset start-offset step
       (let [ work-units (calculate-work-units broker topic partition offset saved-offset consume-step)
             max-offset (apply max (map #(+ (:offset %) (:len %)) work-units))
             ]

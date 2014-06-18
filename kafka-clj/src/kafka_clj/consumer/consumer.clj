@@ -87,11 +87,11 @@
   "Listens to a response after a fetch request has been sent
    Returns [status data]  status can be :ok, :timeout, :error and data is v returned from the channel"
   [{:keys [client] :as state} work-unit conf]
-  (prn "handler-response >>>>> " work-unit)
+  ;(prn "handler-response >>>>> " work-unit)
   (let [fetch-timeout (get conf :fetch-timeout 10000)
         {:keys [read-ch error-ch]} client
         [v c] (alts!! [read-ch error-ch (timeout fetch-timeout)])]
-    (prn "handle-response >>>>> " v)
+    ;(prn "handle-response >>>>> " v)
     (condp = c
       read-ch (cond 
                 (instance? Reconnected v) (handle-response state conf)
@@ -167,10 +167,10 @@
 (defn publish-work-response! 
   "Remove data from the working-queue and publish to the complete-queue"
   [{:keys [redis-conn working-queue complete-queue]} work-unit status resp-data]
-  (prn "publish-work-response! >>>> redis-conn " redis-conn "; complete-queue " complete-queue " work-unit " work-unit)
-  (prn ">>> resp: " (car/wcar redis-conn
-                              (car/lpush complete-queue (assoc work-unit :status status :resp-data resp-data))
-                              (car/lrem working-queue -1 work-unit))) )
+  ;(prn "publish-work-response! >>>> redis-conn " redis-conn "; complete-queue " complete-queue " work-unit " work-unit)
+  (car/wcar redis-conn
+            (car/lpush complete-queue (assoc work-unit :status status :resp-data resp-data))
+            (car/lrem working-queue -1 work-unit)))
 
 (defn save-call [f state & args]
   (try
@@ -199,7 +199,7 @@
    Returns the state map with the :status and :producers updated
   "
   [{:keys [redis-conn producers work-queue working-queue complete-queue conf] :as state} work-unit f-delegate]
-  (prn "wait-and-do-work-unit! >>> have work unit " work-unit)
+  ;(prn "wait-and-do-work-unit! >>> have work unit " work-unit)
   (io!
     (try
       (let [{:keys [producer topic partition offset len]} work-unit
@@ -210,8 +210,15 @@
             (let [[status resp-data] (fetch-and-wait state work-unit producer-conn)
                   state2 (merge state (save-call f-delegate state status resp-data))
                   ]
-              (prn "wait-and-do-work-unit! >>> publish work response")
-              (publish-work-response! state2 work-unit (:status state2) {:offset-read (apply max (map :offset resp-data))})
+              ;(prn "wait-and-do-work-unit! >>> publish work response resp-data" resp-data)
+              (if resp-data
+                (publish-work-response! state2 work-unit (:status state2) {:offset-read (apply max (map :offset resp-data))})
+                (do
+                  ;@TODO WE need to analyse why exactly the resp-data is nil here and how to prefent it by calculating the offsets better
+                  (info ">>>>>>>>>>>>>> nil resp-data " resp-data  " status " status  " w-unit " work-unit)
+
+                  ))
+
               (assoc
                   state2
                 :producers producers2)))
@@ -225,7 +232,7 @@
    The state as returned by do-work-unit! is returned"
   [state f-delegate]
   (let [work-unit (get-work-unit! state)]
-    (prn "wait-and-do-work-unit! >>>>>>> got work")
+    ;(prn "wait-and-do-work-unit! >>>>>>> got work")
     (do-work-unit! state work-unit f-delegate)))
     
 (defn publish-work 
@@ -274,7 +281,7 @@
   {:pre [conf msg-ch (instance? clojure.core.async.impl.channels.ManyToManyChannel msg-ch)]}
   (let [f-delegate (fn [state status resp-data]
                      ;(prn "!!!>>>>>>>> publishing to msg-ch " msg-ch)
-                     (if (= (:status state) :ok)
+                     (if (and (= (:status state) :ok) resp-data)
                        (>!! msg-ch resp-data))
                      (assoc state :status :ok))
         {:keys [load-pool] :as ret-state} (merge state (consumer-start state) {:restart 0})
@@ -293,6 +300,7 @@
                                    (do-work-unit! state work-unit f-delegate))
                                 (fn [state & args] ;fail
                                   (info "Fail consumer thread: " state " " args)
+                                  (if-let [e (:throwable state)] (error e e))
                                   (close-for-restart-consumer! state)
                                   (assoc (merge state (consumer-start state)) :status :ok))))
     ;start background wait on redis, publish work-unit to pool
