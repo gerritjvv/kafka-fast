@@ -20,7 +20,37 @@
 ;====================================
 
 (facts "Test Create Work Units and Consumer"
-  
+  (comment
+    (fact "Test work-complete-processor"
+          (let [ts (System/currentTimeMillis)
+
+                org (create-organiser! {:bootstrap-brokers [{:host "localhost" :port 9092}]
+                                        :redis-conf {:host "localhost" :max-active 10 :timeout 500} :working-queue (str "working" ts) :complete-queue (str "complete" ts) :work-queue (str "work" ts) :conf {}})
+                redis-conn (:redis-conn org)
+                complete-queue (:complete-queue org)
+                work-queue (:work-queue org)
+                working-queue (:working-queue org)
+                ]
+            (car/wcar redis-conn
+                      (car/flushall))
+            (car/wcar redis-conn
+                      (car/lpush complete-queue {:resp-data {:offset-read 10} :offset 0 :len 10}))
+
+            (Thread/sleep 3000)
+            (let [[complete work working]
+                  (car/wcar redis-conn
+                            [(car/lrange complete-queue 0 -1)
+                             (car/lrange work-queue 0 -1)
+                             (car/lrange working-queue 0 -1)
+                             ])
+                  ]
+              (count complete) => 0
+              (count work) => 0
+              (count working) => 0
+              (close-organiser! org)
+              )
+
+            )))
   (fact "Test organiser and wait-and-do-work-unit!"
 
         (let [ts (System/currentTimeMillis)
@@ -32,21 +62,16 @@
           (.shutdownNow (:work-complete-processor-future org))
           (car/wcar redis-conn
                     (car/flushall))
-          (do (prn ">>>>>>>> !!!!!!!!!!!!!!!!! FUCK-1"))
 
           (calculate-new-work org ["ping"])
-          (do (prn ">>>>>>>> !!!!!!!!!!!!!!!!! FUCK0"))
 
-          (let [_ (do (prn ">>>>>>>> !!!!!!!!!!!!!!!!! FUCK1"))
-
+          (let [
                 consumer (consumer-start {:redis-conf {:host "localhost" :max-active 1 :timeout 500} :working-queue (:working-queue org) :complete-queue (:complete-queue org) :work-queue (:work-queue org) :conf {}})
-                _ (do (prn ">>>>>>>> !!!!!!!!!!!!!!!!! FUCK2"))
                 res (wait-and-do-work-unit! consumer (fn [state status resp-data] (assoc state :resp-data resp-data)))
                 resp-data (:resp-data res)]
             (close-organiser! org)
             (nil? resp-data) => false
             (:status res) => :ok
-            (prn "res = " res)
             (prn "complete queue data " (get-queue-data org (:complete-queue org)))
             (apply max (map :offset resp-data)) => (apply max (map #(-> % :resp-data :offset-read) (get-queue-data org (:complete-queue org))))
             ))))

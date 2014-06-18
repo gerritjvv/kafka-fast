@@ -45,7 +45,7 @@
 
    Side effects: Send data to redis work-queue"
   [{:keys [work-queue] :as state} {:keys [resp-data offset len] :as w-unit}]
-  {:pre [work-queue resp-data (not-empty (:offset-read resp-data)) offset len]}
+  {:pre [work-queue resp-data offset len]}
   (let [diff (- (+ (to-int offset) (to-int len)) (to-int (:offset-read resp-data)))]
     (if (pos? diff)                                         ;if any offsets left, send work to work-queue with :offset = :offset-read :len diff
       (car/lpush
@@ -58,8 +58,7 @@
   "If the status of the w-unit is :ok the work-unit is checked for remaining work, otherwise its completed, if :fail the work-unit is sent to the work-queue.
    Must be run inside a redis connection e.g car/wcar redis-conn"
   [{:keys [redis-conn] :as state} {:keys [status] :as w-unit}]
-  {:pre [redis-conn (#{:ok :fail} status)]}
-  (prn "work-complete-handler! " w-unit)
+  (prn "work-complete-handler!>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> " w-unit)
   (condp = status
     :fail (work-complete-fail! state w-unit)
     (work-complete-ok! state w-unit)))
@@ -73,11 +72,10 @@
     (while (not (Thread/interrupted))
       (try
         (when-let [work-unit (wait-on-work-unit! redis-conn complete-queue working-queue)]
-          (prn "work-complete have work-unit " (type work-unit) " > " work-unit)
           (car/wcar redis-conn
                     (work-complete-handler! state work-unit)
                     (car/lrem working-queue -1 work-unit)))
-        (catch Exception e (error e e))))))
+        (catch Exception e (do (error e e) (prn e)))))))
 
 (defn start-work-complete-processor!
   "Creates a ExecutorService and starts the work-complete-loop running in a background thread
