@@ -124,7 +124,7 @@
   (if-let [res (try                                         ;this command throws a SocketTimeoutException if the queue does not exist
                  (car/wcar redis-conn                       ;we check for this condition and continue to block
                            (car/brpoplpush queue working-queue 1000))
-                 (catch java.net.SocketTimeoutException e (do (safe-sleep) (debug "Timeout on queue " queue " retry ") nil)))]
+                 (catch java.net.SocketTimeoutException e (do (safe-sleep 1000) (debug "Timeout on queue " queue " retry ") nil)))]
     res
     (recur redis-conn queue working-queue)))
 
