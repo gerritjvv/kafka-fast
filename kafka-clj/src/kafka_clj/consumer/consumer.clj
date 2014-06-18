@@ -85,9 +85,11 @@
   "Listens to a response after a fetch request has been sent
    Returns [status data]  status can be :ok, :timeout, :error and data is v returned from the channel"
   [{:keys [client] :as state} work-unit conf]
+  (prn "handler-response >>>>> " work-unit)
   (let [fetch-timeout (get conf :fetch-timeout 10000)
         {:keys [read-ch error-ch]} client
         [v c] (alts!! [read-ch error-ch (timeout fetch-timeout)])]
+    (prn "handle-response >>>>> " v)
     (condp = c
       read-ch (cond 
                 (instance? Reconnected v) (handle-response state conf)
@@ -110,8 +112,12 @@
 (defn wait-on-work-unit!
   "Blocks on the redis queue till an item becomes availabe, at the same time the item is pushed to the working queue"
   [redis-conn queue working-queue]
-  (io! (car/wcar redis-conn
-                 (car/brpoplpush queue working-queue 0))))
+  (if-let [res (try                                         ;this command throws a SocketTimeoutException if the queue does not exist
+                 (car/wcar redis-conn                       ;we check for this condition and continue to block
+                           (car/brpoplpush queue working-queue 1000))
+                 (catch java.net.SocketTimeoutException e (do (Thread/sleep 1000) (prn "Timeout on queue " queue " retry ") nil)))]
+    (do (prn "wait-on-work-unit! >>> bla1 ") res)
+    (do (prn "wait-on-work-unit! >>> bla2 " ) (recur redis-conn queue working-queue))))
 
 (defn consumer-start
   "Starts a consumer and returns the consumer state that represents the consumer itself
@@ -128,7 +134,11 @@
            (:work-queue state) (:working-queue state) (:complete-queue state)
            (:redis-conf state) (:conf state))]}
   (merge state
-    {:redis-conn (merge redis-conf {:host (get redis-conf :redis-host (get redis-conf :host))})
+    {:redis-conn {:pool {:max-active (get redis-conf :max-active 20)}
+                  :spec {:host  (get redis-conf :host "localhost")
+                         :port    (get redis-conf :port 6379)
+                         :password (get redis-conf :password)
+                         :timeout  (get redis-conf :timeout 4000)}}
      :load-pool (tl/create-pool :queue-limit (get conf :consumer-queue-limit 10))
      :msg-ch (if msg-ch msg-ch (chan 100))
     :producers {}
@@ -148,10 +158,10 @@
 (defn publish-work-response! 
   "Remove data from the working-queue and publish to the complete-queue"
   [{:keys [redis-conn working-queue complete-queue]} work-unit status resp-data]
-  (io!
-    (car/wcar redis-conn
-              (car/lpush complete-queue (assoc work-unit :status status :resp-data resp-data))
-              (car/lrem working-queue -1 work-unit))))
+  (prn "publish-work-response! >>>> redis-conn " redis-conn "; complete-queue " complete-queue " work-unit " work-unit)
+  (prn ">>> resp: " (car/wcar redis-conn
+                              (car/lpush complete-queue (assoc work-unit :status status :resp-data resp-data))
+                              (car/lrem working-queue -1 work-unit))) )
 
 (defn save-call [f state & args]
   (try
@@ -180,6 +190,7 @@
    Returns the state map with the :status and :producers updated
   "
   [{:keys [redis-conn producers work-queue working-queue complete-queue conf] :as state} work-unit f-delegate]
+  (prn "wait-and-do-work-unit! >>> have work unit " work-unit)
   (io!
     (try
       (let [{:keys [producer topic partition offset len]} work-unit
@@ -190,6 +201,7 @@
             (let [[status resp-data] (fetch-and-wait state work-unit producer-conn)
                   state2 (merge state (save-call f-delegate state status resp-data))
                   ]
+              (prn "wait-and-do-work-unit! >>> publish work response")
               (publish-work-response! state2 work-unit (:status state2) {:offset-read (apply max (map :offset resp-data))})
               (assoc
                   state2
@@ -204,6 +216,7 @@
    The state as returned by do-work-unit! is returned"
   [state f-delegate]
   (let [work-unit (get-work-unit! state)]
+    (prn "wait-and-do-work-unit! >>>>>>> got work")
     (do-work-unit! state work-unit f-delegate)))
     
 (defn publish-work 
@@ -229,16 +242,13 @@
 (defn close-consumer! [{:keys [load-pool]}]
   (tl/shutdown-pool load-pool 10000))
 
-;TODO Change init to create the consumer state, the function cannot be passed a created consumer
-; but should be passeda load-pool and msg-ch together with the rest of the configuration, if 
-;fail on init we should return a :terminate
-(defn consume! 
+(defn consume!
   "Starts the consumer consumption process, by initiating 1+consumer-threads threads, one thread is used to wait for work-units
    from redis, and the other threads are used to process the work-unit, the resp data from each work-unit's processing result is 
    sent to the msg-ch, note that the send to msg-ch is a blocking send, meaning that the whole process will block if msg-ch is full
    The actual consume! function returns inmediately
 
-   Call as (consume! {:redis-conf {:host \"localhost\" :max-active 5 :timeout 1000} :working-queue \"working\" :complete-queue \"complete\" :work-queue \"work\" :conf {}})
+   Call as (consume! {:redis-conf {:spec {:host \"localhost\" :timeout-ms 1000} :pool {:max-active 1 :test-on-borrow? true :when-exhausted-action 2}} :working-queue \"working\" :complete-queue \"complete\" :work-queue \"work\" :conf {}})
 
   "
   [{:keys [conf load-pool msg-ch] :as state}]
@@ -274,5 +284,5 @@
 (def res (wait-and-do-work-unit! consumer (fn [state status resp-data] state)))
 
 )
-    
+
 
