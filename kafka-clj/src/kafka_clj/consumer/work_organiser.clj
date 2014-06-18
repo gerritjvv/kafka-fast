@@ -204,7 +204,7 @@
 ;TODO create timeout processor
 (comment
   
-  (use 'kafka-clj.consumer.work-organiser :reload)
+(use 'kafka-clj.consumer.work-organiser :reload)
 
 (def org (create-organiser!  
  
