@@ -128,8 +128,20 @@ Each consumer will read and consume messages from the redis work queue.
 
 ```clojure
 
+(use 'kafka-clj.consumer.node :reload)
+(require '[clojure.core.async :as async])
+(def consumer-conf {:bootstrap-brokers [{:host "localhost" :port 9092}] :redis-conf {:host "localhost" :max-active 5 :timeout 1000 :group-name "test"} :conf {}})
+(def node (create-node! consumer-conf ["ping"]))
 
+(read-msg-batch! node)
+;;for a single message
+(def m (msg-seq! node))
+;;for a lazy sequence of messages
 
+(add-topics! node ["test1" "test2"])
+;;add topics
+(remove-topics! node ["test1"])
+;;remove topics
 
 ```
 
