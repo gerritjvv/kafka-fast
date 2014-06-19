@@ -24,6 +24,7 @@
              (let [ts (System/currentTimeMillis)
 
                    org (create-organiser! {:bootstrap-brokers [{:host "localhost" :port 9092}]
+                                           :consume-step 10
                                            :redis-conf {:host "localhost" :max-active 10 :timeout 500} :working-queue (str "working" ts) :complete-queue (str "complete" ts) :work-queue (str "work" ts) :conf {}})
                    redis-conn (:redis-conn org)
                    complete-queue (:complete-queue org)

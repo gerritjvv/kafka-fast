@@ -25,6 +25,7 @@
           (let [ts (System/currentTimeMillis)
 
                 org (create-organiser! {:bootstrap-brokers [{:host "localhost" :port 9092}]
+                                        :consume-step 10
                                         :redis-conf {:host "localhost" :max-active 10 :timeout 500} :working-queue (str "working" ts) :complete-queue (str "complete" ts) :work-queue (str "work" ts) :conf {}})
                 redis-conn (:redis-conn org)
                 complete-queue (:complete-queue org)
@@ -55,6 +56,7 @@
 
         (let [ts (System/currentTimeMillis)
               org (create-organiser! {:bootstrap-brokers [{:host "localhost" :port 9092}]
+                                      :consume-step 10
                                       :redis-conf {:host "localhost" :max-active 1 :timeout 500} :working-queue (str "working" ts) :complete-queue (str "complete" ts) :work-queue (str "work" ts) :conf {}})
               redis-conn (:redis-conn org)
               ]
@@ -66,7 +68,7 @@
           (calculate-new-work org ["ping"])
 
           (let [
-                consumer (consumer-start {:redis-conf {:host "localhost" :max-active 1 :timeout 500} :working-queue (:working-queue org) :complete-queue (:complete-queue org) :work-queue (:work-queue org) :conf {}})
+                consumer (consumer-start {:consume-step 10 :redis-conf {:host "localhost" :max-active 1 :timeout 500} :working-queue (:working-queue org) :complete-queue (:complete-queue org) :work-queue (:work-queue org) :conf {}})
                 res (wait-and-do-work-unit! consumer (fn [state status resp-data] (assoc state :resp-data resp-data)))
                 resp-data (:resp-data res)]
             (close-organiser! org)

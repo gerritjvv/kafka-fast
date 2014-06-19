@@ -166,10 +166,10 @@
 
 (defn publish-work-response! 
   "Remove data from the working-queue and publish to the complete-queue"
-  [{:keys [redis-conn working-queue complete-queue]} work-unit status resp-data]
-  ;(prn "publish-work-response! >>>> redis-conn " redis-conn "; complete-queue " complete-queue " work-unit " work-unit)
+  [{:keys [redis-conn working-queue complete-queue work-queue]} work-unit status resp-data]
+  (info "publish-work-response! >>> " complete-queue " complete-queue " status )
   (car/wcar redis-conn
-            (car/lpush complete-queue (assoc work-unit :status status :resp-data resp-data))
+            (car/lpush complete-queue (assoc work-unit :dup 1 :status status :resp-data resp-data))
             (car/lrem working-queue -1 work-unit)))
 
 (defn save-call [f state & args]
@@ -223,6 +223,7 @@
                   state2
                 :producers producers2)))
           (catch Throwable t (do
+                               (.printStackTrace t)
                                (publish-work-response! state work-unit :fail nil)
                                (assoc state :status :fail :throwable t :producers  producers2)))))
       (catch Throwable t (assoc state :status :fail :throwable t)))))
@@ -244,10 +245,12 @@
     (car/wcar redis-conn
               (car/lpush work-queue work-unit))))
 
+
 (defn- ^Runnable publish-pool-loop [{:keys [load-pool] :as state}]
   (fn []
     (while (not (Thread/interrupted))
       (try
+        ;@TODO add duplicate work detection here, try something like a bloom filter
         (tl/publish! load-pool (get-work-unit! state))
         (catch Exception e (error e e))))))
 
@@ -279,24 +282,23 @@
   "
   [{:keys [conf msg-ch] :as state}]
   {:pre [conf msg-ch (instance? clojure.core.async.impl.channels.ManyToManyChannel msg-ch)]}
-  (let [f-delegate (fn [state status resp-data]
+  (let [ f-delegate (fn [state status resp-data]
                      ;(prn "!!!>>>>>>>> publishing to msg-ch " msg-ch)
                      (if (and (= (:status state) :ok) resp-data)
                        (>!! msg-ch resp-data))
                      (assoc state :status :ok))
         {:keys [load-pool] :as ret-state} (merge state (consumer-start state) {:restart 0})
-        consumer-threads (get conf :consumer-threads 1)
+        consumer-threads (get conf :consumer-threads 2)
         publish-pool (start-publish-pool-thread ret-state)]
     ;add threads that will consume from the load-pool and run f-delegate, that will in turn put data on the msg-ch
     (dotimes [i consumer-threads]
-      (tl/add-consumer load-pool 
+      (tl/add-consumer load-pool
                                 (fn [{:keys [restart] :as state} & _] ;init
                                   (info "start consumer thread restart " restart)
                                   (if-not restart
                                     (assoc ret-state :status :ok :publish-pool publish-pool)
                                     (assoc (consumer-start state) :status :ok :restart (inc restart) :publish-pool publish-pool)))
                                 (fn [state work-unit] ;exec
-                                  ;(prn "got work " work-unit)
                                    (do-work-unit! state work-unit f-delegate))
                                 (fn [state & args] ;fail
                                   (info "Fail consumer thread: " state " " args)

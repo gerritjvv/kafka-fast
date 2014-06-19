@@ -27,7 +27,7 @@
         (let [ts (System/currentTimeMillis)
               msgs 100
               msg-ch (chan 1000)
-              consumer-conf {:redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}
+              consumer-conf {:consume-step 10 :redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}
               redis-conf (:redis-conf consumer-conf)
               redis-conn {:pool {:max-active (get redis-conf :max-active 20)}
                           :spec {:host  (get redis-conf :host "localhost")

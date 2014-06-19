@@ -269,7 +269,7 @@
 	  Time => int64
 	  MaxNumberOfOffsets => int32
 	"
-  (info "write-offset-requests use-earliest " use-earliest)
+  ;(info "write-offset-requests use-earliest " use-earliest)
   (.writeInt buff (int -1)) ;replica id
   (.writeInt buff (int (count topics))) ;write topic array count
   (doseq [[topic partitions] topics]

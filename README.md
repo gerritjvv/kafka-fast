@@ -188,7 +188,8 @@ The metrics registry is held in ```kafka-clj.consumer.metrics-registry```, and c
 |:send-cache-max-entries | 1000000 | number of entries to keep in cache for server ack checks |
 |:send-cache-expire-after-write | 5 | seconds to expire an entry after write |
 |:send-cache-expire-after-access | 5 | seconds to expire an entry after read |
-
+|:consume-step | 100000 | The max number of messages to consume in a single work unit |
+|:redis-conf | ```:redis-conf {:host "localhost" :max-active 10 :timeout 500}``` | The redis configuration for the consumer |
 
 # Produce Error handling and persistence
 
