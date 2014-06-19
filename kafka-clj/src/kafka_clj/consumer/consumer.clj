@@ -42,9 +42,10 @@
   (if (byte-array? v)
 	  (let [ max-offset (+ offset len)
 	         fetch-res
-	         (read-fetch (Unpooled/wrappedBuffer ^"[B" v) [{} [] 0]
+	         (read-fetch (Unpooled/wrappedBuffer ^"[B" v) [[] [] 0]
 				     (fn [state msg]
 	              ;read-fetch will navigate the fetch response calling this function
+               ;(info "READ FETCH MESSAGE " msg)
 	              (if (coll? state)
 			            (let [[resp errors cnt] state]
 		               (try
@@ -53,8 +54,7 @@
 								         (instance? Message msg)
                          ;only include messsages of the same topic partition and lower than max-offset
 								         (if (and (= (:topic msg) topic) (= (:partition msg) partition) (< (:offset msg) max-offset))
-                           (let [k #{(:topic msg) (:partition msg)}]
-                             (tuple (assoc resp k msg) errors (inc cnt)))
+                           (tuple (conj resp msg) errors (inc cnt))
                            (tuple resp errors))
 								         (instance? FetchError msg)
 								         (do (error "Fetch error: " msg) (tuple resp (conj errors msg) cnt))
@@ -66,9 +66,10 @@
 	                  (do (error "State not supported " state)
 	                      [{} [] 0])
 	                  )))]
+         ;(info "FETCH RESP " fetch-res)
 	       (if (coll? fetch-res)
 	          (let [[resp errors cnt] fetch-res]
-		          (tuple (vals resp) errors)) ;[resp-map error-vec]
+		          (tuple resp errors)) ;[resp-map error-vec]
 		       (do
 		         (info "No messages consumed " fetch-res)
 		         nil)))))
@@ -83,7 +84,8 @@
 (defn handle-timeout-response []
   [:fail nil])
 
-(defn handle-response 
+
+(defn handle-response
   "Listens to a response after a fetch request has been sent
    Returns [status data]  status can be :ok, :timeout, :error and data is v returned from the channel"
   [{:keys [client] :as state} work-unit conf]
@@ -91,7 +93,6 @@
   (let [fetch-timeout (get conf :fetch-timeout 10000)
         {:keys [read-ch error-ch]} client
         [v c] (alts!! [read-ch error-ch (timeout fetch-timeout)])]
-    ;(prn "handle-response >>>>> " v)
     (condp = c
       read-ch (cond 
                 (instance? Reconnected v) (handle-response state conf)
@@ -99,7 +100,7 @@
                 :else (handle-read-response work-unit v))
       error-ch (handle-error-response v)
       (handle-timeout-response))))
-     
+
     
 (defn fetch-and-wait 
   "
@@ -167,7 +168,7 @@
 (defn publish-work-response! 
   "Remove data from the working-queue and publish to the complete-queue"
   [{:keys [redis-conn working-queue complete-queue work-queue]} work-unit status resp-data]
-  (info "publish-work-response! >>> " complete-queue " complete-queue " status )
+  ;(info "publish-work-response! >>> " complete-queue " complete-queue " status )
   (car/wcar redis-conn
             (car/lpush complete-queue (assoc work-unit :dup 1 :status status :resp-data resp-data))
             (car/lrem working-queue -1 work-unit)))
@@ -283,7 +284,7 @@
   [{:keys [conf msg-ch] :as state}]
   {:pre [conf msg-ch (instance? clojure.core.async.impl.channels.ManyToManyChannel msg-ch)]}
   (let [ f-delegate (fn [state status resp-data]
-                     ;(prn "!!!>>>>>>>> publishing to msg-ch " msg-ch)
+                      ;(info "!!!>>>>>>>> publishing to msg-ch " msg-ch  " >> " status " >> " (count resp-data))
                      (if (and (= (:status state) :ok) resp-data)
                        (>!! msg-ch resp-data))
                      (assoc state :status :ok))

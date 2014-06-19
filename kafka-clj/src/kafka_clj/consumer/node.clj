@@ -3,8 +3,8 @@
             [kafka-clj.consumer.consumer :refer [consume! close-consumer!]]
             [group-redis.core :as gr]
             [fun-utils.core :refer [fixdelay stop-fixdelay]]
-            [clojure.tools.logging :refer [error]]
-            [clojure.core.async :refer [chan <!! close!]]))
+            [clojure.tools.logging :refer [info error]]
+            [clojure.core.async :refer [chan <!! alts!! timeout close!]]))
 
 
 ;; Represents a single consumer node that has a
@@ -98,28 +98,31 @@
 (defn read-msg-batch!
   "Accepts a the return value of create-node! and blocks on msg-ch
    The return value is a collection of Message [topic partition offset bts]"
-  [{:keys [msg-ch]}]
-  (<!! msg-ch))
+  ([{:keys [msg-ch]} timeout-ms]
+   (let [[v _] (alts!! msg-ch (timeout timeout-ms))]
+     v))
+  ([{:keys [msg-ch]}]
+   (<!! msg-ch)))
 
-
-(defn msg-seq-batch!
-  "Returns a lazy sequence of message batches i.e a sequence of collectors of Message [topic partition offset bts]"
-  [node]
-  (lazy-seq
-    (cons (read-msg-batch! node) (msg-seq-batch! node))))
+(defn- msg-seq-util [[n & others] node]
+  (if n
+    (cons n (lazy-seq (msg-seq-util others node)))
+    (msg-seq-util (read-msg-batch! node) node)))
 
 (defn msg-seq!
-  "Returns (flatten (msg-seq-batch! node)) i.e a sequence of Message [topic partition offset bts] messages"
-  [node]
-  (flatten (msg-seq-batch! node)))
-
+  ([node]
+   (msg-seq-util (read-msg-batch! node) node)))
 
 (comment
 
   (use 'kafka-clj.consumer.node :reload)
+  (require '[clojure.core.async :as async])
   (def consumer-conf {:bootstrap-brokers [{:host "localhost" :port 9092}] :redis-conf {:host "localhost" :max-active 5 :timeout 1000 :group-name "test"} :conf {}})
   (def node (create-node! consumer-conf ["ping"]))
 
   (read-msg-batch! node)
+  ;;for a single message
+  (def m (msg-seq! node))
+  ;;for a lazy sequence of messages
 
   )
