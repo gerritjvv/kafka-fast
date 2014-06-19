@@ -10,7 +10,7 @@ fast kafka library implemented in clojure
 
 Please note that this library is still under development, any contributions are welcome
 
-```[kafka-clj "1.0.2-SNAPSHOT"]```
+```[kafka-clj "2.0.0-SNAPSHOT"]```
 
 ## Producer
 
@@ -118,49 +118,36 @@ Redis was chosen over zookeeper because:
 
 The library used for redis is https://github.com/gerritjvv/group-redis
 
+## Load balancing
+
+A work queue concept is used to share the load over several consumers. 
+A master is automatically sepected between the consumers, the master will run the work-organiser which is responsible for calculating and publishing work to redis.
+Each consumer will read and consume messages from the redis work queue.
+
+## Consuming topics
+
+```clojure
+
+(use 'kafka-clj.consumer.node :reload)
+(require '[clojure.core.async :as async])
+(def consumer-conf {:bootstrap-brokers [{:host "localhost" :port 9092}] :redis-conf {:host "localhost" :max-active 5 :timeout 1000 :group-name "test"} :conf {}})
+(def node (create-node! consumer-conf ["ping"]))
+
+(read-msg-batch! node)
+;;for a single message
+(def m (msg-seq! node))
+;;for a lazy sequence of messages
+
+(add-topics! node ["test1" "test2"])
+;;add topics
+(remove-topics! node ["test1"])
+;;remove topics
+
+```
 
 ## Error Handling
 
-All connections and network io is async, meaning that you cannot rely on try catch to get at errors. 
-An error-handler function taking a single argument of type Exception can be sent as part of the conf map 
-
-e.g ```clojure {:error-handler (fn [e] (prn "error " e ))}```
-
-A default implementation is provided that prints out the error and runs ```clojure (System/exit -1)``
-` 
 ```clojure
-
-(require '[kafka-clj.consumer :refer [consumer read-msg]])
-
-;create a consumer using localhost as the bootstrap brokers, you can provide more
-;read from the "ping" topic, again you can specify more topics here.
-;use-earliest true means that the consumer will start from the latest messages
-;locking group management and offsets are all saved in redis.the redis conf and options can be found at
-;https://github.com/gerritjvv/group-redis
-(def c (consumer [{:host "localhost" :port 9092}] ["ping"] {:use-earliest true :max-bytes 1073741824 :metadata-timeout 60000 :redis-conf {:redis-host "localhost" :heart-beat 10} }))
-
-
-;create a lazy sequence of messages
-(defn lazy-ch [c]
-  (lazy-seq (cons (read-msg c) (lazy-ch c))))
-
-;the messages returned are FetchMessage [topic partition ^bytes bts offset locked]
-
-;we flatten here because messages are sent in batches
-(doseq [msg (take 10 (flatten (lazy-ch c)))]
-  (prn (String. (:bts msg))))
- 
-```
-
-### Dynamically Adding/Removing topics 
-
-```clojure
-
-(add-topic c "mytopic")
-;;ads the topic mytopic to the open connection c for consumption
-
-(remove-topic c "mytopic")
-;;stops consuming from mytopic on connection c
 
 
 ```
@@ -193,18 +180,6 @@ The metrics registry is held in ```kafka-clj.consumer.metrics-registry```, and c
 
 ## Kafka Problem solving
 
-For each broker a single fetch message is sent for all topics and partitions on that broker to be consumed.
-This means the max-bytes property needs to be big enough to atleast hold one message from each topic partition on that broker, it its smaller
-the broker will not send the message and we will get timeouts, also if its too large the brokers will take longer the get all of the data
-together, for some reason during production its been noted that the timeout is not always honoured by the broker.
-
-The default value is 52428800 bytes which is 50 mb.
-
-The best is to keep the max-bytes small and limit the size of each message set sent by the producers.
-
-If you get timeouts try first for smaller max-bytes, then bigger 100 mb, 150 mb etc, this will need some experimentation and patience.
- 
-
 #Configuration
 
 | Name | Default | Description |
@@ -225,7 +200,8 @@ If you get timeouts try first for smaller max-bytes, then bigger 100 mb, 150 mb 
 |:send-cache-max-entries | 1000000 | number of entries to keep in cache for server ack checks |
 |:send-cache-expire-after-write | 5 | seconds to expire an entry after write |
 |:send-cache-expire-after-access | 5 | seconds to expire an entry after read |
-
+|:consume-step | 100000 | The max number of messages to consume in a single work unit |
+|:redis-conf | ```:redis-conf {:host "localhost" :max-active 10 :timeout 500}``` | The redis configuration for the consumer |
 
 # Produce Error handling and persistence
 
@@ -260,9 +236,6 @@ The logic above is created in the create-connector function, and attached to the
 The close function will stop all the background logic above.
 
 
-# Consumer Implementation
-
-This section covers more details about the consumer implementation.
 
 ## create-fetch-producer
 
