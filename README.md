@@ -10,7 +10,7 @@ fast kafka library implemented in clojure
 
 Please note that this library is still under development, any contributions are welcome
 
-```[kafka-clj "2.0.0-SNAPSHOT"]```
+[![Clojars Project](http://clojars.org/kafka-clj/latest-version.svg)](http://clojars.org/kafka-clj)
 
 ## Producer
 
