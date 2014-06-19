@@ -69,7 +69,7 @@
     (if (and (> diff 1) (<= diff len))                                          ;if any offsets left, send work to work-queue with :offset = :offset-read :len diff
       (let [new-offset (safe-calculate-offset offset len offset-read)
             new-work-unit (assoc (dissoc w-unit :resp-data)  :offset new-offset :len diff)]
-        (info "Recalculating work for processed work-unit " new-work-unit)
+        ;(info "Recalculating work for processed work-unit " new-work-unit)
         (car/lpush
           work-queue
           new-work-unit)))

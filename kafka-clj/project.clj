@@ -1,13 +1,13 @@
-(defproject kafka-clj "2.0.0-SNAPSHOT"
+(defproject kafka-clj "2.0.1"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
 
   :javac-options ["-target" "1.6" "-source" "1.6" "-Xlint:-options"]
-  ;:warn-on-reflection true
-  ;:global-vars {*warn-on-reflection* true
-   ;             *assert* false}
+  :warn-on-reflection true
+  :global-vars {*warn-on-reflection* true
+                *assert* false}
 
   :aot [kafka-clj.client]
   :main kafka-clj.client
@@ -21,7 +21,7 @@
   :dependencies [
                  [org.clojars.smee/binary "0.2.5"]
                  [clojurewerkz/buffy "1.0.0-beta1"]
-                 [group-redis "0.6.2-SNAPSHOT"]
+                 [group-redis "0.6.3"]
                  [org.mapdb/mapdb "0.9.9"]
                  [midje "1.6.0" :scope "test"]
                  [reply "0.3.0" :scope "provided"]
@@ -35,10 +35,4 @@
                  [thread-load "0.1.1"]
                  [com.codahale.metrics/metrics-core "3.0.1"]
                 
-                 [org.apache.kafka/kafka_2.10 "0.8.0" :scope "test" :exclusions [[javax.mail/mail :extension "jar"]
-                                              [javax.jms/jms :classifier "*"]
-                                              com.sun.jdmk/jmxtools
-                                              com.sun.jmx/jmxri] :scope "test"]
-                 ;[org.apache.curator/curator-test "2.3.0" :scope "test" ]
-                 ;[org.apache.hadoop/hadoop-core "0.20.2"]
                  [org.clojure/clojure "1.5.1" :scope "provided"]])
