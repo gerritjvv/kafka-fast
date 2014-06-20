@@ -21,8 +21,9 @@
            [io.netty.buffer Unpooled]
            [java.io File DataOutputStream]))
 
-             
- ;------- partition lock and release api
+;MOST OF THE FUNCTIONS IN THIS NAMESPACE HAS BEEN DEPCRECATED
+;PLEASE USE kafka-clj.consumer/consumer
+;------- partition lock and release api
 
 (defonce ^MetricRegistry metrics-registry (MetricRegistry.))
 
@@ -142,7 +143,9 @@
   (error e (str "Internal Error while reading message: e " e))
   (error (str "Internal Error while reading message: state " state " for message " msg)))
 
-(def byte_array_class (Class/forName "[B"))(defn byte-array? [arr] (instance? byte_array_class arr))
+(def byte_array_class (Class/forName "[B"))
+
+(defn byte-array? [arr] (instance? byte_array_class arr))
 
 (defn read-fetch-message [{:keys [p-send]} current-offsets msg-ch ^Meter m-consume-reads ^Histogram m-message-size v]
   ;read-fetch will return the result of fn which is [resp-vec error-vec]

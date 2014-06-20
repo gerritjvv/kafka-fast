@@ -1,5 +1,6 @@
 (ns kafka-clj.consumer.consumer
-  (:import (java.util.concurrent ExecutorService))
+  (:import (java.util.concurrent ExecutorService)
+           (clojure.lang ArityException))
 
   (:require 
     [taoensso.carmine :as car :refer [wcar]]
@@ -14,6 +15,8 @@
     [kafka_clj.fetch Message FetchError]
     [java.util.concurrent Executors ExecutorService]
     [clj_tcp.client Reconnected Poison]
+    [com.codahale.metrics Meter MetricRegistry Timer Histogram]
+    [clojure.lang ArityException]
     [io.netty.buffer Unpooled]))
 
 ;;; This namespace requires a running redis and kafka cluster
@@ -184,6 +187,12 @@
   {:pre [redis-conn work-queue working-queue]}
   (wait-on-work-unit! redis-conn work-queue working-queue))
 
+(defn- get-offset-read
+  "Returns the max value in the resp data of :offset if no values 0 is returned"
+  [resp-data]
+  (try
+    (apply max (map :offset resp-data))
+    (catch ArityException e 0)))
 
 (defn do-work-unit! 
   "state map keys:
@@ -213,7 +222,7 @@
                   ]
               ;(prn "wait-and-do-work-unit! >>> publish work response resp-data" resp-data)
               (if resp-data
-                (publish-work-response! state2 work-unit (:status state2) {:offset-read (apply max (map :offset resp-data))})
+                (publish-work-response! state2 work-unit (:status state2) {:offset-read (get-offset-read resp-data)})
                 (do
                   ;@TODO WE need to analyse why exactly the resp-data is nil here and how to prefent it by calculating the offsets better
                   (info ">>>>>>>>>>>>>> nil resp-data " resp-data  " status " status  " w-unit " work-unit)
@@ -273,6 +282,8 @@
 
   )
 
+
+
 (defn consume!
   "Starts the consumer consumption process, by initiating 1+consumer-threads threads, one thread is used to wait for work-units
    from redis, and the other threads are used to process the work-unit, the resp data from each work-unit's processing result is 
@@ -283,7 +294,9 @@
   "
   [{:keys [conf msg-ch] :as state}]
   {:pre [conf msg-ch (instance? clojure.core.async.impl.channels.ManyToManyChannel msg-ch)]}
-  (let [ f-delegate (fn [state status resp-data]
+  (let [
+
+         f-delegate (fn [state status resp-data]
                       ;(info "!!!>>>>>>>> publishing to msg-ch " msg-ch  " >> " status " >> " (count resp-data))
                      (if (and (= (:status state) :ok) resp-data)
                        (>!! msg-ch resp-data))
