@@ -173,7 +173,7 @@
   [{:keys [redis-conn working-queue complete-queue work-queue]} work-unit status resp-data]
   ;(info "publish-work-response! >>> " complete-queue " complete-queue " status )
   (car/wcar redis-conn
-            (car/lpush complete-queue (assoc work-unit :dup 1 :status status :resp-data resp-data))
+            (car/lpush complete-queue (assoc work-unit :status status :resp-data resp-data))
             (car/lrem working-queue -1 work-unit)))
 
 (defn save-call [f state & args]
