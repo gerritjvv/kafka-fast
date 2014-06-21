@@ -302,7 +302,7 @@
                        (>!! msg-ch resp-data))
                      (assoc state :status :ok))
         {:keys [load-pool] :as ret-state} (merge state (consumer-start state) {:restart 0})
-        consumer-threads (get conf :consumer-threads 2)
+        consumer-threads (get conf :consumer-threads 8)
         publish-pool (start-publish-pool-thread ret-state)]
     ;add threads that will consume from the load-pool and run f-delegate, that will in turn put data on the msg-ch
     (dotimes [i consumer-threads]
