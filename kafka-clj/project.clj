@@ -1,4 +1,4 @@
-(defproject kafka-clj "2.0.2"
+(defproject kafka-clj "2.0.3"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -9,8 +9,8 @@
   :global-vars {*warn-on-reflection* true
                 *assert* false}
 
-  :aot [kafka-clj.client]
-  :main kafka-clj.client
+  :scm {:name "git"
+         :url "https://github.com/gerritjvv/kafka-fast.git"}
   :java-source-paths ["java"]  
   :jvm-opts ["-Xmx3g"]
   :plugins [
@@ -24,7 +24,7 @@
                  [group-redis "0.6.3"]
                  [org.mapdb/mapdb "0.9.9"]
                  [midje "1.6.0" :scope "test"]
-                 [reply "0.3.0" :scope "provided"]
+                 ;[reply "0.3.0" :scope "provided"]
                  [org.clojure/tools.trace "0.7.6"]
                  [org.xerial.snappy/snappy-java "1.1.1-M1"]
                  [org.clojure/tools.logging "0.2.6"]

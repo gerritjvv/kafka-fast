@@ -35,7 +35,10 @@
   [{:keys [group-conn group-name] :as node} topics]
   {:pre [group-conn topics group-name]}
   (if (gr/reentrant-lock group-conn (str group-name "/kafka-nodes-master-lock"))
-    (calculate-new-work node topics)))
+    (let [ts (System/currentTimeMillis)
+          _ (calculate-new-work node topics)
+          total-time (- (System/currentTimeMillis) ts)]
+      (info "Calculating new work for " (count topics) " took " total-time " ms"))))
 
 (defn- start-work-calculate
   "Returns a channel that will run in a fixed delay of 1000ms

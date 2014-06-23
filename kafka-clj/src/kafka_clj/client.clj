@@ -1,5 +1,4 @@
 (ns kafka-clj.client
-  (:gen-class)
   (:require [fun-utils.core :refer [star-channel buffered-chan fixdelay apply-get-create stop-fixdelay go-seq]]
             [kafka-clj.produce :refer [producer metadata-request-producer send-messages message shutdown]]
             [kafka-clj.metadata :refer [get-metadata]]
@@ -7,7 +6,6 @@
                                            create-retry-cache write-to-retry-cache retry-cache-seq close-retry-cache delete-from-retry-cache]]
             [clojure.tools.logging :refer [error info debug]]
             [clj-tuple :refer [tuple]]
-            [reply.main]
             [clojure.core.async :refer [chan >! >!! go close!] :as async])
   (:import [java.util.concurrent.atomic AtomicInteger]
            [kafka_clj.response ProduceResponse]))
@@ -348,9 +346,5 @@
      (assoc connector :retry-cache-ch retry-cache-ch)
     ))
  
-
-(defn -main [& args]
-  (let [[options _ _] (reply.main/parse-args args)]
-     (reply.main/launch-nrepl options)))
 
 
