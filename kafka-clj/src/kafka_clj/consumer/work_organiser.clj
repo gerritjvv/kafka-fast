@@ -28,7 +28,7 @@
 ;
 
 
-(defn- to-int [s]
+(defn- ^Long to-int [s]
   (try
     (cond
       (integer? s) s
@@ -77,9 +77,9 @@
 
     state))
 
-(defn- safe-num
+(defn- ^Long safe-num
   "Quick util function that returns a positive number or 0"
-  [x]
+  [^Long x]
   (if (pos? x) x 0))
 
 (defn- do-work-timeout-check!
@@ -103,8 +103,8 @@
   (let [work-unit-timeout-ms (* 1000 60 4)
         n 100
         w-units (car/wcar redis-conn
-                          (let [x (safe-num (- (car/llen working-queue) n))
-                                y (+ x n -1)]
+                          (let [^Long x (safe-num (- (car/llen working-queue) n))
+                                ^Long y (+ x n -1)]
                             (car/lrange working-queue
                                         x
                                         y)))]
@@ -151,17 +151,17 @@
 
 (defn calculate-work-units 
   "Returns '({:topic :partition :offset :len}) Len is exclusive"
-  [producer topic partition max-offset start-offset step]
+  [producer topic partition ^Long max-offset ^Long start-offset ^Long step]
   {:pre [(and (:host producer) (:port producer))]}
   (if (< start-offset max-offset)
-    (let [t (+ start-offset step)
-          l (if (> t max-offset) (- max-offset start-offset) step)]
+    (let [^Long t (+ start-offset step)
+          ^Long l (if (> t max-offset) (- max-offset start-offset) step)]
       (cons
         {:topic topic :partition partition :offset start-offset :len l}
         (lazy-seq 
           (calculate-work-units producer topic partition max-offset (+ start-offset l) step))))))
 
-(defn get-saved-offset 
+(defn ^Long get-saved-offset
   "Returns the last saved offset for a topic partition combination"
   [{:keys [group-conn]} topic partition]
   {:pre [group-conn topic partition]}
@@ -182,10 +182,10 @@
   Side effects: lpush work-units to work-queue
                 set offsets/$topic/$partition = max-offset of work-units
    "
-  [{:keys [group-conn redis-conn work-queue consume-step] :as state :or {consume-step 100000}} broker topic offset-data]
+  [{:keys [group-conn redis-conn work-queue ^Long consume-step] :as state :or {consume-step 100000}} broker topic offset-data]
   {:pre [group-conn redis-conn work-queue consume-step (integer? consume-step)]}
   (let [offset-data2 
-        (filter (fn [x] (and x (< (:saved-offset x) (:offset x)))) (map (partial add-offsets state topic) offset-data))]
+        (filter (fn [x] (and x (< ^Long (:saved-offset x) ^Long (:offset x)))) (map (partial add-offsets state topic) offset-data))]
     (doseq [{:keys [offset partition saved-offset]} offset-data2]
       ;w-units
       ;max offset
@@ -193,7 +193,7 @@
       ;save max-offset
       ;producer topic partition max-offset start-offset step
       (let [ work-units (calculate-work-units broker topic partition offset saved-offset consume-step)
-            max-offset (apply max (map #(+ (:offset %) (:len %)) work-units))
+            max-offset (apply max (map #(+ ^Long (:offset %) ^Long (:len %)) work-units))
             ts (System/currentTimeMillis)
             ]
         ;(info "send-offsets-if-any! >>> push work-units " (count work-units) " sample " (take 2 work-units) )

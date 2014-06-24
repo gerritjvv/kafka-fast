@@ -31,15 +31,20 @@ working correctly
     (.scheduleAtFixedRate service flusher 1000 1000 TimeUnit/MILLISECONDS)
     service))
 
+
 (defn produce-test-messages!
   "Write n messages to the kafka topic each with the format prefix-$i where i = 0 < n"
   [topic prefix n {:keys [bootstrap-brokers]}]
   {:pre [topic prefix (number? n) (coll? bootstrap-brokers)]}
   (io!
-    (let [c (kprod/create-connector bootstrap-brokers {})]
+    (let [c (kprod/create-connector bootstrap-brokers {})
+          start (System/currentTimeMillis)]
       (dotimes [i n]
         (kprod/send-msg c topic (.getBytes (str prefix "-" i))))
-      (kprod/close c))))
+      ;(kprod/close c)
+      (println "Producing completed in " (- (System/currentTimeMillis) start) "ms")
+      ;(System/exit 0)
+      )))
 
 
 (defn- consume-messages [msg-seq writer]
@@ -57,14 +62,15 @@ working correctly
    Note that all msg bytes are converted to a String before written, and all records are newline separated"
   [topic file-out {:keys [bootstrap-brokers redis-conf] :as conf}]
   {:pre [topic file-out (coll? bootstrap-brokers) (map? redis-conf)]}
-  (let [ node (kc/create-node! conf [topic])]
+  (let [ _ (do (println "Connecting using " conf  " topic " topic))
+         node (kc/create-node! conf [topic])]
     (with-open [writer (clojure.java.io/writer file-out)]
       (let [^ExecutorService service (background-flusher writer)]
         (try
           (do
             (prn "Writing to file " file-out)
             (prn "Using conf " conf)
-            (consume-messages (kc/msg-seq! node) writer))
+            (consume-messages (kc/msg-seq! node ) writer))
           (finally
             (do
               (println "Close flusher")
