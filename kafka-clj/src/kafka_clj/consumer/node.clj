@@ -71,6 +71,7 @@
         intermediate-conf (assoc conf :work-queue (str group-name "-kafka-work-queue")
                                       :working-queue (str group-name "-kafka-working-queue")
                                       :complete-queue (str group-name "-kafka-complete-queue"))
+
         org (create-organiser! intermediate-conf)
         group-conn (:group-conn org)
         msg-ch (chan 1000)
@@ -98,7 +99,7 @@
   (dosync
     (alter (:topics-ref node) clojure.set/difference (set topics))))
 
-(defn read-msg-batch!
+(defn read-msg!
   "Accepts a the return value of create-node! and blocks on msg-ch
    The return value is a collection of Message [topic partition offset bts]"
   ([{:keys [msg-ch]} timeout-ms]
@@ -107,14 +108,22 @@
   ([{:keys [msg-ch]}]
    (<!! msg-ch)))
 
-(defn- msg-seq-util [[n & others] node]
-  (if n
-    (cons n (lazy-seq (msg-seq-util others node)))
-    (msg-seq-util (read-msg-batch! node) node)))
+(defn- msg-seq-util [n node]
+  (when n
+    (cons n
+          (lazy-seq
+            (msg-seq-util (read-msg! node)
+                          node)))))
 
 (defn msg-seq!
   ([node]
-   (msg-seq-util (read-msg-batch! node) node)))
+   (msg-seq-util (read-msg! node) node)))
+
+(defn msg-seq-buffered!
+  "Will always return a sequence of sequence of messages i.e [ [msg1, msg2, msg3] .. ]
+   Acceps :step n which is the number of messages per sequence inside the main sequence"
+  [node & {:keys [step] :or {step 1000}}]
+  (partition-all step (msg-seq! node)))
 
 (comment
 
@@ -123,7 +132,7 @@
   (def consumer-conf {:bootstrap-brokers [{:host "localhost" :port 9092}] :redis-conf {:host "localhost" :max-active 5 :timeout 1000 :group-name "test"} :conf {}})
   (def node (create-node! consumer-conf ["ping"]))
 
-  (read-msg-batch! node)
+  (read-msg! node)
   ;;for a single message
   (def m (msg-seq! node))
   ;;for a lazy sequence of messages

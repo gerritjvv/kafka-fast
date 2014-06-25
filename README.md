@@ -133,7 +133,7 @@ Each consumer will read and consume messages from the redis work queue.
 (def consumer-conf {:bootstrap-brokers [{:host "localhost" :port 9092}] :redis-conf {:host "localhost" :max-active 5 :timeout 1000 :group-name "test"} :conf {}})
 (def node (create-node! consumer-conf ["ping"]))
 
-(read-msg-batch! node)
+(read-msg! node)
 ;;for a single message
 (def m (msg-seq! node))
 ;;for a lazy sequence of messages

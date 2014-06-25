@@ -69,8 +69,10 @@
 
           (let [
                 consumer (consumer-start {:consume-step 10 :redis-conf {:host "localhost" :max-active 1 :timeout 500} :working-queue (:working-queue org) :complete-queue (:complete-queue org) :work-queue (:work-queue org) :conf {}})
-                res (wait-and-do-work-unit! consumer (fn [state status resp-data] (assoc state :resp-data resp-data)))
-                resp-data (:resp-data res)]
+                resp-data-ref (ref nil)
+                res (wait-and-do-work-unit! consumer (fn [state resp-data] (dosync
+                                                                             (alter resp-data-ref conj resp-data))))
+                resp-data @resp-data-ref]
             (close-organiser! org)
             (nil? resp-data) => false
             (:status res) => :ok

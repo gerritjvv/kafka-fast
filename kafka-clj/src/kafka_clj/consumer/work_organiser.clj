@@ -260,7 +260,9 @@
   (doseq [producer meta-producers]
     (produce/shutdown producer))
 
-  (fu/stop-fixdelay work-timeout-processor-fdelay))
+  (if work-timeout-processor-fdelay
+    (fu/stop-fixdelay work-timeout-processor-fdelay))
+  )
 
 
 ;TODO TEST timeout processor

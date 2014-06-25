@@ -30,7 +30,7 @@
     (def state {:topic-partition-ref (ref {})})
     (select-rr-partition! b {:topic-partition-ref state})
    "
-  (let [partition-count (get-partition-count topic @brokers-metadata)]
+  (let [^Long partition-count (get-partition-count topic @brokers-metadata)]
    (if (> partition-count 0)	    
 		  (if-let [^AtomicInteger pcounter (get @topic-partition-ref topic)]
 		    (mod (.getAndIncrement pcounter) partition-count)
@@ -75,8 +75,8 @@
   "An accumulator state function that counts the number of bytes of messages in a vector
    and if higher than v returns [true acc] [false acc]"
   ([] 0)
-  ([acc messages v]
-    (let [acc2 (+ acc (count (:bts (get-latest-msg messages))))]
+  ([^Long acc messages ^Long v]
+    (let [acc2 (+ ^Long acc (count ^"[B" (:bts (get-latest-msg messages))))]
       (tuple (>= acc2 v) acc2))))
     
 (defonce t (tuple false false))

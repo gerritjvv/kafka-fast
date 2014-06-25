@@ -51,7 +51,7 @@
             (dotimes [i msgs]
               (let [[v ch] (alts!! [msg-ch (timeout 1000)])]
                 (prn "GOT VAL >>>>>>>>====== i " i " v = " v  " ch " ch)
-                (count v) => 1
+                (nil? v) => false
                 ))
             ;check that the queues are in a consistent state
             (count (get-queue-data consumer-conf (:complete-queue consumer-conf))) => msgs
