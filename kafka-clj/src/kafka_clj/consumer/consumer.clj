@@ -56,9 +56,11 @@
 					             (cond
 								         (instance? Message msg)
                          ;only include messsages of the same topic partition and lower than max-offset
-								         (if (and (= (:topic msg) topic) (= ^Long (:partition msg) ^Long partition) (< ^Long (:offset msg) max-offset))
-                           (tuple (conj resp msg) errors (f-delegate f-state msg))
-                           (tuple resp errors f-state))
+								         (do
+                           ;(spit "/d1/kafka-clj-tests1.txt" "test\n" :append true)
+                           (if (and (= (:topic msg) topic) (= ^Long (:partition msg) ^Long partition) (< ^Long (:offset msg) max-offset))
+                             (tuple (conj resp msg) errors (f-delegate f-state msg))
+                             (tuple resp errors f-state)))
 								         (instance? FetchError msg)
 								         (do (error "Fetch error: " msg) (tuple resp (conj errors msg) f-state))
 								         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
@@ -290,6 +292,7 @@
     (loop [[v c] (alts! chs)]
       (if v
         (do
+          ;(spit "/d1/kafka-clj-tests3.txt" "test\n" :append true)
           (>! ch v)
           (recur (alts! chs)))))))
 

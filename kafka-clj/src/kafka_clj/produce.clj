@@ -156,10 +156,10 @@
    The write is async.
    If the conf properties acks is > 0 the messages will also be written to an inmemory cache,
    the cache expires and has a maximum size, but it allows us to retry failed messages."
-  
   (if (> acks 0)
     (write! client (partial write-message-for-ack connector conf msgs))
-	  (write! client (fn [^ByteBuf buff] 
+	  (write! client (fn [^ByteBuf buff]
+
 	                       (if buff (with-size buff write-request conf msgs))
                          msgs;we must return the msgs here, its used later by the cache for retries
 	                       ))))

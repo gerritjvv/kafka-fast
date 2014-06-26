@@ -230,7 +230,7 @@
 	  (let [partition (select-rr-partition! topic state)
 	        producer-buffer (select-producer-buffer! connector topic partition state)
 	        ]
-	    (try
+      (try
        (send-to-buffer producer-buffer (message topic partition bts))
        (catch Exception e
          (do (error e e)

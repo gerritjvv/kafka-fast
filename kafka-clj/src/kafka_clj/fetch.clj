@@ -113,8 +113,7 @@
                 (read-messages0 ubuff (count ubytes) topic-name partition state f)
                     
              )))
-       
-          (f state (->Message topic-name partition offset val-arr))
+      (f state (->Message topic-name partition offset val-arr))
         )))    
         
    
