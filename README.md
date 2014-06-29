@@ -152,31 +152,37 @@ Each consumer will read and consume messages from the redis work queue.
 
 ```
 
-##Consumer metrics
+##Consumer Work Units and monitoring
 
-The api uses http://metrics.codahale.com/ for metrics.
-The following metrics are provides
+Each consumer will process work units as they become available on the work queue. 
+When a work unit has been completed by the consumer an event is sent to the work-unit-event-ch channel (core.async channel).
 
-```
-kafka-consumer.consume-#[number]        Message consumption per second
-kafka-consumer.redis-reads-#[number]    Redis reads per second
-kafka-consumer.redis-writes-#[number]   Redis writes per second
-kafka-consumer.msg-size-#[number]       Histogram of message byte sizes
-kafka-consume.cycle-#[number]           Internal metrics to time each cycle between consume and check for new members
-```
+Note that the work-unit-event-ch channel is a sliding channel with a buffer or 100, meaning events not consumed will be lost.
 
+These events can be saved to disk and analyised later to gain more insight into what is being processed by each host and how fast,
+it can also help to debug a consumer.
+
+To get the channel use:
 
 ```clojure
-
-(require '[kafka-clj.metrics :refer [ report-consumer-metrics ]])
-(report-consumer-metrics :console :freq 10) ;report to stdout every 10 seconds
-(report-consumer-metrics :csv :freq 10 :dir "/tmp/mydir") ; report to the directory :dir every 10 seconds
-
+(def event (<!! (:work-unit-event-ch node)))
 ```
 
-The metrics registry is held in ```kafka-clj.consumer.metrics-registry```, and can be used to customize reporting
-
-
+The event format is:
+```clojure
+{:event "done"
+ :ts ts-millis
+ :wu {:seen ts-millis
+      :topic topic
+      :partition partition
+      :producer {:host host :port port}
+      :offset offset
+      :len len
+      :offset-read offset-read
+      :status status
+     }
+}
+```
 
 ## Kafka Problem solving
 

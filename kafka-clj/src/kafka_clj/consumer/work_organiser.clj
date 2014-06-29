@@ -245,7 +245,7 @@
                            :timeout  (get redis-conf :timeout 4000)}}
         intermediate-state (assoc state :meta-producers meta-producers :group-conn group-conn :redis-conn redis-conn :offset-producers (ref {}))
         work-complete-processor-future  (start-work-complete-processor! intermediate-state)
-        work-timeout-processor-fdelay nil                   ;(start-work-timeout-processor! intermediate-state)
+        work-timeout-processor-fdelay (start-work-timeout-processor! intermediate-state)
         ]
     (assoc intermediate-state :work-complete-processor-future work-complete-processor-future
                               :work-timeout-processor-fdelay work-timeout-processor-fdelay)))

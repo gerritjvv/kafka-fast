@@ -171,22 +171,32 @@
 
 (defn publish-work-response! 
   "Remove data from the working-queue and publish to the complete-queue"
-  [{:keys [redis-conn working-queue complete-queue work-queue]} work-unit status resp-data]
+  [{:keys [redis-conn working-queue complete-queue work-queue work-unit-event-ch]} work-unit status resp-data]
   ;(info "publish-work-response! >>> " complete-queue " complete-queue " status )
-  (car/wcar redis-conn
-            (car/lpush complete-queue (assoc work-unit :status status :resp-data resp-data))
-            (car/lrem working-queue -1 work-unit)))
+  (let [work-unit2 (assoc work-unit :status status :resp-data resp-data)]
+    (>!! work-unit-event-ch                                 ;send to work-unit-event-channel
+         {:event "done"
+          :ts (System/currentTimeMillis)
+          :wu work-unit2})
+    ;send work complete to complete-queue
+    (car/wcar redis-conn
+              (car/lpush complete-queue work-unit2)
+              (car/lrem working-queue -1 work-unit))
+    ))
 
 (defn save-call [f state & args]
   (try
     (apply f state args)
     (catch Exception t (do (error t t) (assoc state :status :fail)))))
 
-(defn get-work-unit! 
-  "Wait for work to become available in the work queue"
+(defn get-work-unit!
+  "Wait for work to become available in the work queue
+   Adds a :seen key to the work unit with the current milliseconds"
   [{:keys [redis-conn work-queue working-queue]}]
   {:pre [redis-conn work-queue working-queue]}
-  (wait-on-work-unit! redis-conn work-queue working-queue))
+  (assoc
+    (wait-on-work-unit! redis-conn work-queue working-queue)
+    :seen (System/currentTimeMillis)))
 
 (defn- get-offset-read
   "Returns the max value in the resp data of :offset if no values 0 is returned"

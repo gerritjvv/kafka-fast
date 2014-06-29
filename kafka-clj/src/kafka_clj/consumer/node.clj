@@ -4,7 +4,7 @@
             [group-redis.core :as gr]
             [fun-utils.core :refer [fixdelay stop-fixdelay]]
             [clojure.tools.logging :refer [info error]]
-            [clojure.core.async :refer [chan <!! alts!! timeout close!]]))
+            [clojure.core.async :refer [chan <!! alts!! timeout close! sliding-buffer]]))
 
 
 ;; Represents a single consumer node that has a
@@ -72,6 +72,7 @@
                                       :working-queue (str group-name "-kafka-working-queue")
                                       :complete-queue (str group-name "-kafka-complete-queue"))
 
+        work-unit-event-ch (sliding-buffer 100)
         org (create-organiser! intermediate-conf)
         group-conn (:group-conn org)
         msg-ch (chan 1000)
@@ -81,7 +82,9 @@
 
     (gr/join group-conn)
 
-    {:conf intermediate-conf :topics-ref topics-ref :org org :msg-ch msg-ch :consumer consumer :calc-work-thread calc-work-thread :group-conn group-conn :group-name group-name}))
+    {:conf intermediate-conf :topics-ref topics-ref :org org :msg-ch msg-ch :consumer consumer :calc-work-thread calc-work-thread
+     :group-conn group-conn :group-name group-name
+     :work-unit-event-ch}))
 
 (defn add-topics!
   "Add topics to the node's topics-ref set, this will cause the orgnaniser run by the node to check for workunits for the topics
