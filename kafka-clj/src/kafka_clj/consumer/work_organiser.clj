@@ -100,16 +100,20 @@
   "Query the working queue for the last 100 elements and check each for a possible timeout,
    if the work unit has timed out its removed from the working queue and placed on the work-queue"
   [{:keys [redis-conn working-queue] :as state}]
-  (let [work-unit-timeout-ms (* 1000 60 4)
-        n 100
-        w-units (car/wcar redis-conn
-                          (let [^Long x (safe-num (- (car/llen working-queue) n))
-                                ^Long y (+ x n -1)]
-                            (car/lrange working-queue
-                                        x
-                                        y)))]
-    (doseq [w-unit w-units]
-      (do-work-timeout-check! state w-unit work-unit-timeout-ms))))
+  (try
+    (let [work-unit-timeout-ms (* 1000 60 4)
+          n 100
+          w-units (car/wcar redis-conn
+                            (let [^Long x (safe-num (- (car/llen working-queue) n))
+                                  ^Long y (+ x n -1)]
+                              (car/lrange working-queue
+                                          x
+                                          y)))]
+      (doseq [w-unit w-units]
+        (do-work-timeout-check! state w-unit work-unit-timeout-ms)))
+    (catch Exception e (do
+                       (.printStackTrace e)
+                       (error e e)))))
 
 
 (defn work-complete-handler!
@@ -271,8 +275,7 @@
   
 (use 'kafka-clj.consumer.work-organiser :reload)
 
-(def org (create-organiser!  
- 
+(def org (create-organiser!
  {:bootstrap-brokers [{:host "localhost" :port 9092}]
   :consume-step 10
   :redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}))
