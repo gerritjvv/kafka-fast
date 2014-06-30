@@ -1,4 +1,4 @@
-(defproject kafka-clj "2.1.0-SNAPSHOT"
+(defproject kafka-clj "2.1.1-SNAPSHOT"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -29,6 +29,7 @@
                  [org.xerial.snappy/snappy-java "1.1.1-M1"]
                  [org.clojure/tools.logging "0.2.6"]
                  [clj-tcp "0.4.0"]
+                 [org.clojure/data.json "0.2.5"]
                  [fmap-clojure "LATEST"]
                  [fun-utils "LATEST"]
                  [clj-tuple "0.1.4"]

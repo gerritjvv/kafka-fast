@@ -3,6 +3,7 @@
             [kafka-clj.consumer.consumer :refer [consume! close-consumer!]]
             [group-redis.core :as gr]
             [fun-utils.core :refer [fixdelay stop-fixdelay]]
+            [taoensso.carmine.locks :as locks]
             [clojure.tools.logging :refer [info error]]
             [clojure.core.async :refer [chan <!! alts!! timeout close! sliding-buffer]]))
 
@@ -32,9 +33,13 @@
 (defn- work-calculate-delegate!
   "Checks the reentrant-lock $group-name/\"kafka-nodes-master-lock\" and if it returns true
    the (calculate-new-work node topics) function is called"
-  [{:keys [group-conn group-name] :as node} topics]
-  {:pre [group-conn topics group-name]}
-  (if (gr/reentrant-lock group-conn (str group-name "/kafka-nodes-master-lock"))
+  [{:keys [redis-conn group-name] :as node} topics]
+  {:pre [redis-conn topics group-name]}
+  (locks/with-lock
+    redis-conn
+    (str group-name "/kafka-nodes-master-lock")
+    10000
+    500
     (let [ts (System/currentTimeMillis)
           _ (calculate-new-work node topics)
           total-time (- (System/currentTimeMillis) ts)]
@@ -77,7 +82,7 @@
         group-conn (:group-conn org)
         msg-ch (chan 1000)
         consumer (consume! (assoc intermediate-conf :msg-ch msg-ch :work-unit-event-ch work-unit-event-ch))
-        calc-work-thread (start-work-calculate (assoc org :group-name group-name) topics-ref)
+        calc-work-thread (start-work-calculate (assoc org :group-name group-name :redis-conn (:conn group-conn)) topics-ref)
         ]
 
     (gr/join group-conn)

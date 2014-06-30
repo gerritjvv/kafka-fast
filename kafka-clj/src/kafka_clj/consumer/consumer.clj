@@ -8,6 +8,7 @@
     [clojure.core.async :refer [go alts!! >!! >! <! timeout chan]]
     [kafka-clj.fetch :refer [create-fetch-producer send-fetch read-fetch]]
     [thread-load.core :as tl]
+    [clojure.data.json :as json]
     [clj-tuple :refer [tuple]]
     [fun-utils.core :refer [go-seq]]
     [clojure.tools.logging :refer [info error debug]])
@@ -125,13 +126,13 @@
 
 (defn wait-on-work-unit!
   "Blocks on the redis queue till an item becomes availabe, at the same time the item is pushed to the working queue"
-  [redis-conn queue working-queue]
+  [work-unit-event-ch redis-conn queue working-queue]
   (if-let [res (try                                         ;this command throws a SocketTimeoutException if the queue does not exist
                  (car/wcar redis-conn                       ;we check for this condition and continue to block
-                           (car/brpoplpush queue working-queue 1000))
+                           (car/brpoplpush queue working-queue 0))
                  (catch java.net.SocketTimeoutException e (do (safe-sleep 1000) (debug "Timeout on queue " queue " retry ") nil)))]
     res
-    (recur redis-conn queue working-queue)))
+    (recur work-unit-event-ch redis-conn queue working-queue)))
 
 (defn consumer-start
   "Starts a consumer and returns the consumer state that represents the consumer itself
@@ -175,10 +176,11 @@
   {:pre [work-unit-event-ch redis-conn working-queue complete-queue work-queue work-unit]}
   ;(info "publish-work-response! >>> " complete-queue " complete-queue " status )
   (let [work-unit2 (assoc work-unit :status status :resp-data resp-data)]
-    (>!! work-unit-event-ch                                 ;send to work-unit-event-channel
-         {:event "done"
-          :ts (System/currentTimeMillis)
-          :wu work-unit2})
+    (if work-unit-event-ch
+      (>!! work-unit-event-ch                                 ;send to work-unit-event-channel
+           {:event "done"
+            :ts (System/currentTimeMillis)
+            :wu work-unit2}))
     ;send work complete to complete-queue
     (car/wcar redis-conn
               (car/lpush complete-queue work-unit2)
@@ -193,9 +195,9 @@
 (defn get-work-unit!
   "Wait for work to become available in the work queue
    Adds a :seen key to the work unit with the current milliseconds"
-  [{:keys [redis-conn work-queue working-queue]}]
+  [{:keys [redis-conn work-queue working-queue work-unit-event-ch]}]
   {:pre [redis-conn work-queue working-queue]}
-  (wait-on-work-unit! redis-conn work-queue working-queue))
+  (wait-on-work-unit! work-unit-event-ch redis-conn work-queue working-queue))
 
 (defn- get-offset-read
   "Returns the max value in the resp data of :offset if no values 0 is returned"

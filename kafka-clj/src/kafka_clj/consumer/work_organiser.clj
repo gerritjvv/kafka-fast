@@ -144,7 +144,7 @@
   (fn []
     (while (not (Thread/interrupted))
       (try
-        (when-let [work-unit (wait-on-work-unit! redis-conn complete-queue working-queue)]
+        (when-let [work-unit (wait-on-work-unit! nil redis-conn complete-queue working-queue)]
           (car/wcar redis-conn
                     (work-complete-handler! state work-unit)
                     (car/lrem working-queue -1 work-unit)))
@@ -205,6 +205,7 @@
             ts (System/currentTimeMillis)
             ]
         ;(info "send-offsets-if-any! >>> push work-units " (count work-units) " sample " (take 2 work-units) )
+
         (car/wcar redis-conn
                   (apply car/lpush work-queue (map #(assoc % :producer broker :ts ts) work-units)))
         (persistent-set group-conn (str "offsets/" topic "/" partition) max-offset)))))
@@ -252,8 +253,8 @@
                            :password (get redis-conf :password)
                            :timeout  (get redis-conf :timeout 4000)}}
         intermediate-state (assoc state :meta-producers meta-producers :group-conn group-conn :redis-conn redis-conn :offset-producers (ref {}))
-        work-complete-processor-future  (start-work-complete-processor! intermediate-state)
-        work-timeout-processor-fdelay (start-work-timeout-processor! intermediate-state)
+        work-complete-processor-future                     nil ;(start-work-complete-processor! intermediate-state)
+        work-timeout-processor-fdelay                      nil ;(start-work-timeout-processor! intermediate-state)
         ]
     (assoc intermediate-state :work-complete-processor-future work-complete-processor-future
                               :work-timeout-processor-fdelay work-timeout-processor-fdelay)))
