@@ -15,7 +15,7 @@
   :jvm-opts ["-Xmx3g"]
   :plugins [
          [lein-rpm "0.0.5"] [lein-midje "3.0.1"] [lein-marginalia "0.7.1"]
-	 [lein-cloverage "1.0.2"]  
+	       [lein-cloverage "1.0.2"]
          [lein-kibit "0.0.8"] [no-man-is-an-island/lein-eclipse "2.0.0"]
            ]
   :dependencies [
