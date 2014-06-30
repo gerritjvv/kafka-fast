@@ -72,7 +72,7 @@
                                       :working-queue (str group-name "-kafka-working-queue")
                                       :complete-queue (str group-name "-kafka-complete-queue"))
 
-        work-unit-event-ch (sliding-buffer 100)
+        work-unit-event-ch (chan (sliding-buffer 100))
         org (create-organiser! intermediate-conf)
         group-conn (:group-conn org)
         msg-ch (chan 1000)
