@@ -84,7 +84,7 @@
 
     {:conf intermediate-conf :topics-ref topics-ref :org org :msg-ch msg-ch :consumer consumer :calc-work-thread calc-work-thread
      :group-conn group-conn :group-name group-name
-     :work-unit-event-ch}))
+     :work-unit-event-ch work-unit-event-ch}))
 
 (defn add-topics!
   "Add topics to the node's topics-ref set, this will cause the orgnaniser run by the node to check for workunits for the topics
