@@ -1,6 +1,7 @@
 (ns kafka-clj.integration-v2-consumer-tests
   (:require [kafka-clj.consumer.work-organiser :refer [create-organiser! close-organiser! calculate-new-work get-queue-data]]
             [kafka-clj.consumer.consumer :refer [consumer-start do-work-unit! wait-and-do-work-unit!]]
+            [clojure.core.async :refer [sliding-buffer chan]]
             [taoensso.carmine :as car :refer [wcar]]
             [clojure.tools.logging :refer [info]]
             [clojure.edn :as edn])
@@ -68,7 +69,9 @@
           (calculate-new-work org ["ping"])
 
           (let [
-                consumer (consumer-start {:consume-step 10 :redis-conf {:host "localhost" :max-active 1 :timeout 500} :working-queue (:working-queue org) :complete-queue (:complete-queue org) :work-queue (:work-queue org) :conf {}})
+                consumer (consumer-start
+                           {:work-unit-event-ch (chan (sliding-buffer 10))
+                             :consume-step 10 :redis-conf {:host "localhost" :max-active 1 :timeout 500} :working-queue (:working-queue org) :complete-queue (:complete-queue org) :work-queue (:work-queue org) :conf {}})
                 resp-data-ref (ref nil)
                 res (wait-and-do-work-unit! consumer (fn [state resp-data] (dosync
                                                                              (alter resp-data-ref conj resp-data))))

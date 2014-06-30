@@ -76,7 +76,7 @@
         org (create-organiser! intermediate-conf)
         group-conn (:group-conn org)
         msg-ch (chan 1000)
-        consumer (consume! (assoc intermediate-conf :msg-ch msg-ch))
+        consumer (consume! (assoc intermediate-conf :msg-ch msg-ch :work-unit-event-ch work-unit-event-ch))
         calc-work-thread (start-work-calculate (assoc org :group-name group-name) topics-ref)
         ]
 

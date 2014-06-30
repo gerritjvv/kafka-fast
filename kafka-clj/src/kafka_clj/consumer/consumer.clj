@@ -172,6 +172,7 @@
 (defn publish-work-response! 
   "Remove data from the working-queue and publish to the complete-queue"
   [{:keys [redis-conn working-queue complete-queue work-queue work-unit-event-ch]} work-unit status resp-data]
+  {:pre [work-unit-event-ch redis-conn working-queue complete-queue work-queue work-unit]}
   ;(info "publish-work-response! >>> " complete-queue " complete-queue " status )
   (let [work-unit2 (assoc work-unit :status status :resp-data resp-data)]
     (>!! work-unit-event-ch                                 ;send to work-unit-event-channel
@@ -313,8 +314,10 @@
    The actual consume! function returns inmediately
 
   "
-  [{:keys [conf msg-ch] :as state}]
-  {:pre [conf msg-ch (instance? clojure.core.async.impl.channels.ManyToManyChannel msg-ch)]}
+  [{:keys [conf msg-ch work-unit-event-ch] :as state}]
+  {:pre [conf work-unit-event-ch msg-ch
+         (instance? clojure.core.async.impl.channels.ManyToManyChannel msg-ch)
+         (instance? clojure.core.async.impl.channels.ManyToManyChannel work-unit-event-ch)]}
   (let [
 
         {:keys [load-pool] :as ret-state} (merge state (consumer-start state) {:restart 0})
@@ -350,7 +353,9 @@
 (comment 
   
 (use 'kafka-clj.consumer.consumer :reload)
-(def consumer {:redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}})
+(def consumer {:redis-conf {:host "localhost" :max-active 5 :timeout 1000}
+               :work-unit-event-ch (chan (sliding-buffer 10))
+               :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}})
 (publish-work consumer {:producer {:host "localhost" :port 9092} :topic "ping" :partition 0 :offset 0 :len 10})
 (def res (wait-and-do-work-unit! consumer (fn [state resp-data] resp-data)))
 

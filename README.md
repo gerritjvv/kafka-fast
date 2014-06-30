@@ -184,6 +184,9 @@ The event format is:
 }
 ```
 
+See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for writing events to disk
+
+
 ## Kafka Problem solving
 
 #Configuration
