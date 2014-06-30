@@ -93,8 +93,11 @@
   (when (and ts (>= (Math/abs (long (- (System/currentTimeMillis) (to-int ts)))) work-unit-timeout-ms))
     (info "Moving timed out work unit " w-unit " to work-queue " work-queue)
     (car/wcar redis-conn
-              (car/lrem working-queue w-unit)
+              (car/lrem working-queue -1 w-unit)
               (car/lpush work-queue w-unit))))
+
+(defn- get-queue-len [redis-conn queue]
+  (car/wcar redis-conn (car/llen queue)))
 
 (defn work-timeout-handler!
   "Query the working queue for the last 100 elements and check each for a possible timeout,
@@ -103,8 +106,9 @@
   (try
     (let [work-unit-timeout-ms (* 1000 60 4)
           n 100
+          queue-len (to-int (get-queue-len redis-conn working-queue))
           w-units (car/wcar redis-conn
-                            (let [^Long x (safe-num (- (car/llen working-queue) n))
+                            (let [^Long x (safe-num (- queue-len n))
                                   ^Long y (+ x n -1)]
                               (car/lrange working-queue
                                           x

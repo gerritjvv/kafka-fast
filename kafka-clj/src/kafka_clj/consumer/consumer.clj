@@ -195,9 +195,7 @@
    Adds a :seen key to the work unit with the current milliseconds"
   [{:keys [redis-conn work-queue working-queue]}]
   {:pre [redis-conn work-queue working-queue]}
-  (assoc
-    (wait-on-work-unit! redis-conn work-queue working-queue)
-    :seen (System/currentTimeMillis)))
+  (wait-on-work-unit! redis-conn work-queue working-queue))
 
 (defn- get-offset-read
   "Returns the max value in the resp data of :offset if no values 0 is returned"
