@@ -13,6 +13,8 @@ By default the messages are rolled for every 10mb and an inactivity of 10 second
 are also written compressed using gzip.
 
 
+[![Clojars Project](http://clojars.org/kafka-events-disk/latest-version.svg)]
+
 ## Usage
 
 ```clojure
