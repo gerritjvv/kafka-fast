@@ -60,13 +60,10 @@
    Side effects: Send data to redis work-queue"
   [{:keys [work-queue] :as state} {:keys [resp-data offset len] :as w-unit}]
   {:pre [work-queue resp-data offset len]}
-  (let [ offset-read (:offset-read resp-data)
-         diff (- (+ (to-int offset) (to-int len)) (to-int offset-read))]
-    ;(info "work-complete-ok! offset " offset " len " len " offset-read " offset-read)
-
-    (if (and (> diff 1) (< diff len))                                          ;if any offsets left, send work to work-queue with :offset = :offset-read :len diff
-      (let [new-offset (inc (to-int offset-read))
-            new-work-unit (assoc (dissoc w-unit :resp-data)  :offset new-offset :len (dec diff))]
+  (let [new-offset (inc (to-int (:offset-read resp-data)))
+        diff (- (+ (to-int offset) (to-int len)) new-offset)]
+    (if (> diff 0)                                          ;if any offsets left, send work to work-queue with :offset = :offset-read :len diff
+      (let [new-work-unit (assoc (dissoc w-unit :resp-data)  :offset new-offset :len diff)]
         (info "Recalculating work for processed work-unit " new-work-unit)
         (car/lpush
           work-queue
