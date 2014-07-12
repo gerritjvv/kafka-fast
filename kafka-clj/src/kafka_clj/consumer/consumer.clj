@@ -330,10 +330,12 @@
         ;create a chan per thread, updates are faster and there is less mutex lock contention
         ch-vec (vec (for [i (range consumer-threads)] (chan 100)))
         publish-pool (start-publish-pool-thread ret-state)]
-    (cutil/copy-new-messages (async/merge ch-vec) msg-ch)
+    (async/pipe (async/merge ch-vec) msg-ch)
     ;add threads that will consume from the load-pool and run f-delegate, that will in turn put data on the msg-ch
     (dotimes [i consumer-threads]
-      (let [ch (ch-vec i)
+      (let [                                                ;ch1 (chan 100)
+            ch (ch-vec i)
+                                                            ;_ (do (cutil/copy-new-messages ch1 ch))
             f-delegate2 (fn [state resp-data]
                           ;(inc-counter "f-delegate-count")
                           (>!! ch resp-data))]

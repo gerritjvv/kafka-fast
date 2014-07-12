@@ -49,13 +49,9 @@
   (let [len (to-int len)
         offset-i (to-int offset)
         offset-read-i (to-int offset-read)
-        offset2 (if (< offset-read-i offset-i)
-                  (inc offset-i)
-                  (inc offset-read-i))
         ]
-    (if (>= offset2 (+ offset-i len))
-      offset-i
-      offset2)))
+
+    ))
 
 (defn- work-complete-ok!
   "If the work complete queue w-unit :status is ok
@@ -68,9 +64,9 @@
          diff (- (+ (to-int offset) (to-int len)) (to-int offset-read))]
     ;(info "work-complete-ok! offset " offset " len " len " offset-read " offset-read)
 
-    (if (and (> diff 1) (<= diff len))                                          ;if any offsets left, send work to work-queue with :offset = :offset-read :len diff
-      (let [new-offset (safe-calculate-offset offset len offset-read)
-            new-work-unit (assoc (dissoc w-unit :resp-data)  :offset new-offset :len diff)]
+    (if (and (> diff 1) (< diff len))                                          ;if any offsets left, send work to work-queue with :offset = :offset-read :len diff
+      (let [new-offset (inc (to-int offset-read))
+            new-work-unit (assoc (dissoc w-unit :resp-data)  :offset new-offset :len (dec diff))]
         (info "Recalculating work for processed work-unit " new-work-unit)
         (car/lpush
           work-queue
