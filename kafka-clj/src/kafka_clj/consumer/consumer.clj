@@ -52,16 +52,16 @@
 
 (defn read-fetch-message 
   "read-fetch will return the result of fn which is [resp-vec error-vec]"
-  [{:keys [topic partition ^Long offset ^Long len]} f-delegate v & {:keys [prev-offset] :or {prev-offset -1}}]
+  [{:keys [topic partition ^Long offset ^Long len]} f-delegate v]
   (if (byte-array? v)
 	  (let [ ^Long max-offset (+ offset len)
 	         fetch-res
-	         (read-fetch (Unpooled/wrappedBuffer ^"[B" v) [[] [] nil prev-offset]
+	         (read-fetch (Unpooled/wrappedBuffer ^"[B" v) [[] [] nil -1]
 				     (fn [state msg]
 	              ;read-fetch will navigate the fetch response calling this function
                ;(info "READ FETCH MESSAGE " msg)
 	              (if (coll? state)
-			            (let [[resp errors f-state prev-offset1] state]
+			            (let [[resp errors f-state] state]
 		               (try
 			               (do
 					             (cond
@@ -71,18 +71,20 @@
 								         (do
                            (if (and (= (:topic msg) topic) (= ^Long (:partition msg) ^Long partition)
                                     (>= ^Long (:offset msg) offset)
-                                    (< ^Long (:offset msg) max-offset) (< ^Long prev-offset1 (:offset msg)))
+                                    (< ^Long (:offset msg) max-offset)
+                                    ;(< ^Long prev-offset1 (:offset msg))
+                                    )
                              (tuple (conj resp msg) errors (f-delegate f-state msg) (:offset msg))
-                             (tuple resp errors f-state prev-offset1)))
+                             (tuple resp errors f-state)))
 								         (instance? FetchError msg)
-								         (do (error "Fetch error: " msg) (tuple resp (conj errors msg) f-state prev-offset1))
+								         (do (error "Fetch error: " msg) (tuple resp (conj errors msg) f-state))
 								         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
 			               (catch Exception e
 		                  (do (error e e)
-		                      (tuple resp errors f-state prev-offset1))
+		                      (tuple resp errors f-state))
 		                  )))
 	                  (do (error "State not supported " state)
-	                      [{} [] nil prev-offset])
+	                      [{} [] nil])
 	                  )))]
          ;(info "FETCH RESP " fetch-res)
 	       (if (coll? fetch-res)
@@ -94,39 +96,39 @@
 (defn handle-error-response [v]
   [:fail v])
 
-(defn handle-read-response [work-unit f-delegate v & {:keys [prev-offset] :or {prev-offset -1}}]
-  (let [[resp-vec error-vec _ prev-offset1] (read-fetch-message work-unit f-delegate v :prev-offset prev-offset)]
-    [:ok resp-vec prev-offset1]))
+(defn handle-read-response [work-unit f-delegate v]
+  (let [[resp-vec error-vec] (read-fetch-message work-unit f-delegate v)]
+    [:ok resp-vec]))
 
-(defn handle-timeout-response [prev-offset]
-  [:fail nil prev-offset])
+(defn handle-timeout-response []
+  [:fail nil])
 
 
 (defn handle-response
   "Listens to a response after a fetch request has been sent
    Returns [status data]  status can be :ok, :timeout, :error and data is v returned from the channel"
-  [{:keys [client] :as state} work-unit f-delegate conf & {:keys [prev-offset] :or {prev-offset -1}}]
+  [{:keys [client] :as state} work-unit f-delegate conf]
   ;(prn "handler-response >>>>> " work-unit)
   (let [fetch-timeout (get conf :fetch-timeout 10000)
         {:keys [read-ch error-ch]} client
         [v c] (alts!! [read-ch error-ch (timeout fetch-timeout)])]
     (condp = c
       read-ch (cond 
-                (instance? Reconnected v) (handle-response state f-delegate conf :prev-offset prev-offset)
-                (instance? Poison v) [:fail nil prev-offset]
-                :else (handle-read-response work-unit f-delegate v :prev-offset prev-offset))
+                (instance? Reconnected v) (handle-response state f-delegate conf)
+                (instance? Poison v) [:fail nil]
+                :else (handle-read-response work-unit f-delegate v))
       error-ch (handle-error-response v)
-      (handle-timeout-response prev-offset))))
+      (handle-timeout-response))))
 
     
 (defn fetch-and-wait 
   "
    Sends a request for the topic and partition to the producer
    Returns [status data]  status can be :ok, :fail and data is v returned from the channel"
-  [state {:keys [topic partition offset len] :as work-unit} producer f-delegate & {:keys [prev-offset] :or {prev-offset -1}}]
+  [state {:keys [topic partition offset len] :as work-unit} producer f-delegate]
     (io!
       (send-fetch producer [[topic [{:partition partition :offset offset}]]])
-      (handle-response producer work-unit f-delegate (get state :conf) :prev-offset prev-offset)))
+      (handle-response producer work-unit f-delegate (get state :conf))))
 
 
 (defn- safe-sleep
@@ -232,7 +234,7 @@
    and added to the complete-queue queue.
    Returns the state map with the :status and :producers updated
   "
-  [{:keys [redis-conn producers work-queue working-queue complete-queue conf prev-offsets-read] :as state} work-unit f-delegate]
+  [{:keys [redis-conn producers work-queue working-queue complete-queue conf] :as state} work-unit f-delegate]
   ;(prn "wait-and-do-work-unit! >>> have work unit " work-unit)
   ;(info "prev-offsets-read: " prev-offsets-read)
   (io!
@@ -242,7 +244,7 @@
         (try
           (do
             (if (not producer-conn) (throw (RuntimeException. "No producer created")))
-            (let [[status resp-data prev-offset] (fetch-and-wait state work-unit producer-conn f-delegate :prev-offset -1)
+            (let [[status resp-data] (fetch-and-wait state work-unit producer-conn f-delegate)
                   state2 (assoc state :status :ok)
                   ]
               (if resp-data
@@ -255,7 +257,7 @@
 
               (assoc
                   state2
-                :prev-offsets-read (assoc-in (if prev-offsets-read prev-offsets-read {}) [topic partition] prev-offset)
+                ;:prev-offsets-read (assoc-in (if prev-offsets-read prev-offsets-read {}) [topic partition] prev-offset)
                 :producers producers2)))
           (catch Throwable t (do
                                (.printStackTrace t)
