@@ -1,6 +1,7 @@
 (ns kafka-util.test
   (:import (java.util.concurrent TimeUnit))
   (:require [kafka-clj.client :as kprod]
+            [clojure.data.json :as json]
             [kafka-clj.consumer.node :as kc])
   (:import [java.io BufferedWriter]
            [java.util.concurrent Executors ExecutorService TimeUnit]))
@@ -40,7 +41,11 @@ working correctly
     (let [c (kprod/create-connector bootstrap-brokers {})
           start (System/currentTimeMillis)]
       (dotimes [i n]
-        (kprod/send-msg c topic (.getBytes (str prefix "-" i))))
+        (kprod/send-msg c topic (.getBytes
+                                  (json/write-str
+                                    {:ts (System/nanoTime)
+                                     :i i
+                                     :prefix prefix}))))
       ;(kprod/close c)
       (println "Producing completed in " (- (System/currentTimeMillis) start) "ms")
       ;(System/exit 0)

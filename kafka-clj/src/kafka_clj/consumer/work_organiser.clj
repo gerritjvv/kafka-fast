@@ -1,6 +1,7 @@
 (ns kafka-clj.consumer.work-organiser
   (:import (java.util.concurrent ExecutorService))
-  (:require 
+  (:require
+     [kafka-clj.consumer.util :as cutil]
      [clojure.tools.logging :refer [info debug error]]
      [taoensso.carmine :as car :refer [wcar]]
      [group-redis.core :as gr]
@@ -176,7 +177,7 @@
   (io!
     (let [offset (to-int (persistent-get group-conn (str "offsets/" topic "/" partition)))
           ]
-      (if offset offset 0))))
+      (if offset offset -1))))
 
 (defn add-offsets [state topic offset-datum]
   (try
@@ -200,15 +201,13 @@
       ;push w-units
       ;save max-offset
       ;producer topic partition max-offset start-offset step
-      (let [ work-units (calculate-work-units broker topic partition offset saved-offset consume-step)
-            max-offset (apply max (map #(+ ^Long (:offset %) ^Long (:len %)) work-units))
-            ts (System/currentTimeMillis)
-            ]
-        ;(info "send-offsets-if-any! >>> push work-units " (count work-units) " sample " (take 2 work-units) )
+      (if-let [work-units (calculate-work-units broker topic partition offset saved-offset consume-step)]
+        (let [ max-offset (apply max (map #(+ ^Long (:offset %) ^Long (:len %)) work-units))
+               ts (System/currentTimeMillis)]
 
-        (car/wcar redis-conn
-                  (apply car/lpush work-queue (map #(assoc % :producer broker :ts ts) work-units)))
-        (persistent-set group-conn (str "offsets/" topic "/" partition) max-offset)))))
+          (car/wcar redis-conn
+                    (apply car/lpush work-queue (map #(assoc % :producer broker :ts ts) work-units)))
+          (persistent-set group-conn (str "offsets/" topic "/" partition) max-offset))))))
         
 (defn calculate-new-work
   "Accepts the state and returns the state as is.
@@ -253,7 +252,7 @@
                            :password (get redis-conf :password)
                            :timeout  (get redis-conf :timeout 4000)}}
         intermediate-state (assoc state :meta-producers meta-producers :group-conn group-conn :redis-conn redis-conn :offset-producers (ref {}))
-        work-complete-processor-future                     nil ;(start-work-complete-processor! intermediate-state)
+        work-complete-processor-future  (start-work-complete-processor! intermediate-state)
         work-timeout-processor-fdelay                      nil ;(start-work-timeout-processor! intermediate-state)
         ]
     (assoc intermediate-state :work-complete-processor-future work-complete-processor-future

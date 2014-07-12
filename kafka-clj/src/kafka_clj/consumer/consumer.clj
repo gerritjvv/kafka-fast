@@ -4,12 +4,15 @@
 
   (:require 
     [taoensso.carmine :as car :refer [wcar]]
+    [kafka-clj.consumer.util :as cutil]
     [thread-load.core :as load]
-    [clojure.core.async :refer [go alts!! >!! >! <! timeout chan]]
+    [clojure.core.async :refer [go alts!! >!! >! <! timeout chan] :as async]
     [kafka-clj.fetch :refer [create-fetch-producer send-fetch read-fetch]]
     [thread-load.core :as tl]
     [clojure.data.json :as json]
     [clj-tuple :refer [tuple]]
+    [taoensso.carmine :as car :refer (wcar)]
+
     [fun-utils.core :refer [go-seq]]
     [clojure.tools.logging :refer [info error debug]])
   (:import 
@@ -36,41 +39,50 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 
+(def server1-conn { :spec {:host "hb01"}}) ; See `wcar` docstring for opts
+(defmacro wcar* [& body] `(car/wcar server1-conn ~@body))
 
+(defn inc-counter
+  ([name]
+   (wcar* (car/incr name)))
+  ([name n]
+   (wcar* (car/incrby name n))))
 (defonce byte_array_class (Class/forName "[B"))
 (defn- byte-array? [arr] (instance? byte_array_class arr))
 
 (defn read-fetch-message 
   "read-fetch will return the result of fn which is [resp-vec error-vec]"
-  [{:keys [topic partition ^Long offset ^Long len]} f-delegate v]
+  [{:keys [topic partition ^Long offset ^Long len]} f-delegate v & {:keys [prev-offset] :or {prev-offset -1}}]
   (if (byte-array? v)
 	  (let [ ^Long max-offset (+ offset len)
 	         fetch-res
-	         (read-fetch (Unpooled/wrappedBuffer ^"[B" v) [[] [] nil]
+	         (read-fetch (Unpooled/wrappedBuffer ^"[B" v) [[] [] nil prev-offset]
 				     (fn [state msg]
 	              ;read-fetch will navigate the fetch response calling this function
                ;(info "READ FETCH MESSAGE " msg)
 	              (if (coll? state)
-			            (let [[resp errors f-state] state]
+			            (let [[resp errors f-state prev-offset1] state]
 		               (try
-			               (do 
+			               (do
 					             (cond
 								         (instance? Message msg)
                          ;only include messsages of the same topic partition and lower than max-offset
+                         ;we also check that prev-offset < offset this catches duplicates in a same request
 								         (do
-                           ;(spit "/d1/kafka-clj-tests1.txt" "test\n" :append true)
-                           (if (and (= (:topic msg) topic) (= ^Long (:partition msg) ^Long partition) (< ^Long (:offset msg) max-offset))
-                             (tuple (conj resp msg) errors (f-delegate f-state msg))
-                             (tuple resp errors f-state)))
+                           (if (and (= (:topic msg) topic) (= ^Long (:partition msg) ^Long partition)
+                                    (>= ^Long (:offset msg) offset)
+                                    (< ^Long (:offset msg) max-offset) (< ^Long prev-offset1 (:offset msg)))
+                             (tuple (conj resp msg) errors (f-delegate f-state msg) (:offset msg))
+                             (tuple resp errors f-state prev-offset1)))
 								         (instance? FetchError msg)
-								         (do (error "Fetch error: " msg) (tuple resp (conj errors msg) f-state))
+								         (do (error "Fetch error: " msg) (tuple resp (conj errors msg) f-state prev-offset1))
 								         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
-			               (catch Exception e 
+			               (catch Exception e
 		                  (do (error e e)
-		                      (tuple resp errors f-state))
+		                      (tuple resp errors f-state prev-offset1))
 		                  )))
 	                  (do (error "State not supported " state)
-	                      [{} [] nil])
+	                      [{} [] nil prev-offset])
 	                  )))]
          ;(info "FETCH RESP " fetch-res)
 	       (if (coll? fetch-res)
@@ -82,39 +94,39 @@
 (defn handle-error-response [v]
   [:fail v])
 
-(defn handle-read-response [work-unit f-delegate v]
-  (let [[resp-vec error-vec] (read-fetch-message work-unit f-delegate v)]
-    [:ok resp-vec]))
+(defn handle-read-response [work-unit f-delegate v & {:keys [prev-offset] :or {prev-offset -1}}]
+  (let [[resp-vec error-vec _ prev-offset1] (read-fetch-message work-unit f-delegate v :prev-offset prev-offset)]
+    [:ok resp-vec prev-offset1]))
 
-(defn handle-timeout-response []
-  [:fail nil])
+(defn handle-timeout-response [prev-offset]
+  [:fail nil prev-offset])
 
 
 (defn handle-response
   "Listens to a response after a fetch request has been sent
    Returns [status data]  status can be :ok, :timeout, :error and data is v returned from the channel"
-  [{:keys [client] :as state} work-unit f-delegate conf]
+  [{:keys [client] :as state} work-unit f-delegate conf & {:keys [prev-offset] :or {prev-offset -1}}]
   ;(prn "handler-response >>>>> " work-unit)
   (let [fetch-timeout (get conf :fetch-timeout 10000)
         {:keys [read-ch error-ch]} client
         [v c] (alts!! [read-ch error-ch (timeout fetch-timeout)])]
     (condp = c
       read-ch (cond 
-                (instance? Reconnected v) (handle-response state f-delegate conf)
-                (instance? Poison v) [:fail nil]
-                :else (handle-read-response work-unit f-delegate v))
+                (instance? Reconnected v) (handle-response state f-delegate conf :prev-offset prev-offset)
+                (instance? Poison v) [:fail nil prev-offset]
+                :else (handle-read-response work-unit f-delegate v :prev-offset prev-offset))
       error-ch (handle-error-response v)
-      (handle-timeout-response))))
+      (handle-timeout-response prev-offset))))
 
     
 (defn fetch-and-wait 
   "
    Sends a request for the topic and partition to the producer
    Returns [status data]  status can be :ok, :fail and data is v returned from the channel"
-  [state {:keys [topic partition offset len] :as work-unit} producer f-delegate]
+  [state {:keys [topic partition offset len] :as work-unit} producer f-delegate & {:keys [prev-offset] :or {prev-offset -1}}]
     (io!
       (send-fetch producer [[topic [{:partition partition :offset offset}]]])
-      (handle-response producer work-unit f-delegate (get state :conf))))
+      (handle-response producer work-unit f-delegate (get state :conf) :prev-offset prev-offset)))
 
 
 (defn- safe-sleep
@@ -220,8 +232,9 @@
    and added to the complete-queue queue.
    Returns the state map with the :status and :producers updated
   "
-  [{:keys [redis-conn producers work-queue working-queue complete-queue conf] :as state} work-unit f-delegate]
+  [{:keys [redis-conn producers work-queue working-queue complete-queue conf prev-offsets-read] :as state} work-unit f-delegate]
   ;(prn "wait-and-do-work-unit! >>> have work unit " work-unit)
+  ;(info "prev-offsets-read: " prev-offsets-read)
   (io!
     (try
       (let [{:keys [producer topic partition offset len]} work-unit
@@ -229,11 +242,9 @@
         (try
           (do
             (if (not producer-conn) (throw (RuntimeException. "No producer created")))
-            (let [[status resp-data] (fetch-and-wait state work-unit producer-conn f-delegate)
+            (let [[status resp-data prev-offset] (fetch-and-wait state work-unit producer-conn f-delegate :prev-offset -1)
                   state2 (assoc state :status :ok)
-                  ;state2 (merge state (save-call f-delegate state status resp-data))
                   ]
-              ;(prn "wait-and-do-work-unit! >>> publish work response resp-data" resp-data)
               (if resp-data
                 (publish-work-response! state2 work-unit (:status state2) {:offset-read (get-offset-read resp-data)})
                 (do
@@ -244,6 +255,7 @@
 
               (assoc
                   state2
+                :prev-offsets-read (assoc-in (if prev-offsets-read prev-offsets-read {}) [topic partition] prev-offset)
                 :producers producers2)))
           (catch Throwable t (do
                                (.printStackTrace t)
@@ -298,14 +310,7 @@
 
 
 
-(defn- copy-chs [ch chs]
-  (go
-    (loop [[v c] (alts! chs)]
-      (if v
-        (do
-          ;(spit "/d1/kafka-clj-tests3.txt" "test\n" :append true)
-          (>! ch v)
-          (recur (alts! chs)))))))
+
 
 (defn consume!
   "Starts the consumer consumption process, by initiating 1+consumer-threads threads, one thread is used to wait for work-units
@@ -324,13 +329,13 @@
         consumer-threads (get conf :consumer-threads 8)
         ;create a chan per thread, updates are faster and there is less mutex lock contention
         ch-vec (vec (for [i (range consumer-threads)] (chan 100)))
-
         publish-pool (start-publish-pool-thread ret-state)]
-    (copy-chs msg-ch ch-vec)                                ;setup copy from threaded channels to msg-ch
+    (cutil/copy-new-messages (async/merge ch-vec) msg-ch)
     ;add threads that will consume from the load-pool and run f-delegate, that will in turn put data on the msg-ch
     (dotimes [i consumer-threads]
       (let [ch (ch-vec i)
             f-delegate2 (fn [state resp-data]
+                          ;(inc-counter "f-delegate-count")
                           (>!! ch resp-data))]
         (tl/add-consumer load-pool
                          (fn [{:keys [restart] :as state} & _] ;init

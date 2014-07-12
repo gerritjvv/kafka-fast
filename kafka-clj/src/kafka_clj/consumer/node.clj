@@ -1,11 +1,15 @@
 (ns kafka-clj.consumer.node
-  (:require [kafka-clj.consumer.work-organiser :refer [create-organiser! close-organiser! calculate-new-work]]
+  (:require
+
+            [kafka-clj.consumer.work-organiser :refer [create-organiser! close-organiser! calculate-new-work]]
             [kafka-clj.consumer.consumer :refer [consume! close-consumer!]]
             [group-redis.core :as gr]
             [fun-utils.core :refer [fixdelay stop-fixdelay]]
             [taoensso.carmine.locks :as locks]
+
             [clojure.tools.logging :refer [info error]]
             [clojure.core.async :refer [chan <!! alts!! timeout close! sliding-buffer]]))
+
 
 
 ;; Represents a single consumer node that has a
@@ -111,21 +115,17 @@
   "Accepts a the return value of create-node! and blocks on msg-ch
    The return value is a collection of Message [topic partition offset bts]"
   ([{:keys [msg-ch]} timeout-ms]
-   (let [[v _] (alts!! msg-ch (timeout timeout-ms))]
-     v))
+   (alts!! [msg-ch (timeout timeout-ms)]))
   ([{:keys [msg-ch]}]
    (<!! msg-ch)))
 
-(defn- msg-seq-util [n node]
-  (when n
-    (cons n
-          (lazy-seq
-            (msg-seq-util (read-msg! node)
-                          node)))))
+(defn- add-msg-seq-state [state {:keys [topic partition offset]}]
+  (assoc! state (str topic partition) offset))
 
 (defn msg-seq!
   ([node]
-   (msg-seq-util (read-msg! node) node)))
+   (cons (read-msg! node)
+         (lazy-seq (msg-seq! node)))))
 
 (defn msg-seq-buffered!
   "Will always return a sequence of sequence of messages i.e [ [msg1, msg2, msg3] .. ]

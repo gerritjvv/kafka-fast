@@ -9,6 +9,7 @@
   :aot [kafka-util.core]
   :main kafka-util.core
   :dependencies [
-                  [kafka-clj "2.0.3"]
+                  [kafka-clj "2.1.2-SNAPSHOT"]
+                  [org.clojure/data.json "0.2.5"]
                   [org.clojure/tools.cli "0.3.1"]
                   [org.clojure/clojure "1.6.0"]])

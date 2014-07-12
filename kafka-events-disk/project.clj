@@ -1,4 +1,4 @@
-(defproject kafka-events-disk "0.2.0-SNAPSHOT"
+(defproject kafka-events-disk "0.2.2-SNAPSHOT"
   :description "FIXME: write description"
   :url "http://example.com/FIXME"
   :license {:name "Eclipse Public License"
@@ -18,7 +18,7 @@
              [lein-kibit "0.0.8"]
              ]
   :dependencies [
-                  [fileape "0.6.1"]
+                  [fileape "0.6.3"]
                   [midje "1.6.0" :scope "test"]
                   [org.clojure/core.async "0.1.267.0-0d7780-alpha"]
                   [org.clojure/data.json "0.2.5"]
