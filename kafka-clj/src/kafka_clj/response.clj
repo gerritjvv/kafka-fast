@@ -64,11 +64,9 @@
            {:correlation-id correlation-id :brokers brokers :topics topics}))
                                                      
         
-(defn metadata-response-decoder []
-  "
-   A handler that reads metadata request responses
- 
-   "
+(defn metadata-response-decoder
+  "A handler that reads metadata request responses"
+  []
   (proxy [ReplayingDecoder]
     []
     (decode [ctx ^ByteBuf in ^List out] 
@@ -94,11 +92,9 @@
 
 
  
-(defn produce-response-decoder []
-  "
-   A handler that reads produce responses
- 
-   "
+(defn produce-response-decoder
+  "A handler that reads produce responses"
+  []
   (let [initial-state ProduceStates/PRODUCE_RESPONSE
         topic-len (AtomicInteger. 0)
         partition-len (AtomicInteger. 0)

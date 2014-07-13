@@ -70,8 +70,9 @@
     ))
       
   
-(defn write-message-set [^ByteBuf buff correlation-id  codec msgs]
+(defn write-message-set
   "Writes a message set and returns a tuple of [first-offset msgs]"
+  [^ByteBuf buff correlation-id  codec msgs]
       (loop [msgs1 msgs]
 		    (if-let [msg (first msgs1)]
 	         (do 
@@ -85,8 +86,9 @@
        (tuple correlation-id msgs))
      
 
-(defn write-compressed-message-set [^ByteBuf buff correlation-id codec msgs]
+(defn write-compressed-message-set
   "Writes the compressed message and returns a tuple of [offset msgs]"
+  [^ByteBuf buff correlation-id codec msgs]
   ;use the buffer allocator to get a new buffer
   (let [^ByteBufAllocator alloc (.alloc buff)
         msg-buff (.buffer alloc (int 1024))]
@@ -106,10 +108,11 @@
         (.release msg-buff)))))
 		    
     
-(defn write-request [^ByteBuf buff {:keys [client-id codec acks timeout] :or {client-id "1" codec 0 acks 1 timeout 1000} :as conf}
-                     msgs]
+(defn write-request
   "Writes the messages and return a sequence of [ [offset msgs] ... ] The offset is the first offset in the message set
-   For compressed messages this is the uncompressed message, and allows us to retry message sending."
+  For compressed messages this is the uncompressed message, and allows us to retry message sending."
+                    [^ByteBuf buff {:keys [client-id codec acks timeout] :or {client-id "1" codec 0 acks 1 timeout 1000} :as conf}
+                     msgs]
   (let [correlation-id (unique-corrid!)]
     (-> buff
       (.writeShort  (short API_KEY_PRODUCE_REQUEST))   ;api-key
@@ -142,20 +145,22 @@
 (defn read-response [{:keys [client]} timeout]
     (read! client timeout))
   
-(defn- write-message-for-ack [connector conf msgs ^ByteBuf buff]
+(defn- write-message-for-ack
   "Writes the messages to the buff and send the results of [[offset msgs] ...] to the cache.
    This function always returns the msgs"
+  [connector conf msgs ^ByteBuf buff]
     (if buff (cache-sent-messages connector (with-size buff write-request conf msgs)))
     msgs)
 
-(defn send-messages [connector
+(defn send-messages
+  "Send messages by writing them to the tcp client.
+  The write is async.
+  If the conf properties acks is > 0 the messages will also be written to an inmemory cache,
+  the cache expires and has a maximum size, but it allows us to retry failed messages."
+                    [connector
                      {:keys [client]} 
                      {:keys [acks] :or {acks 0} :as conf}
                      msgs]
-  "Send messages by writing them to the tcp client.
-   The write is async.
-   If the conf properties acks is > 0 the messages will also be written to an inmemory cache,
-   the cache expires and has a maximum size, but it allows us to retry failed messages."
   (if (> acks 0)
     (write! client (partial write-message-for-ack connector conf msgs))
 	  (write! client (fn [^ByteBuf buff]
@@ -165,9 +170,10 @@
 	                       ))))
 
 
-(defn producer [host port conf]
+(defn producer
   "returns a producer for sending messages, the decoder is a producer-response-decoder"
-  (try 
+  [host port conf]
+  (try
   (let [c (client host port (merge  
                                    ;;parameters that can be over written
 			                             {
@@ -194,7 +200,7 @@
 
 ;; ------- METADATA REQUEST API
 
-(defn write-metadata-request [^ByteBuf buff {:keys [correlation-id client-id] :or {correlation-id 1 client-id "1"}}]
+(defn write-metadata-request
   "
    RequestMessage => ApiKey ApiVersion CorrelationId ClientId RequestMessage
     ApiKey => int16
@@ -204,6 +210,7 @@
     MetadataRequest => [TopicName]
        TopicName => string
    "
+  [^ByteBuf buff {:keys [correlation-id client-id] :or {correlation-id 1 client-id "1"}}]
     (-> buff
       (.writeShort  (short API_KEY_METADATA_REQUEST))   ;api-key
       (.writeShort  (short API_VERSION))                ;version api
@@ -212,15 +219,17 @@
       (.writeInt (int 0))))                            ;write empty topic, dont use -1 (this means nil), list to receive metadata on all topics
       
       
-(defn send-metadata-request [{:keys [client]} conf]
+(defn send-metadata-request
   "Writes out a metadata request to the producer's client"
+  [{:keys [client]} conf]
       (write! client (fn [^ByteBuf buff] 
                        (with-size buff write-metadata-request conf)
                    )))
 
-(defn metadata-request-producer [host port conf]
+(defn metadata-request-producer
   "Returns a producer with a metadata-response-decoder set"
-  (try 
+  [host port conf]
+  (try
   (let [c (client host port (merge conf 
                                    {:reuse-client true :handlers [
                                                            metadata-response-decoder
