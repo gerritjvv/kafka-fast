@@ -326,6 +326,8 @@
     ;add threads that will consume from the load-pool and run f-delegate, that will in turn put data on the msg-ch
     (dotimes [i consumer-threads]
       (let [ch (ch-vec i)
+            ;PERFORMANCE note: pipe per channel is faster than pipe merge channels
+            ;we use separate channels per thread to avoid Mutex write waits.
             _ (do (async/pipe ch msg-ch))
             f-delegate2 (fn [state resp-data]
                           (>!! ch resp-data))]
