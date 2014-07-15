@@ -33,7 +33,7 @@
   (let [^Long partition-count (get-partition-count topic @brokers-metadata)]
    (if (> partition-count 0)	    
 		  (if-let [^AtomicInteger pcounter (get @topic-partition-ref topic)]
-		    (mod (.getAndIncrement pcounter) partition-count)
+		    (mod ^Long (.getAndIncrement pcounter) partition-count)
 		    (do 
 		     (dosync 
 		           (commute topic-partition-ref (fn [x] 

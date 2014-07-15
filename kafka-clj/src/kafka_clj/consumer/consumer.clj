@@ -11,8 +11,6 @@
     [thread-load.core :as tl]
     [clojure.data.json :as json]
     [clj-tuple :refer [tuple]]
-    [taoensso.carmine :as car :refer (wcar)]
-
     [fun-utils.core :refer [go-seq]]
     [clojure.tools.logging :refer [info error debug]])
   (:import 
@@ -38,15 +36,6 @@
 ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-
-(def server1-conn { :spec {:host "hb01"}}) ; See `wcar` docstring for opts
-(defmacro wcar* [& body] `(car/wcar server1-conn ~@body))
-
-(defn inc-counter
-  ([name]
-   (wcar* (car/incr name)))
-  ([name n]
-   (wcar* (car/incrby name n))))
 (defonce byte_array_class (Class/forName "[B"))
 (defn- byte-array? [arr] (instance? byte_array_class arr))
 
@@ -287,15 +276,15 @@
   (fn []
     (while (not (Thread/interrupted))
       (try
-        ;@TODO add duplicate work detection here, try something like a bloom filter
         (tl/publish! load-pool (get-work-unit! state))
         (catch Exception e (error e e))))))
 
 (defn start-publish-pool-thread 
   "Start a future that will wait for a workunit and publish to the thread-pool"
   [{:keys [load-pool] :as state}]
-  {:pre [load-pool]}
-  (doto (Executors/newSingleThreadExecutor) (.submit (publish-pool-loop state))))
+  {:pre [load-pool]}                                        ;performance update start two push threads
+  (doto (Executors/newCachedThreadPool) (.submit (publish-pool-loop state))
+                                        (.submit (publish-pool-loop state))))
 
 
 (defn close-consumer! [{:keys [load-pool publish-pool]}]
@@ -332,14 +321,13 @@
         ;create a chan per thread, updates are faster and there is less mutex lock contention
         ch-vec (vec (for [i (range consumer-threads)] (chan 100)))
         publish-pool (start-publish-pool-thread ret-state)]
-    (async/pipe (async/merge ch-vec) msg-ch)
+
+
     ;add threads that will consume from the load-pool and run f-delegate, that will in turn put data on the msg-ch
     (dotimes [i consumer-threads]
-      (let [                                                ;ch1 (chan 100)
-            ch (ch-vec i)
-                                                            ;_ (do (cutil/copy-new-messages ch1 ch))
+      (let [ch (ch-vec i)
+            _ (do (async/pipe ch msg-ch))
             f-delegate2 (fn [state resp-data]
-                          ;(inc-counter "f-delegate-count")
                           (>!! ch resp-data))]
         (tl/add-consumer load-pool
                          (fn [{:keys [restart] :as state} & _] ;init
