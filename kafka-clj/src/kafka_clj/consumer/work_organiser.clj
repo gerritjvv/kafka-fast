@@ -188,6 +188,7 @@
   {:pre [group-conn redis-conn work-queue consume-step (integer? consume-step)]}
   (let [offset-data2 
         (filter (fn [x] (and x (< ^Long (:saved-offset x) ^Long (:offset x)))) (map (partial add-offsets state topic) offset-data))]
+
     (doseq [{:keys [offset partition saved-offset]} offset-data2]
       ;w-units
       ;max offset
@@ -197,7 +198,6 @@
       (if-let [work-units (calculate-work-units broker topic partition offset saved-offset consume-step)]
         (let [ max-offset (apply max (map #(+ ^Long (:offset %) ^Long (:len %)) work-units))
                ts (System/currentTimeMillis)]
-
           (car/wcar redis-conn
                     (apply car/lpush work-queue (map #(assoc % :producer broker :ts ts) work-units)))
           (persistent-set group-conn (str "offsets/" topic "/" partition) max-offset))))))
@@ -211,10 +211,12 @@
         meta (get-metadata meta-producers conf)
         offsets (get-broker-offsets state meta topics conf)
         ]
+    ;(prn "Offsets " offsets)
         ;;{{:host "gvanvuuren-compile", :port 9092} {"test" ({:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 0} {:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 1})}}
         (doseq [[broker topic-data] offsets]
+
           (doseq [[topic offset-data] topic-data]
-            (try 
+            (try
               ;we map :offset to max of :offset and :all-offets
               (send-offsets-if-any! state broker topic (map #(assoc % :offset (apply max (:offset %) (:all-offsets %))) offset-data))
               (catch Exception e (do (error e e) (.printStackTrace e)) ))))
@@ -273,12 +275,12 @@
 (use 'kafka-clj.consumer.work-organiser :reload)
 
 (def org (create-organiser!
- {:bootstrap-brokers [{:host "localhost" :port 9092}]
+ {:bootstrap-brokers [{:host "hb02" :port 9092}]
   :consume-step 10
   :redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}))
 
 
-(calculate-new-work org ["ping"])
+(calculate-new-work org ["adx-bid-requests"])
 
 
 

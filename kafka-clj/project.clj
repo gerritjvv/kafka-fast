@@ -1,4 +1,4 @@
-(defproject kafka-clj "2.1.5"
+(defproject kafka-clj "2.1.7"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -35,5 +35,5 @@
                  [clj-tuple "0.1.4"]
                  [thread-load "0.1.1"]
                  [com.codahale.metrics/metrics-core "3.0.1"]
-                
+                 [org.clojure/core.async "0.1.303.0-886421-alpha"]
                  [org.clojure/clojure "1.5.1" :scope "provided"]])

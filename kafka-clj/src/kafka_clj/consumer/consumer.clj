@@ -131,10 +131,16 @@
   "Blocks on the redis queue till an item becomes availabe, at the same time the item is pushed to the working queue"
   [work-unit-event-ch redis-conn queue working-queue]
   (if-let [res (try                                         ;this command throws a SocketTimeoutException if the queue does not exist
-                 (car/wcar redis-conn                       ;we check for this condition and continue to block
-                           (car/brpoplpush queue working-queue 0))
+                 (second
+                   (car/wcar redis-conn                       ;we check for this condition and continue to block
+                             (car/brpop queue 0)))
                  (catch java.net.SocketTimeoutException e (do (safe-sleep 1000) (debug "Timeout on queue " queue " retry ") nil)))]
-    res
+    (let [res2 (assoc res :ts (System/currentTimeMillis))]
+      ;we assign a new ts here to ensure old items in the work queue are not picked as expired
+      ;we need to return the same message as pushed to working queue because later on we use lrem (i.e the two messages mus be the same)
+      (car/wcar redis-conn
+                (car/lpush working-queue res2))
+      res2)
     (recur work-unit-event-ch redis-conn queue working-queue)))
 
 (defn consumer-start

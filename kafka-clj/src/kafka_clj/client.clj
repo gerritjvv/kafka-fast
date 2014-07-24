@@ -6,7 +6,7 @@
                                            create-retry-cache write-to-retry-cache retry-cache-seq close-retry-cache delete-from-retry-cache]]
             [clojure.tools.logging :refer [error info debug]]
             [clj-tuple :refer [tuple]]
-            [clojure.core.async :refer [chan >! >!! go close!] :as async])
+            [clojure.core.async :refer [chan >! >!! <! go close!] :as async])
   (:import [java.util.concurrent.atomic AtomicInteger]
            [kafka_clj.response ProduceResponse]))
 
