@@ -165,8 +165,8 @@
                          :timeout  (get redis-conf :timeout 4000)}}
      :load-pool (if load-pool load-pool (tl/create-pool :queue-limit (get conf :consumer-queue-limit 10)))
      :msg-ch (if msg-ch msg-ch (chan 100))
-    :producers {}
-    :status :ok}))
+     :producers {}
+     :status :ok}))
 
 (defn consumer-stop [{:keys [producers work-queue working-queue] :as state}] (assoc state :status :ok))
 
@@ -225,7 +225,7 @@
     :conf = any configuration that will be passed when creating producers
    f-delegate is called as (f-delegate state status resp-data) and should return a state that must have a :status key with values :ok, :fail or :terminate
    
-   If the work-unit was successfully processed the work-unit assoced with :resp-data {:offset-read max-message-offset}
+   If the work-unit was successfully processed the work-unit assoc(ed) with :resp-data {:offset-read max-message-offset}
    and added to the complete-queue queue.
    Returns the state map with the :status and :producers updated
   "
@@ -245,10 +245,7 @@
               (if resp-data
                 (publish-work-response! state2 work-unit (:status state2) {:offset-read (get-offset-read resp-data)})
                 (do
-                  ;@TODO WE need to analyse why exactly the resp-data is nil here and how to prefent it by calculating the offsets better
-                  (info ">>>>>>>>>>>>>> nil resp-data " resp-data  " status " status  " w-unit " work-unit)
-
-                  ))
+                  (info ">>>>>>>>>>>>>> nil resp-data " resp-data  " status " status  " w-unit " work-unit)))
 
               (assoc
                   state2

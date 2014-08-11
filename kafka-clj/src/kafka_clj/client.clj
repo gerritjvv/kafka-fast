@@ -109,7 +109,7 @@
          (try
 	          (if (instance? ProduceResponse v) ;ProduceResponse [correlation-id topic partition error-code offset])
 	             (let [{:keys [correlation-id topic partition offset]} v]
-	                (debug "produce response " v)
+                 ;(debug "produce response " v)
                   (if (> (:error-code v) 0)
 			              (if (:send-cache connector)
                        (handle-send-message-error 

@@ -29,13 +29,19 @@
 ;
 
 
-(defn- ^Long to-int [s]
+(defn- ^Long _to-int [s]
   (try
     (cond
       (integer? s) s
-      (empty? s) 0
+      (empty? s) -10
       :else (Long/parseLong (str s)))
-    (catch NumberFormatException n 0)))
+    (catch NumberFormatException n -10)))
+
+(defn- ^Long to-int [s]
+   (let [i (_to-int s)]
+     (if (= i -10)
+       (throw (RuntimeException. (str "Error reading number from s: " s)))
+       i)))
 
 (defn- work-complete-fail!
   "Side effects: Send data to redis work-queue"
@@ -53,6 +59,10 @@
 
     ))
 
+(defn- ensure-unique-id [w-unit]
+ ;function for debug purposes
+  w-unit)
+
 (defn- work-complete-ok!
   "If the work complete queue w-unit :status is ok
    If [diff = (offset + len) - read-offset] > 0 then the work is republished to the work-queue with offset == (inc read-offset) and len == diff
@@ -60,16 +70,19 @@
    Side effects: Send data to redis work-queue"
   [{:keys [work-queue] :as state} {:keys [resp-data offset len] :as w-unit}]
   {:pre [work-queue resp-data offset len]}
-  (let [new-offset (inc (to-int (:offset-read resp-data)))
-        diff (- (+ (to-int offset) (to-int len)) new-offset)]
-    (if (> diff 0)                                          ;if any offsets left, send work to work-queue with :offset = :offset-read :len diff
-      (let [new-work-unit (assoc (dissoc w-unit :resp-data)  :offset new-offset :len diff)]
-        (info "Recalculating work for processed work-unit " new-work-unit)
-        (car/lpush
-          work-queue
-          new-work-unit)))
-
-    state))
+  (let [offset-read (to-int (:offset-read resp-data))]
+    (if (< offset-read (to-int offset))
+        (do (car/lpush work-queue w-unit)
+            (info "Pushing zero read work-unit " w-unit))
+        (let[new-offset (inc offset-read)
+             diff (- (+ (to-int offset) (to-int len)) new-offset)]
+            (if (> diff 0)                                          ;if any offsets left, send work to work-queue with :offset = :offset-read :len diff
+              (let [new-work-unit (assoc (dissoc w-unit :resp-data)  :offset new-offset :len diff)]
+                (info "Recalculating work for processed work-unit " new-work-unit " prev-offset " offset)
+                (car/lpush
+                  work-queue
+                  new-work-unit)))))
+     state))
 
 (defn- ^Long safe-num
   "Quick util function that returns a positive number or 0"
@@ -140,7 +153,7 @@
       (try
         (when-let [work-unit (wait-on-work-unit! nil redis-conn complete-queue working-queue)]
           (car/wcar redis-conn
-                    (work-complete-handler! state work-unit)
+                    (work-complete-handler! state (ensure-unique-id work-unit))
                     (car/lrem working-queue -1 work-unit)))
         (catch Exception e (do (error e e) (prn e)))))))
 
