@@ -106,7 +106,7 @@
         (car/lpush work-queue w-unit))
       (car/wcar redis-conn                  ;we remove the work-unit and push to the working-queue with :tm-count 1
         (car/lrem working-queue -1 w-unit)
-        (car/lpush working-queue -1 (assoc w-unit :tm-count 1))))))
+        (car/lpush working-queue -1 (assoc w-unit :tm-count 1 :ts (System/currentTimeMillis)))))))
 
 (defn- get-queue-len [redis-conn queue]
   (car/wcar redis-conn (car/llen queue)))
