@@ -129,19 +129,14 @@
 
 (defn wait-on-work-unit!
   "Blocks on the redis queue till an item becomes availabe, at the same time the item is pushed to the working queue"
-  [work-unit-event-ch redis-conn queue working-queue]
+  [redis-conn queue working-queue]
   (if-let [res (try                                         ;this command throws a SocketTimeoutException if the queue does not exist
-                 (second
-                   (car/wcar redis-conn                       ;we check for this condition and continue to block
-                             (car/brpop queue 0)))
+                 (car/wcar redis-conn                       ;we check for this condition and continue to block
+                   (car/brpoplpush queue working-queue 1000))
                  (catch java.net.SocketTimeoutException e (do (safe-sleep 1000) (debug "Timeout on queue " queue " retry ") nil)))]
-    (let [res2 (assoc res :ts (System/currentTimeMillis))]
-      ;we assign a new ts here to ensure old items in the work queue are not picked as expired
-      ;we need to return the same message as pushed to working queue because later on we use lrem (i.e the two messages mus be the same)
-      (car/wcar redis-conn
-                (car/lpush working-queue res2))
-      res2)
-    (recur work-unit-event-ch redis-conn queue working-queue)))
+    res
+    (recur redis-conn queue working-queue)))
+
 
 (defn consumer-start
   "Starts a consumer and returns the consumer state that represents the consumer itself
@@ -204,9 +199,9 @@
 (defn get-work-unit!
   "Wait for work to become available in the work queue
    Adds a :seen key to the work unit with the current milliseconds"
-  [{:keys [redis-conn work-queue working-queue work-unit-event-ch]}]
+  [{:keys [redis-conn work-queue working-queue]}]
   {:pre [redis-conn work-queue working-queue]}
-  (wait-on-work-unit! work-unit-event-ch redis-conn work-queue working-queue))
+  (wait-on-work-unit! redis-conn work-queue working-queue))
 
 (defn- get-offset-read
   "Returns the max value in the resp data of :offset if no values 0 is returned"
@@ -333,7 +328,9 @@
             ;we use separate channels per thread to avoid Mutex write waits.
             _ (do (async/pipe ch msg-ch))
             f-delegate2 (fn [state resp-data]
-                          (>!! ch resp-data))]
+                          (>!! ch resp-data)
+
+                          )]
         (tl/add-consumer load-pool
                          (fn [{:keys [restart] :as state} & _] ;init
                            (info "start consumer thread restart " restart)

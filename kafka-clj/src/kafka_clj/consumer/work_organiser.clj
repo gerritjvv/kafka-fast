@@ -53,6 +53,7 @@
   (try
     ;we try to recalculate the broker, if any exception we reput the w-unit on the queue
     (let [broker (get-broker-from-meta state (:topic w-unit) (:partition w-unit))]
+      (error "Rebuilding failed work unit " w-unit)
       (car/lpush work-queue (assoc w-unit :producer broker))
       state)
     (catch Exception e (do
@@ -91,17 +92,21 @@
 
 (defn- do-work-timeout-check!
   "Only if the w-unit has a ts key and the current-ts - ts is greater than work-unit-timeout-ms
-   Is the workunit removed from the working-queue and placed on the work-queue
+   and is seen twice is the workunit removed from the working-queue and placed on the work-queue
    params: state work-unit work-unit-timeout-ms
 
    Side effects:
      on condition: remove w-unit from working redis queue and push to work redis queue"
-  [{:keys [redis-conn working-queue work-queue] :as state} {:keys [ts] :as w-unit} work-unit-timeout-ms]
+  [{:keys [redis-conn working-queue work-queue] :as state} {:keys [ts tm-count] :as w-unit} work-unit-timeout-ms]
   (when (and ts (>= (Math/abs (long (- (System/currentTimeMillis) (to-int ts)))) work-unit-timeout-ms))
     (info "Moving timed out work unit " w-unit " to work-queue " work-queue)
-    (car/wcar redis-conn
-              (car/lrem working-queue -1 w-unit)
-              (car/lpush work-queue w-unit))))
+    (if (and tm-count (> tm-count 0))
+      (car/wcar redis-conn                  ;we remove the work-unit and push to the work queue
+        (car/lrem working-queue -1 w-unit)
+        (car/lpush work-queue w-unit))
+      (car/wcar redis-conn                  ;we remove the work-unit and push to the working-queue with :tm-count 1
+        (car/lrem working-queue -1 w-unit)
+        (car/lpush working-queue -1 (assoc w-unit :tm-count 1))))))
 
 (defn- get-queue-len [redis-conn queue]
   (car/wcar redis-conn (car/llen queue)))
@@ -151,7 +156,7 @@
   (fn []
     (while (not (Thread/interrupted))
       (try
-        (when-let [work-unit (wait-on-work-unit! nil redis-conn complete-queue working-queue)]
+        (when-let [work-unit (wait-on-work-unit! redis-conn complete-queue working-queue)]
           (car/wcar redis-conn
                     (work-complete-handler! state (ensure-unique-id work-unit))
                     (car/lrem working-queue -1 work-unit)))
@@ -248,10 +253,8 @@
    For topics new work is calculated depending on the metadata returned from the producers"
   [{:keys [meta-producers conf] :as state} topics]
   {:pre [meta-producers conf]}
-  (let [
-         meta (get-metadata meta-producers conf)
-         offsets (get-broker-offsets state meta topics conf)
-         ]
+  (let [meta (get-metadata meta-producers conf)
+         offsets (get-broker-offsets state meta topics conf)]
     ;(prn "Offsets " offsets)
     ;;{{:host "gvanvuuren-compile", :port 9092} {"test" ({:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 0} {:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 1})}}
     (doseq [[broker topic-data] offsets]
