@@ -54,7 +54,7 @@
     ;we try to recalculate the broker, if any exception we reput the w-unit on the queue
     (let [broker (get-broker-from-meta state (:topic w-unit) (:partition w-unit))]
       (error "Rebuilding failed work unit " w-unit)
-      (car/lpush work-queue (assoc w-unit :producer broker))
+      (car/lpush work-queue (assoc w-unit :producer {:producer broker}))
       state)
     (catch Exception e (do
                         (error e e)
@@ -97,15 +97,15 @@
 
    Side effects:
      on condition: remove w-unit from working redis queue and push to work redis queue"
-  [{:keys [redis-conn working-queue work-queue] :as state} {:keys [ts tm-count] :as w-unit} work-unit-timeout-ms]
+  [{:keys [redis-conn working-queue work-queue] :as state} org-work-units {:keys [ts tm-count] :as w-unit} work-unit-timeout-ms]
   (when (and ts (>= (Math/abs (long (- (System/currentTimeMillis) (to-int ts)))) work-unit-timeout-ms))
     (info "Moving timed out work unit " w-unit " to work-queue " work-queue)
     (if (and tm-count (> tm-count 0))
       (car/wcar redis-conn                  ;we remove the work-unit and push to the work queue
-        (car/lrem working-queue -1 w-unit)
-        (car/lpush work-queue w-unit))
+        (car/lrem working-queue -1 org-work-units)
+        (car/lpush work-queue (:dissoc :tm-count w-unit)))
       (car/wcar redis-conn                  ;we remove the work-unit and push to the working-queue with :tm-count 1
-        (car/lrem working-queue -1 w-unit)
+        (car/lrem working-queue -1 org-work-units)
         (car/lpush working-queue -1 (assoc w-unit :tm-count 1 :ts (System/currentTimeMillis)))))))
 
 (defn- get-queue-len [redis-conn queue]
@@ -126,7 +126,10 @@
                                           x
                                           y)))]
       (doseq [w-unit w-units]
-        (do-work-timeout-check! state w-unit work-unit-timeout-ms)))
+        (if (map? w-unit)
+          (do-work-timeout-check! state w-unit w-unit work-unit-timeout-ms)
+          (doseq [wu w-unit]
+            (do-work-timeout-check! state w-unit wu work-unit-timeout-ms)))))
     (catch Exception e (do
                          (.printStackTrace e)
                          (error e e)))))
@@ -156,10 +159,13 @@
   (fn []
     (while (not (Thread/interrupted))
       (try
-        (when-let [work-unit (wait-on-work-unit! redis-conn complete-queue working-queue)]
+        (when-let [work-units (wait-on-work-unit! redis-conn complete-queue working-queue)]
           (car/wcar redis-conn
-                    (work-complete-handler! state (ensure-unique-id work-unit))
-                    (car/lrem working-queue -1 work-unit)))
+                    (if (map? work-units)
+                      (work-complete-handler! state (ensure-unique-id work-units))
+                      (doseq [work-unit work-units]
+                        (work-complete-handler! state (ensure-unique-id work-unit))))
+                    (car/lrem working-queue -1 work-units)))
         (catch Exception e (do (error e e) (prn e)))))))
 
 (defn start-work-complete-processor!
@@ -222,7 +228,7 @@
         (let [max-offset (apply max (map #(+ ^Long (:offset %) ^Long (:len %)) work-units))
               ts (System/currentTimeMillis)]
           (car/wcar redis-conn
-                    (apply car/lpush work-queue (map #(assoc % :producer broker :ts ts) work-units)))
+                    (apply car/lpush work-queue (map set (partition-all 4 (map #(assoc % :producer broker :ts ts) work-units)))))
           (persistent-set group-conn (str "offsets/" topic "/" partition) max-offset))))))
 
 (defn get-offset-from-meta [{:keys [meta-producers conf use-earliest] :as state} topic partition]

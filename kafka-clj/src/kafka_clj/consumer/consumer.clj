@@ -60,9 +60,7 @@
 								         (do
                            (if (and (= (:topic msg) topic) (= ^Long (:partition msg) ^Long partition)
                                     (>= ^Long (:offset msg) offset)
-                                    (< ^Long (:offset msg) max-offset)
-                                    ;(< ^Long prev-offset1 (:offset msg))
-                                    )
+                                    (< ^Long (:offset msg) max-offset))
                              (tuple (conj resp msg) errors (f-delegate f-state msg) (:offset msg))
                              (tuple resp errors f-state)))
 								         (instance? FetchError msg)
@@ -70,11 +68,9 @@
 								         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
 			               (catch Exception e
 		                  (do (error e e)
-		                      (tuple resp errors f-state))
-		                  )))
+		                      (tuple resp errors f-state)))))
 	                  (do (error "State not supported " state)
-	                      [{} [] nil])
-	                  )))]
+	                      [{} [] nil]))))]
          ;(info "FETCH RESP " fetch-res)
 	       (if (coll? fetch-res)
 	          fetch-res
@@ -87,7 +83,7 @@
 
 (defn handle-read-response [work-unit f-delegate v]
   (let [[resp-vec error-vec] (read-fetch-message work-unit f-delegate v)]
-    [:ok resp-vec]))
+    [(if (empty? error-vec) :ok :fail) resp-vec]))
 
 (defn handle-timeout-response []
   [:fail nil])
@@ -160,7 +156,7 @@
                          :timeout  (get redis-conf :timeout 4000)}}
      :load-pool (if load-pool load-pool (tl/create-pool :queue-limit (get conf :consumer-queue-limit 10)))
      :msg-ch (if msg-ch msg-ch (chan 100))
-     :producers {}
+     :producers (ref {})
      :status :ok}))
 
 (defn consumer-stop [{:keys [producers work-queue working-queue] :as state}] (assoc state :status :ok))
@@ -169,16 +165,16 @@
   "If (get producers producer) returns nil a new producer is created.
   This function returns [producer-connection state]"
   [producers producer conf]
-  (if-let [producer-conn (get producers producer)] 
-    [producer-conn producers]
-    (let [producer-conn  (create-fetch-producer producer conf)]
-      [producer-conn (assoc producers producer producer-conn)])))
+  (info "producer: " producer)
+  (if (get producers producer)
+    producers
+    (assoc producers producer (create-fetch-producer producer conf))))
 
 (defn publish-work-response! 
   "Remove data from the working-queue and publish to the complete-queue"
-  [{:keys [redis-conn working-queue complete-queue work-queue work-unit-event-ch]} work-unit status resp-data]
+  [{:keys [redis-conn working-queue complete-queue work-queue work-unit-event-ch] :as state} org-work-units work-unit status resp-data]
   {:pre [work-unit-event-ch redis-conn working-queue complete-queue work-queue work-unit]}
-  ;(info "publish-work-response! >>> " complete-queue " complete-queue " status )
+  ;(info "publish-work-response! >>> " state)
   (let [work-unit2 (assoc work-unit :status status :resp-data resp-data)]
     (if work-unit-event-ch
       (>!! work-unit-event-ch                                 ;send to work-unit-event-channel
@@ -186,10 +182,11 @@
             :ts (System/currentTimeMillis)
             :wu work-unit2}))
     ;send work complete to complete-queue
-    (car/wcar redis-conn
-              (car/lpush complete-queue work-unit2)
-              (car/lrem working-queue -1 work-unit))
-    ))
+    (let [[_ removed] (car/wcar redis-conn
+                        (car/lpush complete-queue work-unit2)
+                        (car/lrem  working-queue -1 org-work-units))]
+      ;(info "publish-work-response: res: " removed ": " (type removed) " work-unit: " org-work-units)
+      state)))
 
 (defn save-call [f state & args]
   (try
@@ -224,13 +221,19 @@
    and added to the complete-queue queue.
    Returns the state map with the :status and :producers updated
   "
-  [{:keys [redis-conn producers work-queue working-queue complete-queue conf] :as state} work-unit f-delegate]
-  ;(prn "wait-and-do-work-unit! >>> have work unit " work-unit)
+  [{:keys [redis-conn producers work-queue working-queue complete-queue conf] :as state} org-work-units work-unit f-delegate]
+  ;(info "wait-and-do-work-unit! >>> have work unit " work-unit)
   ;(info "prev-offsets-read: " prev-offsets-read)
   (io!
     (try
       (let [{:keys [producer topic partition offset len]} work-unit
-            [producer-conn producers2] (create-producer-if-needed! producers producer conf)]
+            producer-conn
+            ;we need to use a reference on producers here to avoid creating more than one producer per broker.
+            ;we we don't N amount of threads will have their own copies of producer causing N*connections and thread pools to be openened.
+            (get (dosync
+                   (alter producers
+                          (fn [producers]
+                            (create-producer-if-needed! producers producer conf)))) producer)]
         (try
           (do
             (if (not producer-conn) (throw (RuntimeException. "No producer created")))
@@ -238,27 +241,29 @@
                   state2 (assoc state :status :ok)
                   ]
               (if resp-data
-                (publish-work-response! state2 work-unit (:status state2) {:offset-read (get-offset-read resp-data)})
+                (publish-work-response! state2 org-work-units work-unit status {:offset-read (get-offset-read resp-data)})
                 (do
                   (info ">>>>>>>>>>>>>> nil resp-data " resp-data  " status " status  " w-unit " work-unit)))
 
-              (assoc
-                  state2
-                ;:prev-offsets-read (assoc-in (if prev-offsets-read prev-offsets-read {}) [topic partition] prev-offset)
-                :producers producers2)))
+              state2))
           (catch Throwable t (do
                                (.printStackTrace t)
-                               (publish-work-response! state work-unit :fail nil)
-                               (assoc state :status :fail :throwable t :producers  producers2)))))
+                               (publish-work-response! state org-work-units work-unit :fail nil)
+                               (assoc state :status :fail :throwable t :producers  producers)))))
       (catch Throwable t (assoc state :status :fail :throwable t)))))
-    
+
 (defn wait-and-do-work-unit! 
-  "Combine waiting for a workunit and performing it in one function
+  "
+   Deprecated function: please see consume!
+   Combine waiting for a workunit and performing it in one function
    The state as returned by do-work-unit! is returned"
   [state f-delegate]
-  (let [work-unit (get-work-unit! state)]
+  (let [work-units (get-work-unit! state)]
     ;(prn "wait-and-do-work-unit! >>>>>>> got work")
-    (do-work-unit! state work-unit f-delegate)))
+    (if (map? work-units)
+      (do-work-unit! state work-units work-units f-delegate)
+      (reduce (fn [state2 work-unit]
+                (do-work-unit! state2 work-units work-unit f-delegate)) state work-units))))
     
 (defn publish-work 
   "Publish a work-unit to the working queue for a consumer connection"
@@ -327,18 +332,19 @@
             ;PERFORMANCE note: pipe per channel is faster than pipe merge channels
             ;we use separate channels per thread to avoid Mutex write waits.
             _ (do (async/pipe ch msg-ch))
-            f-delegate2 (fn [state resp-data]
-                          (>!! ch resp-data)
-
-                          )]
+            f-delegate (fn [state resp-data]
+                          (>!! ch resp-data))]
         (tl/add-consumer load-pool
                          (fn [{:keys [restart] :as state} & _] ;init
                            (info "start consumer thread restart " restart)
                            (if-not restart
                              (assoc ret-state :status :ok :publish-pool publish-pool)
                              (assoc (consumer-start state) :status :ok :restart (inc restart) :publish-pool publish-pool)))
-                         (fn [state work-unit] ;exec
-                           (do-work-unit! state work-unit f-delegate2))
+                         (fn [state work-units] ;exec
+                           (if (map? work-units)
+                             (do-work-unit! state work-units work-units f-delegate)
+                             (reduce (fn [state2 work-unit]
+                                       (do-work-unit! state2 work-units work-unit f-delegate)) state work-units)))
                          (fn [state & args] ;fail
                            (info "Fail consumer thread: " state " " args)
                            (if-let [e (:throwable state)] (error e e))

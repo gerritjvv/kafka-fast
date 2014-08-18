@@ -1,4 +1,4 @@
-(defproject kafka-clj "2.3.2"
+(defproject kafka-clj "2.3.4"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -18,11 +18,12 @@
 	       [lein-cloverage "1.0.2"]
          [lein-kibit "0.0.8"] [no-man-is-an-island/lein-eclipse "2.0.0"]
            ]
+  :test-paths ["test" "test-java"]
   :dependencies [
                  [org.clojars.smee/binary "0.2.5"]
                  [clojurewerkz/buffy "1.0.0-beta1"]
                  [group-redis "0.6.3"]
-                 [org.mapdb/mapdb "0.9.9"]
+                 [org.mapdb/mapdb "1.0.6"]
                  [midje "1.6.0" :scope "test"]
                  ;[reply "0.3.0" :scope "provided"]
                  [org.clojure/tools.trace "0.7.6"]
@@ -36,4 +37,7 @@
                  [thread-load "0.1.1"]
                  [com.codahale.metrics/metrics-core "3.0.1"]
                  [org.clojure/core.async "0.1.303.0-886421-alpha"]
-                 [org.clojure/clojure "1.5.1" :scope "provided"]])
+                 [org.clojure/clojure "1.5.1" :scope "provided"]
+                 [org.apache.zookeeper/zookeeper "3.4.6" :scope "test"]
+                 [org.apache.kafka/kafka_2.10 "0.8.1.1" :scope "test"]
+                 ])
