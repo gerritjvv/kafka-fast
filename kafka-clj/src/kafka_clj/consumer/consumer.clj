@@ -81,9 +81,18 @@
 (defn handle-error-response [v]
   [:fail v])
 
+(defn- error-code [error-vec]
+  (->> error-vec (map :error-code) last))
+
+(defn- error-code->status [error-vec]
+  (let [code (error-code error-vec)]
+    (condp = code
+      1 :fail-delete
+      :fail)))
+
 (defn handle-read-response [work-unit f-delegate v]
   (let [[resp-vec error-vec] (read-fetch-message work-unit f-delegate v)]
-    [(if (empty? error-vec) :ok :fail) resp-vec]))
+    [(if (empty? error-vec) :ok (error-code->status error-vec)) resp-vec]))
 
 (defn handle-timeout-response []
   [:fail nil])
@@ -165,7 +174,6 @@
   "If (get producers producer) returns nil a new producer is created.
   This function returns [producer-connection state]"
   [producers producer conf]
-  (info "producer: " producer)
   (if (get producers producer)
     producers
     (assoc producers producer (create-fetch-producer producer conf))))
@@ -198,7 +206,12 @@
    Adds a :seen key to the work unit with the current milliseconds"
   [{:keys [redis-conn work-queue working-queue]}]
   {:pre [redis-conn work-queue working-queue]}
-  (wait-on-work-unit! redis-conn work-queue working-queue))
+  (let [ts (System/currentTimeMillis)
+        wu (wait-on-work-unit! redis-conn work-queue working-queue)
+        diff (- (System/currentTimeMillis) ts)]
+    (if (> diff 500)
+      (info "Slow wait on work unit: took: " diff "ms"))
+    wu))
 
 (defn- get-offset-read
   "Returns the max value in the resp data of :offset if no values 0 is returned"
@@ -230,10 +243,12 @@
             producer-conn
             ;we need to use a reference on producers here to avoid creating more than one producer per broker.
             ;we we don't N amount of threads will have their own copies of producer causing N*connections and thread pools to be openened.
-            (get (dosync
-                   (alter producers
-                          (fn [producers]
-                            (create-producer-if-needed! producers producer conf)))) producer)]
+            (try
+              (get (dosync
+                     (alter producers
+                            (fn [producers]
+                              (create-producer-if-needed! producers producer conf)))) producer)
+              (catch Exception e (do (error "Error creating producer conn for work-unit " work-unit) (throw e))))]
         (try
           (do
             (if (not producer-conn) (throw (RuntimeException. "No producer created")))
@@ -280,19 +295,20 @@
     (while (not (Thread/interrupted))
       (try
         (tl/publish! load-pool (get-work-unit! state))
-        (catch Exception e (error e e))))))
+        (catch Exception e (error e e))))
+    (info ">>>>>>>>>>>>>>>>>>>>>>>>>>> Exit publish pool loop >>>>>>>>>>>>>")
+    ))
 
 (defn start-publish-pool-thread 
   "Start a future that will wait for a workunit and publish to the thread-pool"
   [{:keys [load-pool] :as state}]
   {:pre [load-pool]}                                        ;performance update start two push threads
-  (doto (Executors/newCachedThreadPool) (.submit (publish-pool-loop state))
-                                        (.submit (publish-pool-loop state))))
+  (doto (Executors/newSingleThreadExecutor) (.submit (publish-pool-loop state))))
 
 
 (defn close-consumer! [{:keys [load-pool publish-pool]}]
   {:pre [load-pool (instance? ExecutorService publish-pool)]}
-  (tl/shutdown-pool load-pool 10000)
+  (tl/shutdown-pool load-pool 5000)
   (.shutdownNow ^ExecutorService publish-pool))
 
 
@@ -341,10 +357,16 @@
                              (assoc ret-state :status :ok :publish-pool publish-pool)
                              (assoc (consumer-start state) :status :ok :restart (inc restart) :publish-pool publish-pool)))
                          (fn [state work-units] ;exec
-                           (if (map? work-units)
-                             (do-work-unit! state work-units work-units f-delegate)
-                             (reduce (fn [state2 work-unit]
-                                       (do-work-unit! state2 work-units work-unit f-delegate)) state work-units)))
+                           (try
+                             (if (map? work-units)
+                               (do-work-unit! state work-units work-units f-delegate)
+                               (reduce (fn [state2 work-unit]
+                                         (do-work-unit! state2 work-units work-unit f-delegate)) state work-units))
+                             (catch Exception e (do
+                                                  ;we override the status here, from experiments it was found that its
+                                                  ;not a good idea to restart threads on failure, rather to report and retry.
+                                                  (error "Error doing workunit: ")
+                                                  (assoc state :status :ok)))))
                          (fn [state & args] ;fail
                            (info "Fail consumer thread: " state " " args)
                            (if-let [e (:throwable state)] (error e e))

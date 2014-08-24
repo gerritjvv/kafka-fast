@@ -55,7 +55,8 @@
        db (->   dbmaker 
                 .closeOnJvmShutdown
                 .cacheDisable
-                .compressionEnable                .make)
+                .compressionEnable
+                .make)
        map (-> db (.getTreeMap "kafka-retry-cache"))]
       {:db db :file file :cache map}))
 
@@ -98,7 +99,7 @@
   "Returns {:db db :cache cache}
    db is the DBMaker newDirectMemoryDB result
    and cach is a HTreeMap cache"
-   (let [^DB db (-> (DBMaker/newDirectMemoryDB)
+   (let [^DB db (-> (DBMaker/newMemoryDirectDB)
                  (.sizeLimit (int send-cache-size-limit))     ;limit store size to 2GB
                  (.transactionDisable)    ;better performance
                  (.make))

@@ -45,6 +45,11 @@
       (throw (RuntimeException. (str "Error reading number from s: " s)))
       i)))
 
+(defn- work-complete-fail-delete!
+  "
+   Deletes the work unit by doing nothing i.e the work unit will not get pushed to the work queue again"
+  [& args])
+
 (defn- work-complete-fail!
   "
    Tries to recalcualte the broker
@@ -54,7 +59,7 @@
     ;we try to recalculate the broker, if any exception we reput the w-unit on the queue
     (let [broker (get-broker-from-meta state (:topic w-unit) (:partition w-unit))]
       (error "Rebuilding failed work unit " w-unit)
-      (car/lpush work-queue (assoc w-unit :producer {:producer broker}))
+      (car/lpush work-queue (assoc w-unit :producer broker))
       state)
     (catch Exception e (do
                         (error e e)
@@ -73,7 +78,7 @@
   {:pre [work-queue resp-data offset len]}
   (let [offset-read (to-int (:offset-read resp-data))]
     (if (< offset-read (to-int offset))
-      (do (car/lpush work-queue w-unit)
+      (do (car/lpush work-queue (dissoc w-unit :resp-data))
           (info "Pushing zero read work-unit " w-unit))
       (let [new-offset (inc offset-read)
             diff (- (+ (to-int offset) (to-int len)) new-offset)]
@@ -100,13 +105,19 @@
   [{:keys [redis-conn working-queue work-queue] :as state} org-work-units {:keys [ts tm-count] :as w-unit} work-unit-timeout-ms]
   (when (and ts (>= (Math/abs (long (- (System/currentTimeMillis) (to-int ts)))) work-unit-timeout-ms))
     (info "Moving timed out work unit " w-unit " to work-queue " work-queue)
-    (if (and tm-count (> tm-count 0))
+    (comment
       (car/wcar redis-conn                  ;we remove the work-unit and push to the work queue
-        (car/lrem working-queue -1 org-work-units)
-        (car/lpush work-queue (:dissoc :tm-count w-unit)))
+                (car/lrem working-queue -1 org-work-units)
+                (car/lpush work-queue (:dissoc :tm-count w-unit)))
       (car/wcar redis-conn                  ;we remove the work-unit and push to the working-queue with :tm-count 1
-        (car/lrem working-queue -1 org-work-units)
-        (car/lpush working-queue -1 (assoc w-unit :tm-count 1 :ts (System/currentTimeMillis)))))))
+                (car/lrem working-queue -1 org-work-units)
+                (car/lpush working-queue -1 (assoc w-unit :tm-count 1 :ts (System/currentTimeMillis)))))
+    (if (and tm-count (> tm-count 0))
+      ;with the current multi work unit scheme per queue we cannot use this logic for timeout
+      ;for the moment we will just remove the work-unit
+      (car/wcar redis-conn
+                (car/lrem working-queue -1 org-work-units))
+      )))
 
 (defn- get-queue-len [redis-conn queue]
   (car/wcar redis-conn (car/llen queue)))
@@ -115,24 +126,26 @@
   "Query the working queue for the last 100 elements and check each for a possible timeout,
    if the work unit has timed out its removed from the working queue and placed on the work-queue"
   [{:keys [redis-conn working-queue] :as state}]
-  (try
-    (let [work-unit-timeout-ms (* 1000 60 4)
-          n 100
-          queue-len (to-int (get-queue-len redis-conn working-queue))
-          w-units (car/wcar redis-conn
-                            (let [^Long x (safe-num (- queue-len n))
-                                  ^Long y (+ x n -1)]
-                              (car/lrange working-queue
-                                          x
-                                          y)))]
-      (doseq [w-unit w-units]
-        (if (map? w-unit)
-          (do-work-timeout-check! state w-unit w-unit work-unit-timeout-ms)
-          (doseq [wu w-unit]
-            (do-work-timeout-check! state w-unit wu work-unit-timeout-ms)))))
-    (catch Exception e (do
-                         (.printStackTrace e)
-                         (error e e)))))
+  (comment
+    (try
+      (let [work-unit-timeout-ms (* 1000 60 4)
+            n 100
+            queue-len (to-int (get-queue-len redis-conn working-queue))
+            w-units (car/wcar redis-conn
+                              (let [^Long x (safe-num (- queue-len n))
+                                    ^Long y (+ x n -1)]
+                                (car/lrange working-queue
+                                            x
+                                            y)))]
+        (comment
+          (doseq [w-unit w-units]
+            (if (map? w-unit)
+              (do-work-timeout-check! state w-unit w-unit work-unit-timeout-ms)
+              (doseq [wu w-unit]
+                (do-work-timeout-check! state w-unit wu work-unit-timeout-ms))))))
+      (catch Exception e (do
+                           (.printStackTrace e)
+                           (error e e))))))
 
 
 (defn work-complete-handler!
@@ -142,6 +155,7 @@
   ;(prn "work-complete-handler!>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> " w-unit)
   (condp = status
     :fail (work-complete-fail! state w-unit)
+    :fail-delete (work-complete-fail-delete! state w-unit)
     (work-complete-ok! state w-unit)))
 
 (defn start-work-timeout-processor!
@@ -243,16 +257,19 @@
 
 (defn- topic-partition? [m topic partition] (filter (fn [[t partition-data]] (and (= topic t) (not-empty (filter #(= (:partition %) partition) partition-data)) )) m))
 
-(defn get-broker-from-meta [{:keys [meta-producers conf use-earliest] :as state} topic partition]
+(defn get-broker-from-meta [{:keys [meta-producers conf use-earliest] :as state} topic partition & {:keys [retry-count] :or {retry-count 0}}]
   (let [meta (get-metadata meta-producers conf)
         offsets (get-broker-offsets state meta [topic] conf)
         ;;all this to get the broker ;;{{:host "gvanvuuren-compile", :port 9092} {"test" ({:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 0} {:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 1})}}
         brokers (filter #(not (nil? %)) (map (fn [[broker data]] (if (not-empty (topic-partition? data topic partition)) broker nil)) offsets))]
 
     (if (empty? brokers)
-      (throw (ex-info "No broker data found" {:topic topic :partition partition})))
-
-    (first brokers)))
+      (if (> retry-count 9)
+        (throw (ex-info "No broker data found" {:topic topic :partition partition :offsets offsets}))
+        (do
+          (Thread/sleep 1000)
+          (get-broker-from-meta state topic partition :retry-count (inc retry-count))))
+      (first brokers))))
 
 (defn calculate-new-work
   "Accepts the state and returns the state as is.

@@ -39,15 +39,17 @@
    the (calculate-new-work node topics) function is called"
   [{:keys [redis-conn group-name] :as node} topics]
   {:pre [redis-conn topics group-name]}
+  ;timeout-ms wait-ms
   (locks/with-lock
     redis-conn
     (str group-name "/kafka-nodes-master-lock")
-    10000
+    60000
     500
     (let [ts (System/currentTimeMillis)
           _ (calculate-new-work node topics)
           total-time (- (System/currentTimeMillis) ts)]
-      (info "Calculating new work for " (count topics) " took " total-time " ms"))))
+      ;(info "Calculating new work for " (count topics) " took " total-time " ms")
+      )))
 
 (defn- start-work-calculate
   "Returns a channel that will run in a fixed delay of 1000ms
@@ -58,7 +60,7 @@
    The topics can be polled from a configuration service like zookeeper or even a DB"
   [org topics]
   {:pre [org topics]}
-  (fixdelay 1000
+  (fixdelay 10000
             (safe-call work-calculate-delegate! org @topics)))
 
 (defn create-node!
