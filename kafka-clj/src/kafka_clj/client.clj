@@ -82,7 +82,7 @@
 (defonce t (tuple false false))
 (defn- always-false ([] false) ([_ _] t))
 
-(defn create-producer-buffer [connector topic partition producer-error-ch {:keys [host port]} {:keys [batch-num-messages queue-buffering-max-ms] :or 
+(defn create-producer-buffer [connector topic partition producer-error-ch {:keys [host port]} {:keys [batch-num-messages queue-buffering-max-ms] :or
                                                                    {batch-num-messages 100 queue-buffering-max-ms 1000} :as conf}]
   "Creates a producer and buffered-chan with a go loop that will read off the buffered chan and send to the producer.
    A map with keys :producer ch-source and buff-ch is returned"
@@ -96,9 +96,8 @@
         handle-send-message-error (fn [e producer conf offset v]
                                     (error e e)
                                     (prn "handle-send-message-error: v " v)
-                                    (>!! producer-error-ch {:key-val (str topic ":" partition) :error e :producer {:producer producer ::buff-ch buff-ch} 
-                                                            :offset offset :v v :topic topic})
-                                    )]
+                                    (>!! producer-error-ch {:key-val (str topic ":" partition) :error e :producer {:producer producer ::buff-ch buff-ch}
+                                                            :offset offset :v v :topic topic}))]
     
    
     ;if a response from the server (only when ack > 0)
@@ -244,8 +243,10 @@
 (defn close-producer-buffer! [{:keys [producer ch-source]}]
   (try
 		    (do
-          (close! ch-source) ;cause the buffer to cleanout
-          (shutdown producer))
+          (if ch-source
+            (close! ch-source))
+          (if producer
+            (shutdown producer)))
       (catch Exception e (error e (str "Error while shutdown " producer)))))
 
 (defn close [{:keys [state] :as connector}]
@@ -265,7 +266,7 @@
   (let [
         metadata-producers (map #(metadata-request-producer (:host %) (:port %) conf) bootstrap-brokers)
         brokers-metadata (ref (get-metadata metadata-producers conf))
-        producer-error-ch (chan)
+        producer-error-ch (chan 1000)
         producer-ref (ref {})
         send-cache (if (> acks 0) (create-send-cache conf))
         retry-cache (create-retry-cache conf)
@@ -325,7 +326,7 @@
           (prn "producer error producer-error-ch")
 	        (let [{:keys [key-val producer v topic]} error-val]
             ;persist to retry cache
-            (info "!!! ERROR write to retry cache : "  key-val " " v " " topic)
+            (error "!!! ERROR write to retry cache : "  key-val " " v " " topic)
             (.printStackTrace (:error error-val))
             
             (if (coll? v) ;only write valid messages to the retry cache

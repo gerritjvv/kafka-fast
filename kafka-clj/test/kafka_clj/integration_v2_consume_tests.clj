@@ -1,10 +1,11 @@
 (ns kafka-clj.integration-v2-consume-tests
   (:require [kafka-clj.consumer.consumer :refer [publish-work consume! close-consumer!]]
             [kafka-clj.consumer.work-organiser :refer [get-queue-data]]
-            [taoensso.carmine :as car :refer [wcar]]
+            [taoensso.carmine :as car]
             [clojure.core.async :refer [alts!! chan timeout sliding-buffer]]
             [clojure.tools.logging :refer [info]]
-            [clojure.edn :as edn])
+            [clojure.edn :as edn]
+            [kafka-clj.redis :as redis])
   (:use midje.sweet))
 
 
@@ -28,26 +29,27 @@
               msgs 100
               msg-ch (chan 1000)
               consumer-conf {:work-unit-event-ch (chan (sliding-buffer 10))
-                              :consume-step 10 :redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}
+                              :consume-step 10 :redis-conf {:host "localhost" :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}
               redis-conf (:redis-conf consumer-conf)
-              redis-conn {:pool {:max-active (get redis-conf :max-active 20)}
-                          :spec {:host  (get redis-conf :host "localhost")
-                                 :port    (get redis-conf :port 6379)
-                                 :password (get redis-conf :password)
-                                 :timeout  (get redis-conf :timeout 4000)}}
+              redis-conn (redis/conn-pool {:host  (get redis-conf :host "localhost")
+                                           :port    (get redis-conf :port 6379)
+                                           :password (get redis-conf :password)
+                                           :timeout  (get redis-conf :timeout 4000)} {})
+
+              consumer-conf2 (assoc consumer-conf :redis-conn redis-conn)
               ]
           ;we must close the complete processor
-          (car/wcar redis-conn
+          (redis/wcar redis-conn
                     (car/flushall))
 
           (dotimes [i msgs]
             (prn "publish " i)
-            (publish-work consumer-conf {:producer {:host "localhost" :port 9092} :topic "ping" :partition 0 :offset i :len 10}))
+            (publish-work consumer-conf2 {:producer {:host "localhost" :port 9092} :topic "ping" :partition 0 :offset i :len 10}))
 
           ;check that we have successfully published all messages to the work queue
-          (count (get-queue-data consumer-conf (:work-queue consumer-conf))) => msgs
+          (count (get-queue-data consumer-conf2 (:work-queue consumer-conf))) => msgs
 
-          (let [consumer (consume! (assoc consumer-conf :msg-ch msg-ch))]
+          (let [consumer (consume! (assoc consumer-conf2 :msg-ch msg-ch))]
             (Thread/sleep 2000)
             (dotimes [i msgs]
               (let [[v ch] (alts!! [msg-ch (timeout 1000)])]
@@ -56,7 +58,7 @@
                 ))
             ;check that the queues are in a consistent state
             ;(count (get-queue-data consumer-conf (:complete-queue consumer-conf))) => msgs
-            (count (get-queue-data consumer-conf (:work-queue consumer-conf))) => 0
-            (count (get-queue-data consumer-conf (:working-queue consumer-conf))) => 0
+            (count (get-queue-data consumer-conf2 (:work-queue consumer-conf))) => 0
+            (count (get-queue-data consumer-conf2 (:working-queue consumer-conf))) => 0
 
             (close-consumer! consumer)))))

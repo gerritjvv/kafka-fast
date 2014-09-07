@@ -3,14 +3,12 @@
   (:require
     [kafka-clj.consumer.util :as cutil]
     [clojure.tools.logging :refer [info debug error]]
-    [taoensso.carmine :as car :refer [wcar]]
-    [group-redis.core :as gr]
+    [taoensso.carmine :as car]
+    [kafka-clj.redis :as redis]
     [fun-utils.core :as fu]
     [kafka-clj.metadata :refer [get-metadata]]
     [kafka-clj.produce :refer [metadata-request-producer] :as produce]
-    [kafka-clj.consumer :refer [get-broker-offsets]]
-    [kafka-clj.consumer.consumer :refer [wait-on-work-unit!]]
-    [group-redis.core :refer [persistent-get persistent-set]])
+    [kafka-clj.consumer.consumer :refer [wait-on-work-unit!]])
   (:import [java.util.concurrent Executors ExecutorService]))
 
 ;;; This namespace requires a running redis and kafka cluster
@@ -48,7 +46,9 @@
 (defn- work-complete-fail-delete!
   "
    Deletes the work unit by doing nothing i.e the work unit will not get pushed to the work queue again"
-  [& args])
+  [{:keys [redis-conn error-queue] :as state} wu]
+  (error "delete workunit error-code:1 " + wu)
+  (car/lpush error-queue wu))
 
 (defn- work-complete-fail!
   "
@@ -95,57 +95,10 @@
   [^Long x]
   (if (pos? x) x 0))
 
-(defn- do-work-timeout-check!
-  "Only if the w-unit has a ts key and the current-ts - ts is greater than work-unit-timeout-ms
-   and is seen twice is the workunit removed from the working-queue and placed on the work-queue
-   params: state work-unit work-unit-timeout-ms
-
-   Side effects:
-     on condition: remove w-unit from working redis queue and push to work redis queue"
-  [{:keys [redis-conn working-queue work-queue] :as state} org-work-units {:keys [ts tm-count] :as w-unit} work-unit-timeout-ms]
-  (when (and ts (>= (Math/abs (long (- (System/currentTimeMillis) (to-int ts)))) work-unit-timeout-ms))
-    (info "Moving timed out work unit " w-unit " to work-queue " work-queue)
-    (comment
-      (car/wcar redis-conn                  ;we remove the work-unit and push to the work queue
-                (car/lrem working-queue -1 org-work-units)
-                (car/lpush work-queue (:dissoc :tm-count w-unit)))
-      (car/wcar redis-conn                  ;we remove the work-unit and push to the working-queue with :tm-count 1
-                (car/lrem working-queue -1 org-work-units)
-                (car/lpush working-queue -1 (assoc w-unit :tm-count 1 :ts (System/currentTimeMillis)))))
-    (if (and tm-count (> tm-count 0))
-      ;with the current multi work unit scheme per queue we cannot use this logic for timeout
-      ;for the moment we will just remove the work-unit
-      (car/wcar redis-conn
-                (car/lrem working-queue -1 org-work-units))
-      )))
-
 (defn- get-queue-len [redis-conn queue]
   (car/wcar redis-conn (car/llen queue)))
 
-(defn work-timeout-handler!
-  "Query the working queue for the last 100 elements and check each for a possible timeout,
-   if the work unit has timed out its removed from the working queue and placed on the work-queue"
-  [{:keys [redis-conn working-queue] :as state}]
-  (comment
-    (try
-      (let [work-unit-timeout-ms (* 1000 60 4)
-            n 100
-            queue-len (to-int (get-queue-len redis-conn working-queue))
-            w-units (car/wcar redis-conn
-                              (let [^Long x (safe-num (- queue-len n))
-                                    ^Long y (+ x n -1)]
-                                (car/lrange working-queue
-                                            x
-                                            y)))]
-        (comment
-          (doseq [w-unit w-units]
-            (if (map? w-unit)
-              (do-work-timeout-check! state w-unit w-unit work-unit-timeout-ms)
-              (doseq [wu w-unit]
-                (do-work-timeout-check! state w-unit wu work-unit-timeout-ms))))))
-      (catch Exception e (do
-                           (.printStackTrace e)
-                           (error e e))))))
+
 
 
 (defn work-complete-handler!
@@ -158,13 +111,6 @@
     :fail-delete (work-complete-fail-delete! state w-unit)
     (work-complete-ok! state w-unit)))
 
-(defn start-work-timeout-processor!
-  "Returns a fixed delay that will run the work-timeout-handler every work-unit-timeout-check-freq-ms"
-  [{:keys [work-unit-timeout-check-freq-ms] :or {work-unit-timeout-check-freq-ms 10000} :as state}]
-  (fu/fixdelay work-unit-timeout-check-freq-ms
-               (try
-                 (work-timeout-handler! state)
-                 (catch Exception e (error e e)))))
 
 (defn- ^Runnable work-complete-loop
   "Returns a Function that will loop continueously and wait for work on the complete queue"
@@ -174,12 +120,14 @@
     (while (not (Thread/interrupted))
       (try
         (when-let [work-units (wait-on-work-unit! redis-conn complete-queue working-queue)]
-          (car/wcar redis-conn
+          (redis/wcar
+                    redis-conn
                     (if (map? work-units)
                       (work-complete-handler! state (ensure-unique-id work-units))
                       (doseq [work-unit work-units]
                         (work-complete-handler! state (ensure-unique-id work-unit))))
                     (car/lrem working-queue -1 work-units)))
+        (catch InterruptedException e1 (info "Exit work complete loop"))
         (catch Exception e (do (error e e) (prn e)))))))
 
 (defn start-work-complete-processor!
@@ -205,14 +153,14 @@
   "Returns the last saved offset for a topic partition combination
    If the partition is not found for what ever reason the latest offset will be taken from the kafka meta data
    this value is saved to redis and then returned"
-  [{:keys [group-conn] :as state} topic partition]
-  {:pre [group-conn topic partition]}
+  [{:keys [group-name redis-conn] :as state} topic partition]
+  {:pre [group-name redis-conn topic partition]}
   (io!
-    (let [saved-offset (persistent-get group-conn (str "offsets/" topic "/" partition))]
+    (let [saved-offset (redis/wcar redis-conn (car/get (str "/" group-name "/offsets/" topic "/" partition)))]
       (cond
         (not-empty saved-offset) (to-int saved-offset)
         :else (let [meta-offset (get-offset-from-meta state topic partition)]
-                (persistent-set group-conn (str "offsets/" topic "/" partition) meta-offset)
+                (redis/wcar redis-conn (car/set (str "/" group-name "/offsets/" topic "/" partition) meta-offset))
                 meta-offset)))))
 
 (defn add-offsets [state topic offset-datum]
@@ -227,12 +175,13 @@
   Side effects: lpush work-units to work-queue
                 set offsets/$topic/$partition = max-offset of work-units
    "
-  [{:keys [group-conn redis-conn work-queue ^Long consume-step] :as state :or {consume-step 100000}} broker topic offset-data]
-  {:pre [group-conn redis-conn work-queue consume-step (integer? consume-step)]}
+  [{:keys [group-name redis-conn work-queue ^Long consume-step] :as state :or {consume-step 100000}} broker topic offset-data]
+  {:pre [group-name redis-conn work-queue consume-step (integer? consume-step)]}
   (let [offset-data2
         (filter (fn [x] (and x (< ^Long (:saved-offset x) ^Long (:offset x)))) (map (partial add-offsets state topic) offset-data))]
 
     (doseq [{:keys [offset partition saved-offset]} offset-data2]
+
       ;w-units
       ;max offset
       ;push w-units
@@ -241,13 +190,14 @@
       (if-let [work-units (calculate-work-units broker topic partition offset saved-offset consume-step)]
         (let [max-offset (apply max (map #(+ ^Long (:offset %) ^Long (:len %)) work-units))
               ts (System/currentTimeMillis)]
-          (car/wcar redis-conn
-                    (apply car/lpush work-queue (map set (partition-all 4 (map #(assoc % :producer broker :ts ts) work-units)))))
-          (persistent-set group-conn (str "offsets/" topic "/" partition) max-offset))))))
+          (redis/wcar redis-conn
+                    (apply car/lpush work-queue (map set (partition-all 4 (map #(assoc % :producer broker :ts ts) work-units))))
+                    (car/set (str "/" group-name "/offsets/" topic "/" partition) max-offset))
+          )))))
 
 (defn get-offset-from-meta [{:keys [meta-producers conf use-earliest] :as state} topic partition]
   (let [meta (get-metadata meta-producers conf)
-        offsets (get-broker-offsets state meta [topic] conf)
+        offsets (cutil/get-broker-offsets state meta [topic] conf)
         partition-offsets (->> offsets vals (mapcat #(get % topic)) (filter #(= (:partition %) partition)) first :all-offsets)]
 
     (if (empty? partition-offsets)
@@ -259,7 +209,7 @@
 
 (defn get-broker-from-meta [{:keys [meta-producers conf use-earliest] :as state} topic partition & {:keys [retry-count] :or {retry-count 0}}]
   (let [meta (get-metadata meta-producers conf)
-        offsets (get-broker-offsets state meta [topic] conf)
+        offsets (cutil/get-broker-offsets state meta [topic] conf)
         ;;all this to get the broker ;;{{:host "gvanvuuren-compile", :port 9092} {"test" ({:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 0} {:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 1})}}
         brokers (filter #(not (nil? %)) (map (fn [[broker data]] (if (not-empty (topic-partition? data topic partition)) broker nil)) offsets))]
 
@@ -277,8 +227,7 @@
   [{:keys [meta-producers conf] :as state} topics]
   {:pre [meta-producers conf]}
   (let [meta (get-metadata meta-producers conf)
-         offsets (get-broker-offsets state meta topics conf)]
-    ;(prn "Offsets " offsets)
+         offsets (cutil/get-broker-offsets state meta topics conf)]
     ;;{{:host "gvanvuuren-compile", :port 9092} {"test" ({:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 0} {:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 1})}}
     (doseq [[broker topic-data] offsets]
 
@@ -293,7 +242,7 @@
 (defn get-queue-data
   "Helper function that returns the data from a queue using lrange 0 limit"
   [{:keys [redis-conn]} queue-name & {:keys [limit] :or {limit -1}}]
-  (car/wcar redis-conn (car/lrange queue-name 0 limit)))
+  (redis/wcar redis-conn (car/lrange queue-name 0 limit)))
 
 (defn create-meta-producers!
   "For each boostrap broker a metadata-request-producer is created"
@@ -307,47 +256,40 @@
          bootstrap-brokers (> (count bootstrap-brokers) 0) (-> bootstrap-brokers first :host) (-> bootstrap-brokers first :port)]}
 
   (let [meta-producers (create-meta-producers! bootstrap-brokers conf)
-        group-conn (gr/create-group-connector (:host redis-conf) redis-conf)
-        redis-conn {:pool {:max-active (get redis-conf :max-active 20)}
-                    :spec {:host     (get redis-conf :host "localhost")
-                           :port     (get redis-conf :port 6379)
-                           :password (get redis-conf :password)
-                           :timeout  (get redis-conf :timeout 4000)}}
-        intermediate-state (assoc state :meta-producers meta-producers :group-conn group-conn :redis-conn redis-conn :offset-producers (ref {}))
+        spec  {:host     (get redis-conf :host "localhost")
+               :port     (get redis-conf :port 6379)
+               :password (get redis-conf :password)
+               :timeout  (get redis-conf :timeout 4000)}
+        opts {:max-active (get redis-conf :max-active 20)}
+
+        redis-conn (redis/conn-pool spec opts)
+        intermediate-state (assoc state :meta-producers meta-producers :redis-conn redis-conn :offset-producers (ref {}))
         work-complete-processor-future (start-work-complete-processor! intermediate-state)
-        work-timeout-processor-fdelay (start-work-timeout-processor! intermediate-state)
         ]
-    (assoc intermediate-state :work-complete-processor-future work-complete-processor-future
-                              :work-timeout-processor-fdelay work-timeout-processor-fdelay)))
+    (assoc intermediate-state :work-complete-processor-future work-complete-processor-future)))
 
 
 (defn close-organiser!
   "Closes the organiser passed in"
-  [{:keys [group-conn meta-producers redis-conn work-complete-processor-future work-timeout-processor-fdelay]}]
-  {:pre [group-conn meta-producers redis-conn (instance? ExecutorService work-complete-processor-future) work-timeout-processor-fdelay]}
+  [{:keys [meta-producers redis-conn work-complete-processor-future redis-conn]}]
+  {:pre [meta-producers redis-conn (instance? ExecutorService work-complete-processor-future)]}
   (.shutdownNow ^ExecutorService work-complete-processor-future)
-  (gr/close group-conn)
   (doseq [producer meta-producers]
     (produce/shutdown producer))
+  (redis/close-pool redis-conn))
 
-  (if work-timeout-processor-fdelay
-    (fu/stop-fixdelay work-timeout-processor-fdelay))
-  )
-
-
-;TODO TEST timeout processor
 
 (comment
 
   (use 'kafka-clj.consumer.work-organiser :reload)
 
   (def org (create-organiser!
-             {:bootstrap-brokers [{:host "hb02" :port 9092}]
+             {:bootstrap-brokers [{:host "localhost" :port 9092}]
               :consume-step      10
               :redis-conf        {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}))
 
 
-  (calculate-new-work org ["adx-bid-requests"])
+  (calculate-new-work org ["test"])
 
 
 

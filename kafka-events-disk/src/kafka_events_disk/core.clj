@@ -25,8 +25,9 @@
           conf)))
 
 (defn- write-work-unit! [v {:keys [^DataOutputStream out]}]
-  (->> v json/write-str (.writeBytes out))
-  (.writeBytes out "\n"))
+  (if v
+    (->> v json/write-str (.writeBytes out))
+    (.writeBytes out "\n")))
 
 (defn- start-writer [ape work-unit-event-ch]
   (async/go

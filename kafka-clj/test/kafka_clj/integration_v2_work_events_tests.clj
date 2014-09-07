@@ -1,7 +1,9 @@
 (ns kafka-clj.integration-v2-work-events-tests
   (:require [kafka-clj.consumer.node :refer [create-node! shutdown-node! msg-seq!]]
             [kafka-clj.consumer.work-organiser :refer [get-queue-data]]
-            [taoensso.carmine :as car :refer [wcar]]
+            [kafka-clj.consumer.consumer :refer [publish-work-response!]]
+            [taoensso.carmine :as car]
+            [kafka-clj.redis :as redis]
             [clojure.core.async :refer [alts!! chan timeout <!!]]
             [clojure.tools.logging :refer [info]]
             [clojure.edn :as edn])
@@ -28,22 +30,16 @@
              (let [ts (System/currentTimeMillis)
                    consumer-conf {:bootstrap-brokers [{:host "localhost" :port 9092}] :consume-step 10 :redis-conf {:host "localhost" :max-active 5 :timeout 1000 :group-name "test"} :conf {}}
                    redis-conf (:redis-conf consumer-conf)
-                   redis-conn {:pool {:max-active (get redis-conf :max-active 20)}
-                               :spec {:host     (get redis-conf :host "localhost")
-                                      :port     (get redis-conf :port 6379)
-                                      :password (get redis-conf :password)
-                                      :timeout  (get redis-conf :timeout 4000)}}
                    node (create-node! consumer-conf ["ping"])
+                   redis-conn (get-in node [:org :redis-conn])
                    event-ch (:work-unit-event-ch node)
+                   wu {:topic "ping" :offset 10 :status "ok"}
                    ]
 
                event-ch => truthy
-               ;we must close the complete processor
-               (car/wcar redis-conn
-                         (car/flushall))
 
+               (publish-work-response! (:conf node)  wu "ok" {:offset-read 10})
 
-               (Thread/sleep 2000)
                ;check queues, we should have zero in work, working and complete queues
                ;its expected that the node should have processed all work
                (let [[event ch] (alts!! [event-ch (timeout 1000)])]

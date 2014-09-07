@@ -1,21 +1,14 @@
 (ns kafka-clj.consumer.node
+  (:import [java.net InetAddress])
   (:require
-
             [kafka-clj.consumer.work-organiser :refer [create-organiser! close-organiser! calculate-new-work]]
             [kafka-clj.consumer.consumer :refer [consume! close-consumer!]]
-            [group-redis.core :as gr]
+            [kafka-clj.redis :as redis]
             [fun-utils.core :refer [fixdelay stop-fixdelay]]
-            [taoensso.carmine.locks :as locks]
-
+            [taoensso.carmine :as car]
             [clojure.tools.logging :refer [info error]]
             [clojure.core.async :refer [chan <!! alts!! timeout close! sliding-buffer]]))
 
-
-
-;; Represents a single consumer node that has a
-;; redis-group-conn and registers as a member
-;; organiser only if the master
-;; consumer
 
 (defn- safe-call
   "Util function that calls f with args and if any exception prints the error"
@@ -31,7 +24,6 @@
   (stop-fixdelay calc-work-thread)
   (safe-call close-consumer! consumer)
   (safe-call close-organiser! org)
-  (safe-call gr/close group-conn)
   (safe-call close! msg-ch))
 
 (defn- work-calculate-delegate!
@@ -40,16 +32,12 @@
   [{:keys [redis-conn group-name] :as node} topics]
   {:pre [redis-conn topics group-name]}
   ;timeout-ms wait-ms
-  (locks/with-lock
+  (redis/with-lock
     redis-conn
     (str group-name "/kafka-nodes-master-lock")
-    60000
+    (* 5 60000)                                             ;5 minute timeout
     500
-    (let [ts (System/currentTimeMillis)
-          _ (calculate-new-work node topics)
-          total-time (- (System/currentTimeMillis) ts)]
-      ;(info "Calculating new work for " (count topics) " took " total-time " ms")
-      )))
+    (calculate-new-work node topics)))
 
 (defn- start-work-calculate
   "Returns a channel that will run in a fixed delay of 1000ms
@@ -63,6 +51,28 @@
   (fixdelay 10000
             (safe-call work-calculate-delegate! org @topics)))
 
+(defn copy-redis-queue
+  "This function copies data from one list/queue to another
+   Its used on startup to copy any leftover workunits in the working queue to the work queue"
+  [redis-conn from-queue to-queue]
+  (if (= from-queue to-queue)
+    (throw (RuntimeException. "Cannot copy to and from the same queue")))
+
+  (loop [len (redis/wcar redis-conn (car/llen from-queue))]
+    (info "copy-redis-queue [" from-queue "] => [" to-queue "]: " len)
+    (if (> len 0)
+      (let [wus (redis/wcar redis-conn
+                            (car/lrange from-queue 0 100))]
+        (when (not-empty wus)
+          (let [res
+                (redis/wcar redis-conn
+                            (doall (map #(car/lrem from-queue -1 %) wus))
+                            (apply car/lpush to-queue wus))]
+
+            ;drop-last to drop the result from teh apply car lpush command
+            (if (>= (apply + (drop-last res)) (count wus))                            ;only recur if we did delete all the values
+              (recur (redis/wcar redis-conn (car/llen from-queue))))))))))
+
 (defn create-node!
   "Create a consumer node that represents a consumer using an organiser consumer and group conn to coordinate colaborative consumption
   The following keys must exist in the configuration
@@ -71,30 +81,41 @@
 
 
   Redis groups:
-   Three redis groups are created, $group-name-\"kafka-work-queue\", $group-name-\"kafka-working-queue\", $group-name-\"kafka-complete-queue\"
+   Three redis groups are created, $group-name-\"kafka-work-queue\", $group-name-\"kafka-working-queue\", $group-name-\"kafka-complete-queue\", $group-name-\"kafka-error-queue\"
 
+  Note that unrecouverable work units like error-code 1 are added to the kafka-error-queue. This queue should be monitored.
   Returns a map {:conf intermediate-conf :topics-ref topics-ref :org org :msg-ch msg-ch :consumer consumer :calc-work-thread calc-work-thread :group-conn group-conn :group-name group-name}
   "
   [conf topics]
   {:pre [conf topics]}
-  (let [topics-ref (ref (into #{} topics))
+  (let [host-name (.getHostName (InetAddress/getLocalHost))
+        topics-ref (ref (into #{} topics))
         group-name (get-in conf [:redis-conf :group-name] "default")
-        intermediate-conf (assoc conf :work-queue (str group-name "-kafka-work-queue")
-                                      :working-queue (str group-name "-kafka-working-queue")
+        working-queue-name (str group-name "-kafka-working-queue/" host-name)
+        work-queue-name (str group-name "-kafka-work-queue")
+        intermediate-conf (assoc conf :group-name group-name
+                                      :work-queue work-queue-name
+                                      :working-queue working-queue-name
+                                      :error-queue (str group-name "-kafka-erorr-queue")
                                       :complete-queue (str group-name "-kafka-complete-queue"))
 
         work-unit-event-ch (chan (sliding-buffer 100))
         org (create-organiser! intermediate-conf)
-        group-conn (:group-conn org)
+        redis-conn (:redis-conn org)
         msg-ch (chan 1000)
-        consumer (consume! (assoc intermediate-conf :msg-ch msg-ch :work-unit-event-ch work-unit-event-ch))
-        calc-work-thread (start-work-calculate (assoc org :group-name group-name :redis-conn (:conn group-conn)) topics-ref)
+        consumer (consume! (assoc intermediate-conf :redis-conn redis-conn :msg-ch msg-ch :work-unit-event-ch work-unit-event-ch))
+        calc-work-thread (start-work-calculate (assoc org :redis-conn redis-conn) topics-ref)
+
+        working-len  (redis/wcar redis-conn
+                                 (car/llen working-queue-name))
         ]
 
-    (gr/join group-conn)
+
+    ;check for left work-units in working queue
+    (copy-redis-queue redis-conn working-queue-name work-queue-name)
 
     {:conf intermediate-conf :topics-ref topics-ref :org org :msg-ch msg-ch :consumer consumer :calc-work-thread calc-work-thread
-     :group-conn group-conn :group-name group-name
+      :group-name group-name
      :work-unit-event-ch work-unit-event-ch}))
 
 (defn add-topics!

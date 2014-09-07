@@ -1,15 +1,15 @@
 (ns kafka-clj.consumer.consumer
-  (:import (java.util.concurrent ExecutorService)
+  (:import (java.util.concurrent ExecutorService TimeUnit Future Callable TimeoutException)
            (clojure.lang ArityException))
 
   (:require 
-    [taoensso.carmine :as car :refer [wcar]]
+    [taoensso.carmine :as car]
     [kafka-clj.consumer.util :as cutil]
+    [kafka-clj.redis :as redis]
     [thread-load.core :as load]
     [clojure.core.async :refer [go alts!! >!! >! <! timeout chan] :as async]
     [kafka-clj.fetch :refer [create-fetch-producer send-fetch read-fetch]]
     [thread-load.core :as tl]
-    [clojure.data.json :as json]
     [clj-tuple :refer [tuple]]
     [fun-utils.core :refer [go-seq]]
     [clojure.tools.logging :refer [info error debug]])
@@ -90,9 +90,17 @@
       1 :fail-delete
       :fail)))
 
+
+(defn wait-or-cancel [^Future f ^Long timeout]
+  (try
+    (.get f timeout TimeUnit/MILLISECONDS)
+    (catch TimeoutException e (do
+                                (.cancel f true)
+                                nil))))
+
 (defn handle-read-response [work-unit f-delegate v]
   (let [[resp-vec error-vec] (read-fetch-message work-unit f-delegate v)]
-    [(if (empty? error-vec) :ok (error-code->status error-vec)) resp-vec]))
+    [(if (empty? error-vec) :ok :fail) resp-vec]))
 
 (defn handle-timeout-response []
   [:fail nil])
@@ -107,7 +115,7 @@
         {:keys [read-ch error-ch]} client
         [v c] (alts!! [read-ch error-ch (timeout fetch-timeout)])]
     (condp = c
-      read-ch (cond 
+      read-ch (cond
                 (instance? Reconnected v) (handle-response state f-delegate conf)
                 (instance? Poison v) [:fail nil]
                 :else (handle-read-response work-unit f-delegate v))
@@ -136,7 +144,7 @@
   "Blocks on the redis queue till an item becomes availabe, at the same time the item is pushed to the working queue"
   [redis-conn queue working-queue]
   (if-let [res (try                                         ;this command throws a SocketTimeoutException if the queue does not exist
-                 (car/wcar redis-conn                       ;we check for this condition and continue to block
+                 (redis/wcar redis-conn                       ;we check for this condition and continue to block
                    (car/brpoplpush queue working-queue 1000))
                  (catch java.net.SocketTimeoutException e (do (safe-sleep 1000) (debug "Timeout on queue " queue " retry ") nil)))]
     res
@@ -153,17 +161,12 @@
            :producers {}
            :status :ok
   "
-  [{:keys [redis-conf conf msg-ch load-pool] :as state}]
+  [{:keys [redis-conf conf msg-ch load-pool redis-conn] :as state}]
   {:pre [(and 
            (:work-queue state) (:working-queue state) (:complete-queue state)
-           (:redis-conf state) (:conf state))]}
+           (:conf state))]}
   (merge state
-    {:redis-conn {:pool {:max-active (get redis-conf :max-active 20)}
-                  :spec {:host  (get redis-conf :host "localhost")
-                         :port    (get redis-conf :port 6379)
-                         :password (get redis-conf :password)
-                         :timeout  (get redis-conf :timeout 4000)}}
-     :load-pool (if load-pool load-pool (tl/create-pool :queue-limit (get conf :consumer-queue-limit 10)))
+    {:load-pool (if load-pool load-pool (tl/create-pool :queue-limit (get conf :consumer-queue-limit 10)))
      :msg-ch (if msg-ch msg-ch (chan 100))
      :producers (ref {})
      :status :ok}))
@@ -182,15 +185,15 @@
   "Remove data from the working-queue and publish to the complete-queue"
   [{:keys [redis-conn working-queue complete-queue work-queue work-unit-event-ch] :as state} org-work-units work-unit status resp-data]
   {:pre [work-unit-event-ch redis-conn working-queue complete-queue work-queue work-unit]}
-  ;(info "publish-work-response! >>> " state)
   (let [work-unit2 (assoc work-unit :status status :resp-data resp-data)]
+
     (if work-unit-event-ch
       (>!! work-unit-event-ch                                 ;send to work-unit-event-channel
            {:event "done"
             :ts (System/currentTimeMillis)
             :wu work-unit2}))
     ;send work complete to complete-queue
-    (let [[_ removed] (car/wcar redis-conn
+    (let [[_ removed] (redis/wcar redis-conn
                         (car/lpush complete-queue work-unit2)
                         (car/lrem  working-queue -1 org-work-units))]
       ;(info "publish-work-response: res: " removed ": " (type removed) " work-unit: " org-work-units)
@@ -284,9 +287,10 @@
   "Publish a work-unit to the working queue for a consumer connection"
   [{:keys [redis-conn work-queue]} work-unit]
   {:pre [(and (:producer work-unit) (:topic work-unit) (:partition work-unit) (:offset work-unit) (:len work-unit)
-           (let [{:keys [host port]} (:producer work-unit)] (and host port)))]}
+           (let [{:keys [host port]} (:producer work-unit)] (and host port)))
+         redis-conn]}
   (io!
-    (car/wcar redis-conn
+    (redis/wcar redis-conn
               (car/lpush work-queue work-unit))))
 
 
@@ -373,7 +377,6 @@
                            (close-for-restart-consumer! state)
                            (assoc (merge state (consumer-start state)) :status :ok)))))
     ;start background wait on redis, publish work-unit to pool
-
     (assoc ret-state :publish-pool publish-pool)))
     
                                    

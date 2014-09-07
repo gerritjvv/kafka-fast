@@ -1,11 +1,11 @@
-(defproject kafka-clj "2.3.5-SNAPSHOT"
+(defproject kafka-clj "2.3.6-SNAPSHOT"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
 
   :javac-options ["-target" "1.6" "-source" "1.6" "-Xlint:-options"]
-  :warn-on-reflection true
+
   :global-vars {*warn-on-reflection* true
                 *assert* false}
 
@@ -20,21 +20,18 @@
            ]
   :test-paths ["test" "test-java"]
   :dependencies [
-                 [org.clojars.smee/binary "0.2.5"]
-                 [clojurewerkz/buffy "1.0.0-beta1"]
-                 [group-redis "0.6.3" :exclusions [fun-utils org.clojure/tools.macro commons-codec]]
+                 [com.taoensso/carmine "2.7.0"]
+                 [org.apache.commons/commons-pool2 "2.2"]
                  [org.mapdb/mapdb "1.0.6"]
-                 [midje "1.6.0" :scope "test" :exclusions [joda-time]]
-                 ;[reply "0.3.0" :scope "provided"]
+                 [midje "1.6.3" :scope "test"]
                  [org.clojure/tools.trace "0.7.6"]
                  [org.xerial.snappy/snappy-java "1.1.1-M1"]
                  [org.clojure/tools.logging "0.3.0"]
                  [clj-tcp "0.4.0"]
-                 [org.clojure/data.json "0.2.5"]
                  [fmap-clojure "LATEST" :exclusions [org.clojure/tools.logging]]
                  [fun-utils "LATEST" :exclusions [org.clojure/tools.logging]]
-                 [clj-tuple "0.1.4"]
-                 [thread-load "0.1.1" :exclusions [org.clojure/clojure]]
+                 [clj-tuple "0.1.6"]
+                 [thread-load "0.1.3" :exclusions [org.clojure/clojure]]
                  [com.codahale.metrics/metrics-core "3.0.1"]
                  [org.clojure/core.async "0.1.303.0-886421-alpha"]
                  [org.clojure/clojure "1.6.0" :scope "provided"]
