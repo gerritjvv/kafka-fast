@@ -97,7 +97,7 @@
                                                                       send-cache-expire-after-write 5 
                                                                       send-cache-expire-after-access 5}}]
   "Returns {:db db :cache cache}
-   db is the DBMaker newDirectMemoryDB result
+   db is the DBMaker newMemoryDirectDB result
    and cach is a HTreeMap cache"
    (let [^DB db (-> (DBMaker/newMemoryDirectDB)
                  (.sizeLimit (int send-cache-size-limit))     ;limit store size to 2GB
