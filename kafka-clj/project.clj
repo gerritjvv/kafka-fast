@@ -7,11 +7,11 @@
   :javac-options ["-target" "1.6" "-source" "1.6" "-Xlint:-options"]
 
   :global-vars {*warn-on-reflection* true
-                *assert* false}
+               *assert* false}
 
   :scm {:name "git"
          :url "https://github.com/gerritjvv/kafka-fast.git"}
-  :java-source-paths ["java"]  
+  :java-source-paths ["java"]
   :jvm-opts ["-Xmx3g"]
   :plugins [
          [lein-rpm "0.0.5"] [lein-midje "3.0.1"] [lein-marginalia "0.7.1"]
@@ -35,6 +35,7 @@
                  [com.codahale.metrics/metrics-core "3.0.1"]
                  [org.clojure/core.async "0.1.303.0-886421-alpha"]
                  [org.clojure/clojure "1.6.0" :scope "provided"]
-                 [org.apache.zookeeper/zookeeper "3.4.6" :scope "test"]
-                 [org.apache.kafka/kafka_2.10 "0.8.1.1" :scope "test"]
+                 [org.apache.zookeeper/zookeeper "3.4.6" :scope "provided"]
+                 [org.apache.kafka/kafka_2.10 "0.8.1.1" :scope "provided"]
+                 [redis.embedded/embedded-redis "0.2"]
                  ])

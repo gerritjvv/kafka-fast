@@ -238,7 +238,7 @@
            
            ))))
          
-   (throw (RuntimeException. (str "No brokers available")))))
+   (throw (RuntimeException. (str "No brokers available: " connector)))))
 
 (defn close-producer-buffer! [{:keys [producer ch-source]}]
   (try
@@ -266,6 +266,11 @@
   (let [
         metadata-producers (map #(metadata-request-producer (:host %) (:port %) conf) bootstrap-brokers)
         brokers-metadata (ref (get-metadata metadata-producers conf))
+        _ (do
+            (info ">>>>>>>> brokers-metadata " brokers-metadata)
+
+            (if (empty? @brokers-metadata)
+                (throw (RuntimeException. (str "No broker metadata could be found for " bootstrap-brokers)))))
         producer-error-ch (chan 1000)
         producer-ref (ref {})
         send-cache (if (> acks 0) (create-send-cache conf))

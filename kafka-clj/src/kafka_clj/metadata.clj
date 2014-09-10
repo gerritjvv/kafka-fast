@@ -65,17 +65,27 @@
 	               (if (= c read-ch)  (convert-metadata-response v)
 	                 (throw (Exception. (str "Error reading metadata from producer " metadata-producer  " error " v))))
 	               (throw (Exception. (str "timeout reading from producer " metadata-producer)))))))
-           
-(defn get-metadata [metadata-producers conf]
+
+(defn- _get-metadata [metadata-producers conf]
   "Iterate through the brokers, and the first one that returns a metadata response is used"
      (if-let [metadata-producer (first metadata-producers)]
        (try
-         (get-broker-metadata metadata-producer conf)
+         (do
+           (get-broker-metadata metadata-producer conf))
          (catch Exception e (do (.printStackTrace e)
                                 (error "error " e)
-                                  (if (rest metadata-producers) (get-metadata (rest metadata-producers) conf)
+                                  (if (rest metadata-producers) (_get-metadata (rest metadata-producers) conf)
                                   (error e e)))))))
 
+(defn get-metadata [metadata-producers conf & {:keys [retry retry-i] :or {retry 3 retry-i 0}}]
+  (let [meta (_get-metadata metadata-producers conf)]
+    (if (empty? meta)
+      (if (< retry-i retry)
+        (do
+          (Thread/sleep 500)
+          (get-metadata metadata-producers conf :retry retry :retry-i (inc retry-i)))
+        (throw (RuntimeException. (str "Unabled to get metadata from brokers"))))
+      meta)))
 
      
      

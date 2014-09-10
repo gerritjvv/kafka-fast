@@ -1,37 +1,55 @@
-(comment
 (ns kafka-clj.util
-  
-  (import [java.io IOException]
-          [java.util Properties]
-          [kafka.server KafkaConfig]
-          [kafka.server KafkaServerStartable]
-          [kafka.utils TestUtils]
-          [org.apache.curator.test TestingServer]))
+  (:require [clojure.string :as cljstr])
+  (:import [redis.embedded RedisServer]
+           [kafka_clj.util EmbeddedKafkaCluster EmbeddedZookeeper]
+           [java.util Properties]))
+
+;;USAGE
+;; (def state (start-up-resources))
+;; (:kafka state) ;;returns kafka and zk map {:zk zk :kafka kafka :brokers brokers}
+;; (:redis state) ;;returns redis map {:server :port}
+;; (shutdown-resources state)
+
+(defn- brokers-as-map
+  "Takes a comma separated string of type \"host:port,hostN:port,hostN+1:port\"
+   And returns a map of form {host port hostN port hostN+1 port}"
+  [^String s]
+  (for [pair (cljstr/split s #"[,]")
+        :let [[host port] (cljstr/split pair #"[:]")]]
+    {:host host :port (Integer/parseInt port)}))
+
+(defn- startup-kafka []
+  (let [zk (doto (EmbeddedZookeeper. 2181) .startup)
+        kafka (doto (EmbeddedKafkaCluster. (.getConnection zk) (Properties.) [(int -1) (int -1)]) .startup)]
+  {:zk zk
+   :kafka kafka
+   :brokers (brokers-as-map (.getBrokerList kafka))}))
 
 
-(defn- get-kafka-config [zk-connect-str]
-  (let [props (-> (TestUtils/createBrokerConfigs 1) .iterator .next)]
-    (.put props "zookeeper.connect" zk-connect-str)
-    (KafkaConfig. props)))
+(defn- shutdown-kafka [{:keys [zk kafka]}]
+  (.shutdown ^EmbeddedKafkaCluster kafka)
+  (.shutdown ^EmbeddedZookeeper zk))
 
-(defn kafka-broker [{:keys [kafka-server]}]
-  (String/format "localhost:%d"
-                  (-> kafkaServer .serverConfig .port)))
-  
-(defn zk-connect [{:keys [zk-server]}]
-  (.getConnectString zk-server))
+(defn- startup-redis []
+  (let [redis (doto (RedisServer. (int 6379)) .start)]
+    {:server redis :port 6379}))
 
-(defn kafka-port [{:keys [kafka-server]}]
-  (-> kafka-server .serverConfig .port))
+(defn- shutdown-redis [{:keys [^RedisServer server]}]
+  (when server
+    (.stop server)))
 
-(defn shutdown [{:keys [kafka-server zk-server]}]
-  (.shutdown kafka-server)
-  (.stop zk-server))
 
-(defn start-test-kafka []
-  (let [zk-server (TestingServer.)
-        kafka-server (KafkaServerStartable. (get-kafka-config (.getConnectString zkServer)))]
-    (.startup kafka-server)
-    {:kafka-server kafka-server :zk-server zk-server})))
-     
-  
+
+(defn create-topics [resources & topics]
+  (-> resources :kafka :kafka (.createTopics topics)))
+
+(defn startup-resources [& topics]
+  (let [res {:kafka (startup-kafka)
+             :redis (startup-redis)}]
+    (if (not-empty topics)
+      (apply create-topics res topics))
+    res))
+
+(defn shutdown-resources [{:keys [kafka redis]}]
+  (shutdown-kafka kafka)
+  (shutdown-redis redis))
