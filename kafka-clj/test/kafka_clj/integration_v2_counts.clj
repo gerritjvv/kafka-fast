@@ -21,7 +21,14 @@
 (defn- setup-test-data [topic n]
   (send-test-messages @client-ref topic n))
 
+(defn- read-messages [node]
+  (loop [msgs []]
+    (if-let [msg (read-msg! node 500)]
+      (recur (conj msgs msg))
+      msgs)))
+
 (defonce test-topic (uniq-name))
+(defonce msg-count 100000)
 
 (with-state-changes
   [ (before :facts (do (reset! state-ref (startup-resources test-topic))
@@ -34,12 +41,13 @@
                                            :conf {}}
                                           [test-topic]))
                        (Thread/sleep 1000)
-                       (setup-test-data test-topic 100000)))
+                       (setup-test-data test-topic msg-count)))
     (after :facts (do
                     (close @client-ref)
                     (shutdown-node! @node-ref)
                     (shutdown-resources @state-ref)))]
 
   (fact "Test message counts" :it
-
+        (let [msgs (read-messages @node-ref)]
+          (count msgs) => msg-count)
         ))
