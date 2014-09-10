@@ -26,22 +26,20 @@
 (with-state-changes
   [ (before :facts (do (reset! state-ref (startup-resources test-topic))
                        (reset! client-ref (create-connector (get-in @state-ref [:kafka :brokers]) {}))
-                       (comment
-                         (reset! node-ref (create-node!
-                                            {:bootstrap-brokers (get-in @state-ref [:kafka :brokers])
-                                             :redis-conf {:host "localhost"
-                                                          :port (get-in @state-ref [:redis :port])
-                                                          :max-active 5 :timeout 1000 :group-name (uniq-name)}
-                                             :conf {}}
-                                            [test-topic])))
+                       (reset! node-ref (create-node!
+                                          {:bootstrap-brokers (get-in @state-ref [:kafka :brokers])
+                                           :redis-conf {:host "localhost"
+                                                        :port (get-in @state-ref [:redis :port])
+                                                        :max-active 5 :timeout 1000 :group-name (uniq-name)}
+                                           :conf {}}
+                                          [test-topic]))
                        (Thread/sleep 1000)
                        (setup-test-data test-topic 100000)))
     (after :facts (do
                     (close @client-ref)
-                    ; (shutdown-node! @node-ref)
+                    (shutdown-node! @node-ref)
                     (shutdown-resources @state-ref)))]
 
   (fact "Test message counts" :it
-        1 => 1)
 
-  )
+        ))

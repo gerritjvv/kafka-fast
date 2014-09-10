@@ -102,6 +102,24 @@ embedded Kafka and Zookeeper instances and launch the native installed Redis ser
 Not that Redis must be installed locally.  
 
 
+## Run tests
+
+All integration tests must be labeled with ```:it```  
+see http://www.jayway.com/2014/09/09/integration-testing-setup-with-midje-and-leiningen/
+
+###To run all integration tests type:  
+
+```lein midje :filters it```
+
+###To run without integration tests type:
+
+```lein midje :filters -it```
+
+###To run a specific namespace type:
+
+```lein midje <namespace>```
+
+
 ## Test Template
 
 ```clojure
