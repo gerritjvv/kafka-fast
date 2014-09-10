@@ -46,9 +46,9 @@
    Note this means that all nodes need to have the same reference to the same topics over all the consumer machines.
    One way of doing this is treating all consumers as masters but only one of them will make the actual work assignment.
    The topics can be polled from a configuration service like zookeeper or even a DB"
-  [org topics]
+  [org topics & {:keys [freq] :or {freq 10000}}]
   {:pre [org topics]}
-  (fixdelay 10000
+  (fixdelay freq
             (safe-call work-calculate-delegate! org @topics)))
 
 (defn copy-redis-queue
@@ -79,6 +79,13 @@
   :redis-conf {:group-name :host } defaults group-name \"default\" host localhost
   :bootstrap-brokers e.g [{:host :port}]
 
+  Optional keys:
+  :conf {:work-calculate-freq     ;;the frequency in millis at which new work is calculated, default 10000ms
+         :use-earliest ;;if the topic information is not saved to redis the earliest available offset is used and saved,
+                       ;;otherwise the most recent offset is used.
+         :max-offsets ;;default 10, if use-earliest is true the earliest offset is used looking back up to max-offsets
+         }
+
 
   Redis groups:
    Three redis groups are created, $group-name-\"kafka-work-queue\", $group-name-\"kafka-working-queue\", $group-name-\"kafka-complete-queue\", $group-name-\"kafka-error-queue\"
@@ -104,7 +111,7 @@
         redis-conn (:redis-conn org)
         msg-ch (chan 1000)
         consumer (consume! (assoc intermediate-conf :redis-conn redis-conn :msg-ch msg-ch :work-unit-event-ch work-unit-event-ch))
-        calc-work-thread (start-work-calculate (assoc org :redis-conn redis-conn) topics-ref)
+        calc-work-thread (start-work-calculate (assoc org :redis-conn redis-conn) topics-ref :freq (get conf :work-calculate-freq 10000))
 
         working-len  (redis/wcar redis-conn
                                  (car/llen working-queue-name))
@@ -138,7 +145,8 @@
   "Accepts a the return value of create-node! and blocks on msg-ch
    The return value is a collection of Message [topic partition offset bts]"
   ([{:keys [msg-ch]} timeout-ms]
-   (alts!! [msg-ch (timeout timeout-ms)]))
+   (let [[msg _] (alts!! [msg-ch (timeout timeout-ms)])]
+     msg))
   ([{:keys [msg-ch]}]
    (<!! msg-ch)))
 

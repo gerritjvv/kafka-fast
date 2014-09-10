@@ -1,7 +1,9 @@
 (ns kafka-clj.integration-v2-counts
-  (:require [kafka-clj.util :refer [startup-resources shutdown-resources create-topics]]
+  (:require [kafka-clj.test-utils :refer [startup-resources shutdown-resources create-topics]]
+            [kafka-clj.consumer.work-organiser :refer [wait-on-work-assigned-flag]]
             [kafka-clj.client :refer [create-connector send-msg close]]
-            [kafka-clj.consumer.node :refer [create-node! read-msg! shutdown-node!]])
+            [kafka-clj.consumer.node :refer [create-node! read-msg! shutdown-node!]]
+            [clojure.tools.logging :refer [info error]])
   (:use midje.sweet))
 
 ;Test that we can produce N messages and consumer N messages.
@@ -23,12 +25,13 @@
 
 (defn- read-messages [node]
   (loop [msgs []]
-    (if-let [msg (read-msg! node 500)]
-      (recur (conj msgs msg))
+    (if-let [msg (read-msg! node 10000)]
+      (do
+        (recur (conj msgs msg)))
       msgs)))
 
 (defonce test-topic (uniq-name))
-(defonce msg-count 100000)
+(defonce msg-count 10000000)
 
 (with-state-changes
   [ (before :facts (do (reset! state-ref (startup-resources test-topic))
@@ -38,9 +41,9 @@
                                            :redis-conf {:host "localhost"
                                                         :port (get-in @state-ref [:redis :port])
                                                         :max-active 5 :timeout 1000 :group-name (uniq-name)}
-                                           :conf {}}
+                                           :conf {:use-earliest true
+                                                  :work-calculate-freq 200}}
                                           [test-topic]))
-                       (Thread/sleep 1000)
                        (setup-test-data test-topic msg-count)))
     (after :facts (do
                     (close @client-ref)
@@ -48,6 +51,11 @@
                     (shutdown-resources @state-ref)))]
 
   (fact "Test message counts" :it
+
+
+        ;allows us to wait till the work assignment has started
+        (wait-on-work-assigned-flag (:org @node-ref) 30000)
+
         (let [msgs (read-messages @node-ref)]
           (count msgs) => msg-count)
         ))

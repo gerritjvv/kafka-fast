@@ -259,7 +259,7 @@
      ))
 )
 
-(defn write-offset-request-message [^ByteBuf buff {:keys [topics max-offsets use-earliest] :or {use-earliest false max-offsets 10}}]
+(defn write-offset-request-message [^ByteBuf buff {:keys [topics max-offsets] :or {max-offsets 10}}]
   "
 	OffsetRequest => ReplicaId [TopicName [Partition Time MaxNumberOfOffsets]]
 	  ReplicaId => int32
@@ -267,8 +267,9 @@
 	  Partition => int32
 	  Time => int64
 	  MaxNumberOfOffsets => int32
+
+	  Important: use-earliest is not used here and thus all offsets are returned up to the max-offsets default 10
 	"
-  ;(info "write-offset-requests use-earliest " use-earliest)
   (.writeInt buff (int -1)) ;replica id
   (.writeInt buff (int (count topics))) ;write topic array count
   (doseq [[topic partitions] topics]
@@ -278,7 +279,7 @@
       (do
 	      (-> buff
 	        (.writeInt (int partition))
-	        (.writeLong (if use-earliest -2 -1))
+	        (.writeLong -1)
 	        (.writeInt  (int max-offsets))))))
 	        
     buff)

@@ -2,6 +2,7 @@
   (:require
     [kafka-clj.fetch :refer [create-offset-producer send-offset-request]]
     [clojure.core.async :refer [timeout alts!!]]
+    [clojure.tools.logging :refer [info error]]
     ))
 
 
@@ -20,12 +21,14 @@
 (defn get-offsets [offset-producer topic partitions]
   "returns [{:topic topic :partitions {:partition :error-code :offsets}}]"
   ;we should send format [[topic [{:partition 0} {:partition 1}...]] ... ]
+
   (send-offset-request offset-producer [[topic (map (fn [x] {:partition x}) partitions)]] )
 
   (let [{:keys [offset-timeout] :or {offset-timeout 10000}} (:conf offset-producer)
         {:keys [read-ch error-ch]} (:client offset-producer)
         [v c] (alts!! [read-ch error-ch (timeout offset-timeout)])
         ]
+
     (if v
       (if (= c read-ch)
         v
@@ -57,4 +60,5 @@
                      ;doing map first v gives the partitions for a broker
                      (let [offset-producer (get-create-offset-producer offset-producers broker conf)
                            offsets-response (get-offsets offset-producer topic (map first v))]
+                       ;(info "offsets: " v)
                        [broker (transform-offsets topic offsets-response conf)])))))))

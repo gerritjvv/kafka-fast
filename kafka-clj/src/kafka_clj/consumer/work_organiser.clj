@@ -1,5 +1,4 @@
 (ns kafka-clj.consumer.work-organiser
-  (:import (java.util.concurrent ExecutorService))
   (:require
     [kafka-clj.consumer.util :as cutil]
     [clojure.tools.logging :refer [info debug error]]
@@ -9,7 +8,8 @@
     [kafka-clj.metadata :refer [get-metadata]]
     [kafka-clj.produce :refer [metadata-request-producer] :as produce]
     [kafka-clj.consumer.consumer :refer [wait-on-work-unit!]])
-  (:import [java.util.concurrent Executors ExecutorService]))
+  (:import [java.util.concurrent Executors ExecutorService]
+           (java.util.concurrent.atomic AtomicBoolean)))
 
 ;;; This namespace requires a running redis and kafka cluster
 ;;;;;;;;;;;;;;;;;; USAGE ;;;;;;;;;;;;;;;
@@ -105,7 +105,6 @@
   "If the status of the w-unit is :ok the work-unit is checked for remaining work, otherwise its completed, if :fail the work-unit is sent to the work-queue.
    Must be run inside a redis connection e.g car/wcar redis-conn"
   [{:keys [redis-conn] :as state} {:keys [status] :as w-unit}]
-  ;(prn "work-complete-handler!>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> " w-unit)
   (condp = status
     :fail (work-complete-fail! state w-unit)
     :fail-delete (work-complete-fail-delete! state w-unit)
@@ -160,14 +159,14 @@
       (cond
         (not-empty saved-offset) (to-int saved-offset)
         :else (let [meta-offset (get-offset-from-meta state topic partition)]
+                (info "Set initial offsets [" topic "/" partition "]: " meta-offset)
                 (redis/wcar redis-conn (car/set (str "/" group-name "/offsets/" topic "/" partition) meta-offset))
                 meta-offset)))))
 
-(defn add-offsets [state topic offset-datum]
+(defn add-offsets! [state topic offset-datum]
   (try
     (assoc offset-datum :saved-offset (get-saved-offset state topic (:partition offset-datum)))
     (catch Throwable t (do (.printStackTrace t) (error t t) nil))))
-
 
 (defn send-offsets-if-any!
   "
@@ -175,13 +174,15 @@
   Side effects: lpush work-units to work-queue
                 set offsets/$topic/$partition = max-offset of work-units
    "
-  [{:keys [group-name redis-conn work-queue ^Long consume-step] :as state :or {consume-step 100000}} broker topic offset-data]
+  [{:keys [group-name redis-conn work-queue ^Long consume-step work-assigned-flag] :as state :or {consume-step 100000}} broker topic offset-data]
   {:pre [group-name redis-conn work-queue consume-step (integer? consume-step)]}
   (let [offset-data2
-        (filter (fn [x] (and x (< ^Long (:saved-offset x) ^Long (:offset x)))) (map (partial add-offsets state topic) offset-data))]
+        ;here we add offsets as saved-offset via the add-offset function
+        ;note that this function will also write to redis
+        (filter (fn [x] (and x (< ^Long (:saved-offset x) ^Long (:offset x)))) (map (partial add-offsets! state topic) offset-data))]
 
     (doseq [{:keys [offset partition saved-offset]} offset-data2]
-
+      (swap! work-assigned-flag inc)
       ;w-units
       ;max offset
       ;push w-units
@@ -195,7 +196,7 @@
                     (car/set (str "/" group-name "/offsets/" topic "/" partition) max-offset))
           )))))
 
-(defn get-offset-from-meta [{:keys [meta-producers conf use-earliest] :as state} topic partition]
+(defn get-offset-from-meta [{:keys [meta-producers conf] :as state} topic partition]
   (let [meta (get-metadata meta-producers conf)
         offsets (cutil/get-broker-offsets state meta [topic] conf)
         partition-offsets (->> offsets vals (mapcat #(get % topic)) (filter #(= (:partition %) partition)) first :all-offsets)]
@@ -203,7 +204,7 @@
     (if (empty? partition-offsets)
       (throw (ex-info "No offset data found" {:topic topic :partition partition :offsets offsets})))
 
-    (if (= true use-earliest) (apply min partition-offsets) (apply max partition-offsets))))
+    (if (= true (:use-earliest conf)) (apply min partition-offsets) (apply max partition-offsets))))
 
 (defn- topic-partition? [m topic partition] (filter (fn [[t partition-data]] (and (= topic t) (not-empty (filter #(= (:partition %) partition) partition-data)) )) m))
 
@@ -266,8 +267,22 @@
         intermediate-state (assoc state :meta-producers meta-producers :redis-conn redis-conn :offset-producers (ref {}))
         work-complete-processor-future (start-work-complete-processor! intermediate-state)
         ]
-    (assoc intermediate-state :work-complete-processor-future work-complete-processor-future)))
+    (assoc intermediate-state
+      :work-assigned-flag (atom 0)
+      :work-complete-processor-future work-complete-processor-future)))
 
+
+(defn wait-on-work-assigned-flag [{:keys [work-assigned-flag] :as state} timeout-ms]
+  (loop [ts (System/currentTimeMillis)]
+    (if (> @work-assigned-flag 0)
+      @work-assigned-flag
+      (if (>= (- (System/currentTimeMillis) ts) timeout-ms)
+        -1
+        (do
+           (info "waiting on work-assigned-flag: " @work-assigned-flag)
+           (Thread/sleep 1000)
+
+            (recur (System/currentTimeMillis)))))))
 
 (defn close-organiser!
   "Closes the organiser passed in"

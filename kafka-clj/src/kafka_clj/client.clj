@@ -7,7 +7,7 @@
             [clojure.tools.logging :refer [error info debug]]
             [clj-tuple :refer [tuple]]
             [clojure.core.async :refer [chan >! >!! <! go close!] :as async])
-  (:import [java.util.concurrent.atomic AtomicInteger]
+  (:import [java.util.concurrent.atomic AtomicInteger AtomicLong]
            [kafka_clj.response ProduceResponse]))
 
 (declare close-producer-buffer!)
@@ -32,12 +32,12 @@
    "
   (let [^Long partition-count (get-partition-count topic @brokers-metadata)]
    (if (> partition-count 0)	    
-		  (if-let [^AtomicInteger pcounter (get @topic-partition-ref topic)]
+		  (if-let [^AtomicLong pcounter (get @topic-partition-ref topic)]
 		    (mod ^Long (.getAndIncrement pcounter) partition-count)
 		    (do 
 		     (dosync 
 		           (commute topic-partition-ref (fn [x] 
-		                                          (assoc x topic (AtomicInteger. 0)))))
+		                                          (assoc x topic (AtomicLong. 0)))))
 		     (select-rr-partition! topic state)))
     (do 
       (error "No topic found " topic " in state map " topic-partition-ref)
@@ -134,7 +134,7 @@
     ;if any exception handle the error
     (go-seq
         (fn [v]
-           (if (> (count v) 0) 
+           (if (> (count v) 0)
                  (do
                    (try 
                        (send-messages connector producer conf v) 
@@ -227,8 +227,7 @@
 (defn send-msg [{:keys [state] :as connector} topic ^bytes bts]
   (if (> (-> state :brokers-metadata deref count) 0)
 	  (let [partition (select-rr-partition! topic state)
-	        producer-buffer (select-producer-buffer! connector topic partition state)
-	        ]
+	        producer-buffer (select-producer-buffer! connector topic partition state)]
       (try
        (send-to-buffer producer-buffer (message topic partition bts))
        (catch Exception e
@@ -266,11 +265,8 @@
   (let [
         metadata-producers (map #(metadata-request-producer (:host %) (:port %) conf) bootstrap-brokers)
         brokers-metadata (ref (get-metadata metadata-producers conf))
-        _ (do
-            (info ">>>>>>>> brokers-metadata " brokers-metadata)
-
-            (if (empty? @brokers-metadata)
-                (throw (RuntimeException. (str "No broker metadata could be found for " bootstrap-brokers)))))
+        _ (if (empty? @brokers-metadata)
+            (throw (RuntimeException. (str "No broker metadata could be found for " bootstrap-brokers))))
         producer-error-ch (chan 1000)
         producer-ref (ref {})
         send-cache (if (> acks 0) (create-send-cache conf))
@@ -310,7 +306,7 @@
         connector {:bootstrap-brokers metadata-producers :send-cache send-cache :retry-cache retry-cache
                    :state (assoc state :metadata-fixdelay metadata-fixdelay) }
         
-                  ;;every 10 seconds check for any data in the retry cache and resend the messages 
+                  ;;every 5 seconds check for any data in the retry cache and resend the messages
 				retry-cache-ch (fixdelay 5000
 										      (try
                             (do

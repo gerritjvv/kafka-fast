@@ -155,7 +155,6 @@
   "Starts a consumer and returns the consumer state that represents the consumer itself
    A msg-ch can be provided but if not a (chan 100) will be created and assigned to msg-ch in the state.
    keys are:
-           :redis-conn the redis connection
            :load-pool a load pool from tl/create-pool or if a load-pool exists in the state the same load pool is used
            :msg-ch the core.async channel
            :producers {}

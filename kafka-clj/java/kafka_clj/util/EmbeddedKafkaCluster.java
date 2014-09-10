@@ -1,6 +1,6 @@
 package kafka_clj.util;
 
-import kafka.admin.TopicCommand;
+import kafka.admin.AdminUtils;
 import kafka.server.KafkaConfig;
 import kafka.server.KafkaServer;
 import org.I0Itec.zkclient.ZkClient;
@@ -31,7 +31,6 @@ public class EmbeddedKafkaCluster {
         this.zkConnection = zkConnection;
         this.ports = resolvePorts(ports);
         this.baseProperties = baseProperties;
-
         this.brokers = new ArrayList<KafkaServer>();
         this.logDirs = new ArrayList<File>();
 
@@ -47,7 +46,7 @@ public class EmbeddedKafkaCluster {
 
     public void createTopics(Collection<String> topics){
         for(String topic : topics){
-            TopicCommand.createTopic(getZkClient(), new TopicCommand.TopicCommandOptions(new String[]{"--create", "--topic", topic, "--replication-factor", "1", "--partitions", "2"}));
+            AdminUtils.createTopic(getZkClient(), topic, 2, 1, new Properties());
         }
     }
 
@@ -89,6 +88,7 @@ public class EmbeddedKafkaCluster {
             properties.setProperty("host.name", "localhost");
             properties.setProperty("port", Integer.toString(port));
             properties.setProperty("log.dir", logDir.getAbsolutePath());
+            System.out.println("EmbeddedKafkaCluster: local directory: " + logDir.getAbsolutePath());
             properties.setProperty("log.flush.interval.messages", String.valueOf(1));
 
             KafkaServer broker = startBroker(properties);
