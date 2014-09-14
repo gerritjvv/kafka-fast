@@ -2,7 +2,7 @@
   (:require [kafka-clj.test-utils :refer [startup-resources shutdown-resources create-topics]]
             [kafka-clj.consumer.work-organiser :refer [wait-on-work-assigned-flag]]
             [kafka-clj.client :refer [create-connector send-msg close]]
-            [kafka-clj.consumer.node :refer [create-node! read-msg! shutdown-node!]]
+            [kfafka-clj.consumer.node :refer [create-node! read-msg! shutdown-node!]]
             [clojure.tools.logging :refer [info error]])
   (:use midje.sweet))
 

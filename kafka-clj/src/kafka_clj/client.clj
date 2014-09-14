@@ -5,6 +5,7 @@
             [kafka-clj.msg-persist :refer [get-sent-message close-send-cache create-send-cache close-send-cache remove-sent-message
                                            create-retry-cache write-to-retry-cache retry-cache-seq close-retry-cache delete-from-retry-cache]]
             [clojure.tools.logging :refer [error info debug]]
+            [com.stuartsierra.component :as component]
             [clj-tuple :refer [tuple]]
             [clojure.core.async :refer [chan >! >!! <! go close!] :as async])
   (:import [java.util.concurrent.atomic AtomicInteger AtomicLong]
@@ -348,5 +349,22 @@
      (assoc connector :retry-cache-ch retry-cache-ch)
     ))
  
+(defrecord KafkaClientService [brokers conf client]
+  component/Lifecycle
 
+  (start [component]
+    (if (:client component)
+      component
+      (let [c (create-connector brokers conf)]
+        (assoc component :client c))))
 
+  (stop [component]
+    (if (:client component)
+      (try
+        (close (:client component))
+        (catch Exception e (error e e))
+        (finally (dissoc component :client)))
+      component)))
+
+(defn create-client-service [brokers conf]
+  (->KafkaClientService brokers conf nil))

@@ -68,7 +68,7 @@
 
 (defn- _get-metadata [metadata-producers conf]
   "Iterate through the brokers, and the first one that returns a metadata response is used"
-     (if-let [metadata-producer (first metadata-producers)]
+     (if-let [metadata-producer (rand-nth metadata-producers)]
        (try
          (do
            (get-broker-metadata metadata-producer conf))
@@ -78,14 +78,16 @@
                                   (error e e)))))))
 
 (defn get-metadata [metadata-producers conf & {:keys [retry retry-i] :or {retry 3 retry-i 0}}]
-  (let [meta (_get-metadata metadata-producers conf)]
-    (if (empty? meta)
-      (if (< retry-i retry)
-        (do
-          (Thread/sleep 500)
-          (get-metadata metadata-producers conf :retry retry :retry-i (inc retry-i)))
-        (throw (RuntimeException. (str "Unabled to get metadata from brokers"))))
-      meta)))
+  (if (empty? metadata-producers)
+    (throw (RuntimeException. (str "At least one meta data producer must be defined")))
+    (let [meta (_get-metadata metadata-producers conf)]
+      (if (empty? meta)
+        (if (< retry-i retry)
+          (do
+            (Thread/sleep 500)
+            (get-metadata metadata-producers conf :retry retry :retry-i (inc retry-i)))
+          (throw (RuntimeException. (str "Unabled to get metadata from brokers meta " meta " producers " metadata-producers " conf " conf))))
+        meta))))
 
      
      

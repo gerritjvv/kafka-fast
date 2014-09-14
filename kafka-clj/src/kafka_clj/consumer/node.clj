@@ -4,6 +4,7 @@
             [kafka-clj.consumer.work-organiser :refer [create-organiser! close-organiser! calculate-new-work]]
             [kafka-clj.consumer.consumer :refer [consume! close-consumer!]]
             [kafka-clj.redis :as redis]
+            [com.stuartsierra.component :as component]
             [fun-utils.core :refer [fixdelay stop-fixdelay]]
             [taoensso.carmine :as car]
             [clojure.tools.logging :refer [info error]]
@@ -19,8 +20,8 @@
 
 (defn shutdown-node!
   "Closes the consumer node"
-  [{:keys [group-conn org consumer msg-ch calc-work-thread] :as node}]
-  {:pre [group-conn org consumer msg-ch calc-work-thread]}
+  [{:keys [ org consumer msg-ch calc-work-thread] :as node}]
+  {:pre [org consumer msg-ch calc-work-thread]}
   (stop-fixdelay calc-work-thread)
   (safe-call close-consumer! consumer)
   (safe-call close-organiser! org)
@@ -163,6 +164,17 @@
    Acceps :step n which is the number of messages per sequence inside the main sequence"
   [node & {:keys [step] :or {step 1000}}]
   (partition-all step (msg-seq! node)))
+
+
+(defrecord KafkaNodeService [conf topics]
+  component/Lifecycle
+  (start [component]
+    (assoc component :node (create-node! conf topics)))
+  (stop [component]
+    (shutdown-node! (:node component))))
+
+(defn create-kafka-node-service [conf topics]
+  (->KafkaNodeService conf topics))
 
 (comment
 
