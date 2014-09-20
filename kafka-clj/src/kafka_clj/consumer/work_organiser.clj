@@ -78,13 +78,15 @@
   {:pre [work-queue resp-data offset len]}
   (let [offset-read (to-int (:offset-read resp-data))]
     (if (< offset-read (to-int offset))
-      (do (car/lpush work-queue (dissoc w-unit :resp-data))
-          (info "Pushing zero read work-unit " w-unit))
+      (do
+        ;(car/lpush work-queue (dissoc w-unit :resp-data))
+          (info "Pushing zero read work-unit  " w-unit " sending to recalc")
+          (work-complete-fail! state w-unit))
       (let [new-offset (inc offset-read)
             diff (- (+ (to-int offset) (to-int len)) new-offset)]
         (if (> diff 0)                                      ;if any offsets left, send work to work-queue with :offset = :offset-read :len diff
           (let [new-work-unit (assoc (dissoc w-unit :resp-data) :offset new-offset :len diff)]
-            (info "Recalculating work for processed work-unit " new-work-unit " prev-offset " offset)
+            (info "1:Recalculating work for processed work-unit " new-work-unit " prev-wu " w-unit)
             (car/lpush
               work-queue
               new-work-unit)))))
@@ -144,7 +146,7 @@
     (let [^Long t (+ start-offset step)
           ^Long l (if (> t max-offset) (- max-offset start-offset) step)]
       (cons
-        {:topic topic :partition partition :offset start-offset :len l}
+        {:topic topic :partition partition :offset start-offset :len l :max-offset (+ start-offset l)}
         (lazy-seq
           (calculate-work-units producer topic partition max-offset (+ start-offset l) step))))))
 

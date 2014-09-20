@@ -21,7 +21,7 @@
 (defrecord FetchError [topic partition error-code])
 
 (defn ^ByteBuf write-fecth-request-message [^ByteBuf buff {:keys [max-wait-time min-bytes topics max-bytes]
-                                          :or { max-wait-time 1000 min-bytes 1 max-bytes 52428800}}]
+                                          :or { max-wait-time 10000 min-bytes 1 max-bytes 52428800}}]
   "FetchRequest => ReplicaId MaxWaitTime MinBytes [TopicName [Partition FetchOffset MaxBytes]]
   ReplicaId => int32
   MaxWaitTime => int32
@@ -380,7 +380,11 @@
 			                                                           ]}))]
       {:client c :conf conf :broker {:host host :port port}})))
                                                   
-                               
+
+
+(defn close-fetch-producer [{:keys [client]}]
+  (if client
+    (close-all client)))
 
 (defn create-fetch-producer 
   ([{:keys [host port]} conf]

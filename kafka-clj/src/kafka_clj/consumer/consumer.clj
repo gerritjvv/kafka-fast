@@ -8,7 +8,7 @@
     [kafka-clj.redis :as redis]
     [thread-load.core :as load]
     [clojure.core.async :refer [go alts!! >!! >! <! timeout chan] :as async]
-    [kafka-clj.fetch :refer [create-fetch-producer send-fetch read-fetch]]
+    [kafka-clj.fetch :refer [close-fetch-producer create-fetch-producer send-fetch read-fetch]]
     [thread-load.core :as tl]
     [clj-tuple :refer [tuple]]
     [fun-utils.core :refer [go-seq]]
@@ -102,7 +102,17 @@
   (let [[resp-vec error-vec] (read-fetch-message work-unit f-delegate v)]
     [(if (empty? error-vec) :ok :fail) resp-vec]))
 
-(defn handle-timeout-response []
+;@TODO Find a better way of closing the producers
+(defn handle-timeout-response [{:keys [producers]}]
+  (error "TIMEOUT!! please check the following properties  fetch-timeout, max-wait-time, min-bytes, max-bytes, also check the brokers for any errors")
+  (doseq [producer @producers]
+    (try
+      (close-fetch-producer producer)
+      (catch Exception e (error e e))))
+
+  (dosync
+    (alter producers (fn [producers]
+                       {})))
   [:fail nil])
 
 
@@ -111,13 +121,16 @@
    Returns [status data]  status can be :ok, :timeout, :error and data is v returned from the channel"
   [{:keys [client] :as state} work-unit f-delegate conf]
   ;(prn "handler-response >>>>> " work-unit)
-  (let [fetch-timeout (get conf :fetch-timeout 10000)
+  (let [fetch-timeout (get conf :fetch-timeout 120000)
         {:keys [read-ch error-ch]} client
         [v c] (alts!! [read-ch error-ch (timeout fetch-timeout)])]
     (condp = c
       read-ch (cond
-                (instance? Reconnected v) (handle-response state f-delegate conf)
-                (instance? Poison v) [:fail nil]
+                (instance? Reconnected v) (do (error "Reconnected")
+                                              (handle-response state f-delegate conf))
+                (instance? Poison v) (do
+                                       (error "Poinson")
+                                       [:fail nil])
                 :else (handle-read-response work-unit f-delegate v))
       error-ch (handle-error-response v)
       (handle-timeout-response))))
