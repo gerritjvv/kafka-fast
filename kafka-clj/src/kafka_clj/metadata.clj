@@ -68,7 +68,7 @@
 
 (defn- _get-metadata [metadata-producers conf]
   "Iterate through the brokers, and the first one that returns a metadata response is used"
-     (if-let [metadata-producer (rand-nth metadata-producers)]
+     (if-let [metadata-producer (first metadata-producers)]
        (try
          (do
            (get-broker-metadata metadata-producer conf))

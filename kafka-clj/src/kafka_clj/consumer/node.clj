@@ -5,7 +5,7 @@
             [kafka-clj.consumer.consumer :refer [consume! close-consumer!]]
             [kafka-clj.redis :as redis]
             [com.stuartsierra.component :as component]
-            [fun-utils.core :refer [fixdelay stop-fixdelay]]
+            [fun-utils.core :refer [fixdelay stop-fixdelay buffered-chan]]
             [taoensso.carmine :as car]
             [clojure.tools.logging :refer [info error]]
             [clojure.core.async :refer [chan <!! alts!! timeout close! sliding-buffer]]))
@@ -150,6 +150,14 @@
      msg))
   ([{:keys [msg-ch]}]
    (<!! msg-ch)))
+
+
+(defn buffered-msgs
+  "Creates a channel that on each read returns n messages, or as much as could be buffered befire timeout-ms.
+   The buffering happens in the background"
+  [{:keys [msg-ch]}  n timeout-ms]
+  (buffered-chan msg-ch n 1000))
+
 
 (defn- add-msg-seq-state [state {:keys [topic partition offset]}]
   (assoc! state (str topic partition) offset))
