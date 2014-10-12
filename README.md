@@ -57,7 +57,7 @@ Producer.close(connector);
 
 *Note:* 
 
-Only use this if you need fine grain control over to which producer a message is sent,  
+Only use this if you need fine gain control over to which producer a message is sent,  
 for normal random distribution use the kafka-clj.client namespace. 
 
 ### Clojure
