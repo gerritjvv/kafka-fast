@@ -41,6 +41,9 @@ To destroy all boxes run:
 
 Once the boxes are up and running you can refer to them and use them as any other kafka cluster.
 
+But first test that the cluster is up and running by running ping on each of the ips above.
+g
+
 ### Send data to the cluster:
 
 ```clojure

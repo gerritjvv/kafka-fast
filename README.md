@@ -35,7 +35,13 @@ One producer will be created per topic partition combination, each with its own 
 
 ```
 
-## Single Producer 
+## Single Producer
+
+*Note:* 
+
+Only use this if you need fine grain control over to which producer a message is sent,  
+for normal random distribution use the kafka-clj.client namespace. 
+
 ```clojure
 (use 'kafka-clj.produce :reload)
 
@@ -145,12 +151,12 @@ Each consumer will read and consume messages from the redis work queue.
 
 ```
 
-## Error Handling
+## Vagrant
 
-```clojure
+Vagrant allows you to run a whole kafka cluster with zookeeper and redis all on your local machine.  
+For testing this is one of the best things you can do and makes testing kafka + new features easy.  
 
-
-```
+See: https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/vagrant.md
 
 ##Consumer Work Units and monitoring
 
