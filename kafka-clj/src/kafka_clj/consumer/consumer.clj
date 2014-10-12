@@ -1,8 +1,5 @@
 (ns kafka-clj.consumer.consumer
-  (:import (java.util.concurrent ExecutorService TimeUnit Future Callable TimeoutException)
-           (clojure.lang ArityException))
-
-  (:require 
+  (:require
     [taoensso.carmine :as car]
     [kafka-clj.consumer.util :as cutil]
     [kafka-clj.redis :as redis]
@@ -15,7 +12,7 @@
     [clojure.tools.logging :refer [info error debug]])
   (:import 
     [kafka_clj.fetch Message FetchError]
-    [java.util.concurrent Executors ExecutorService]
+    [java.util.concurrent Future TimeoutException TimeUnit Executors ExecutorService]
     [clj_tcp.client Reconnected Poison]
     [com.codahale.metrics Meter MetricRegistry Timer Histogram]
     [clojure.lang ArityException]
@@ -54,7 +51,7 @@
 		               (try
 			               (do
 					             (cond
-								         (instance? Message msg)
+								         (instance? kafka_clj.fetch.Message msg)
                          ;only include messsages of the same topic partition and lower than max-offset
                          ;we also check that prev-offset < offset this catches duplicates in a same request
 								         (do
@@ -63,7 +60,7 @@
                                     (< ^Long (:offset msg) max-offset))
                              (tuple (conj resp msg) errors (f-delegate f-state msg) (:offset msg))
                              (tuple resp errors f-state)))
-								         (instance? FetchError msg)
+								         (instance? kafka_clj.fetch.FetchError msg)
 								         (do (error "Fetch error: " msg) (tuple resp (conj errors msg) f-state))
 								         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
 			               (catch Exception e
@@ -127,7 +124,7 @@
     (condp = c
       read-ch (cond
                 (instance? Reconnected v) (do (error "Reconnected")
-                                              (handle-response state f-delegate conf))
+                                              (handle-response state work-unit f-delegate conf))
                 (instance? Poison v) (do
                                        (error "Poinson")
                                        [:fail nil])

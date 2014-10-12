@@ -1,11 +1,17 @@
 kafka-clj
 ==========
 
+Home: https://github.com/gerritjvv/kafka-fast
+
 fast kafka library implemented in clojure
 
 
 Function docs
 =============
+
+Note that these are internal documentation of the library and meant for developers.
+
+For a public api usage explanation please go to : https://github.com/gerritjvv/kafka-fast
 
 ```
 
@@ -99,7 +105,7 @@ Consumer
 The namespace in test ```kafka-clj.util``` contain helper functions to launch  
 embedded Kafka and Zookeeper instances and launch the native installed Redis server.  
 
-Not that Redis must be installed locally.  
+Note that Redis must be installed locally.  
 
 
 ## Run tests

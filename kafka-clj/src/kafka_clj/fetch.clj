@@ -113,7 +113,7 @@
                 (read-messages0 ubuff (count ubytes) topic-name partition state f)
                     
              )))
-      (f state (->Message topic-name partition offset val-arr))
+      (f state (Message. topic-name partition offset val-arr))
         )))    
         
    
@@ -197,7 +197,7 @@
        error-code (.readShort in)
        hw-mark-offset (.readLong in)]
    (if (> error-code 0)
-     (let [resp (f state (->FetchError topic-name partition error-code))]
+     (let [resp (f state (FetchError. topic-name partition error-code))]
          ;;even errors have a message set size.
          (.readInt in)
          resp)

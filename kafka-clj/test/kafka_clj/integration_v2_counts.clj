@@ -2,7 +2,7 @@
   (:require [kafka-clj.test-utils :refer [startup-resources shutdown-resources create-topics]]
             [kafka-clj.consumer.work-organiser :refer [wait-on-work-assigned-flag]]
             [kafka-clj.client :refer [create-connector send-msg close]]
-            [kfafka-clj.consumer.node :refer [create-node! read-msg! shutdown-node!]]
+            [kafka-clj.consumer.node :refer [create-node! read-msg! shutdown-node!]]
             [clojure.tools.logging :refer [info error]])
   (:use midje.sweet))
 
@@ -31,7 +31,7 @@
       msgs)))
 
 (defonce test-topic (uniq-name))
-(defonce msg-count 10000000)
+(defonce msg-count 10000)
 
 (with-state-changes
   [ (before :facts (do (reset! state-ref (startup-resources test-topic))

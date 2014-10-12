@@ -47,7 +47,7 @@
       (catch Exception e (error e "Error while shutting down producer")))))
 
 (defn message [topic partition ^bytes bts]
-  (->Message topic partition bts))
+  (Message. topic partition bts))
 
       
 (defn write-message [^ByteBuf buff codec ^bytes bts]
