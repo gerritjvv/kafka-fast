@@ -245,9 +245,9 @@ The event format is:
 See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for writing events to disk
 
 
-## Kafka Problem solving
-
 #Configuration
+
+## Clojure
 
 | Name | Default | Description |
 | ---- | ------  | ----------- |
@@ -269,6 +269,10 @@ See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for wr
 |:send-cache-expire-after-access | 5 | seconds to expire an entry after read |
 |:consume-step | 100000 | The max number of messages to consume in a single work unit |
 |:redis-conf | ```:redis-conf {:host "localhost" :max-active 10 :timeout 500}``` | The redis configuration for the consumer |
+
+## Java 
+
+For configuration options with the Java API see the ```kakfa_clj.core.KafkaConf``` class
 
 # Produce Error handling and persistence
 
