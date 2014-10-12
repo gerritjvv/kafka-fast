@@ -42,9 +42,11 @@ To destroy all boxes run:
 Once the boxes are up and running you can refer to them and use them as any other kafka cluster.
 
 But first test that the cluster is up and running by running ping on each of the ips above.
-g
+
 
 ### Send data to the cluster:
+
+Remember to create the topic first using vagrant/scripts/create_topic_remote.sh "my-topic"
 
 ```clojure
 (use 'kafka-clj.client :reload)
@@ -53,15 +55,18 @@ g
 
 (def c (create-connector [{:host "192.168.4.40" :port 9092}] {}))
 
-(send-msg c "data" msg1kb)
+(send-msg c "my-topic" msg1kb)
 ```
 
 ### Consume data from the cluster
+
+Remember to create the topic first using vagrant/scripts/create_topic_remote.sh "my-topic"
+
 
 ```clojure
 (use 'kafka-clj.consumer.node :reload)
 (require '[clojure.core.async :as async])
 (def consumer-conf {:bootstrap-brokers [{:host "192.168.4.40" :port 9092}] :redis-conf {:host "192.168.4.2" :max-active 5 :timeout 1000 :group-name "test"} :conf {}})
-(def node (create-node! consumer-conf ["ping"]))
+(def node (create-node! consumer-conf ["my-topic"]))
 
 ```
