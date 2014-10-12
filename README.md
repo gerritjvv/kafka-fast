@@ -16,6 +16,22 @@ albeit you can still acess them from Java using the clojure.lang.RT object.
 
 [![Clojars Project](http://clojars.org/kafka-clj/latest-version.svg)](http://clojars.org/kafka-clj)
 
+## Mavent
+
+```xml
+<dependency>
+  <groupId>kafka-clj</groupId>
+  <artifactId>kafka-clj</artifactId>
+  <version>${kafka-clj.version}</version>
+</dependency>
+<repositories>
+  <repository>
+    <id>clojars</id>
+    <url>http://clojars.org/repo/</url>
+  </repository>
+</repositories>
+```
+
 ## Producer
 
 The ```kafka-clien.client``` namespace contains a ```create-connector``` function that returns a async multi threaded thread safe connector.
