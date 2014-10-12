@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-### Setup all aux services required by the pseidon-etl2 app.
+###
 ### These:
-###   mysql, redis
+###   redis
 
 
 # install redis
