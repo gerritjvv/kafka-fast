@@ -14,9 +14,11 @@ albeit you can still acess them from Java using the clojure.lang.RT object.
 
 #Usage
 
+## Leiningen
+
 [![Clojars Project](http://clojars.org/kafka-clj/latest-version.svg)](http://clojars.org/kafka-clj)
 
-## Mavent
+## Maven
 
 ```xml
 <dependency>
