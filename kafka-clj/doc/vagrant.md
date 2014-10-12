@@ -65,8 +65,11 @@ Remember to create the topic first using vagrant/scripts/create_topic_remote.sh 
 
 ```clojure
 (use 'kafka-clj.consumer.node :reload)
-(require '[clojure.core.async :as async])
-(def consumer-conf {:bootstrap-brokers [{:host "192.168.4.40" :port 9092}] :redis-conf {:host "192.168.4.2" :max-active 5 :timeout 1000 :group-name "test"} :conf {}})
+(def consumer-conf {:bootstrap-brokers [{:host "192.168.4.40" :port 9092}] :redis-conf {:host "192.168.4.10" :max-active 5 :timeout 1000 :group-name "test"} :conf {}})
 (def node (create-node! consumer-conf ["my-topic"]))
+
+(read-msg! node)
+;;for a single message
+(def m (msg-seq! node))
 
 ```

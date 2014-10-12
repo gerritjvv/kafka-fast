@@ -135,7 +135,6 @@ Each consumer will read and consume messages from the redis work queue.
 ```clojure
 
 (use 'kafka-clj.consumer.node :reload)
-(require '[clojure.core.async :as async])
 (def consumer-conf {:bootstrap-brokers [{:host "localhost" :port 9092}] :redis-conf {:host "localhost" :max-active 5 :timeout 1000 :group-name "test"} :conf {}})
 (def node (create-node! consumer-conf ["ping"]))
 
@@ -210,7 +209,7 @@ See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for wr
 |:acks       | 1   | The number of replicas that should be written and a response message returned for a produce send. | 
 |:offset-commit-freq | 5000 | Offsets consumed will be committed every :offset-commit-freq milliseconds. |
 |:fetch-timeout | 30000 | Milliseconds to wait for a broker to response to a fetch request. |
-|:use-earliest  | true  | Only applies if no offset is held for a particular topic + partition in redis. If true will use the earliest available offset from the broker, otherwise the latest offset is used. |
+|:use-earliest  | false  | Only applies if no offset is held for a particular topic + partition in redis. If true will use the earliest available offset from the broker, otherwise the latest offset is used. |
 |:metadata-timeout  | 10000 | Milliseconds to wait for a broker to respond to a metadata request. |
 |:send-cache-max-entries | 1000000 | number of entries to keep in cache for server ack checks |
 |:send-cache-expire-after-write | 5 | seconds to expire an entry after write |
