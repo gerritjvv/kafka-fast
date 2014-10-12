@@ -3,8 +3,14 @@
 kafka-clj
 ==========
 
-fast kafka library implemented in clojure
+fast kafka library for any JVM language implemented in clojure 
 
+The documentation contains examples in both clojure and java.  
+From the Java APIs you can use Scala, JRuby, Groovy etc.  
+
+Note that at the moment only the *public* producer and consumer APIs have direct Java interfaces,  
+internal APIs like direct producer access and direct metadata access are for the moment only in clojure,
+albeit you can still acess them from Java using the clojure.lang.RT object.  
 
 #Usage
 
@@ -18,6 +24,8 @@ The ```kafka-clien.client``` namespace contains a ```create-connector``` functio
 One producer will be created per topic partition combination, each with its own buffer and timeout, such that compression can be maximised.
 
 
+### Clojure
+
 ```clojure
 
 (use 'kafka-clj.client :reload)
@@ -26,6 +34,7 @@ One producer will be created per topic partition combination, each with its own 
 (def msg4kb (.getBytes (clojure.string/join "," (range 10000))))
 
 (def c (create-connector [{:host "localhost" :port 9092}] {}))
+
 ;to send snappy
 ;(def c (create-connector [{:host "localhost" :port 9092}] {:codec 2}))
 ;to send gzip
@@ -35,12 +44,26 @@ One producer will be created per topic partition combination, each with its own 
 
 ```
 
+### Java
+
+```java
+import kakfa_clj.core.*;
+
+Object connector = Producer.createConnector(new BrokerConf("192.168.4.40", 9092));
+Producer.sendMsg(connector, "my-topic", "Hi".getBytes("UTF-8"));
+
+Producer.close(connector);
+```
+
+
 ## Single Producer
 
 *Note:* 
 
 Only use this if you need fine grain control over to which producer a message is sent,  
 for normal random distribution use the kafka-clj.client namespace. 
+
+### Clojure
 
 ```clojure
 (use 'kafka-clj.produce :reload)
@@ -61,6 +84,7 @@ for normal random distribution use the kafka-clj.client namespace.
 ;; read-response takes p and a timeout in milliseconds on timeout nil is returned
 ```
 
+
 # Benchmark Producer
 
 Environment:
@@ -76,7 +100,7 @@ Client: (using the lein uberjar command and then running the client as java -XX:
 
 
 Results:
-1 kb messag (generated using (def msg1kb (.getBytes (clojure.string/join "," (range 278)))) )
+1 kb message (generated using (def msg1kb (.getBytes (clojure.string/join "," (range 278)))) )
 
 ```clojure
 (time (doseq [i (range 1000000)] (send-msg c "data" msg1kb)))
@@ -137,6 +161,8 @@ This can be changed by setting the :use-easliest property to true. It is normall
 
 ## Consuming topics
 
+### Clojure
+
 ```clojure
 
 (use 'kafka-clj.consumer.node :reload)
@@ -152,6 +178,31 @@ This can be changed by setting the :use-easliest property to true. It is normall
 ;;add topics
 (remove-topics! node ["test1"])
 ;;remove topics
+
+```
+
+### Java
+
+```java
+import kakfa_clj.core.*;
+
+Object node = Consumer.createNode(new KafkaConf(), new BrokerConf[]{new BrokerConf("192.168.4.40", 9092)}, new RedisConf("192.168.4.10", 6379, "test-group"), "my-topic");
+Message msg = Consumer.readMsg(node);
+
+String topic = msg.getTopic();
+long partition = msg.getPartition();
+long offset = msg.getOffset();
+byte[] bts = msg.getBytes();
+
+//Add topics
+Consumer.addTopics(node, "topic1", "topic2");
+
+//Remove topics
+Consumer.removeTopics(node, "topic1", "topic2");
+
+
+//close
+Consumer.close(node);
 
 ```
 
