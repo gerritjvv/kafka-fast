@@ -14,8 +14,6 @@ albeit you can still acess them from Java using the clojure.lang.RT object.
 
 #Usage
 
-Please note that this library is still under development, any contributions are welcome
-
 [![Clojars Project](http://clojars.org/kafka-clj/latest-version.svg)](http://clojars.org/kafka-clj)
 
 ## Producer
