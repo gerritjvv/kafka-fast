@@ -29,7 +29,6 @@ One producer will be created per topic partition combination, each with its own 
 (use 'kafka-clj.client :reload)
 
 (def msg1kb (.getBytes (clojure.string/join "," (range 278))))
-(def msg4kb (.getBytes (clojure.string/join "," (range 10000))))
 
 (def c (create-connector [{:host "localhost" :port 9092}] {}))
 
