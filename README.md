@@ -103,28 +103,29 @@ for normal random distribution use the kafka-clj.client namespace.
 
 # Benchmark Producer
 
-Environment:
+Environment:  
 
-Network: 10 gigabit
-Brokers: 4
-CPU: 24 (12 core hyper threaded)
-RAM: 72 gig (each kafka broker has 8 gig assigned)
-DISKS: 12 Sata 7200 RPM (each broker has 12 network threads and 40 io threads assigned)
-Topics: 8
-
-Client: (using the lein uberjar command and then running the client as java -XX:MaxDirectMemorySize=2048M -XX:+UseCompressedOops -XX:+UseG1GC -Xmx4g -Xms4g  -jar kafka-clj-0.1.4-SNAPSHOT-standalone.jar)
-
-
-Results:
-1 kb message (generated using (def msg1kb (.getBytes (clojure.string/join "," (range 278)))) )
+Network: 10 gigabit  
+Brokers: 4  
+CPU: 24 (12 core hyper threaded)  
+RAM: 72 gig (each kafka broker has 8 gig assigned)  
+DISKS: 12 Sata 7200 RPM (each broker has 12 network threads and 40 io threads assigned)  
+Topics: 8  
+  
+Client: (using the lein uberjar command and then running the client as java -XX:MaxDirectMemorySize=2048M -XX:+UseCompressedOops -XX:+UseG1GC -Xmx4g -Xms4g  -jar kafka-clj-0.1.4-SNAPSHOT-standalone.jar)  
+  
+  
+Results:  
+1 kb message (generated using (def msg1kb (.getBytes (clojure.string/join "," (range 278)))) )  
+  
 
 ```clojure
 (time (doseq [i (range 1000000)] (send-msg c "data" msg1kb)))
 ;;"Elapsed time: 5209.614983 msecs"
 ```
-
-191975 K messages per second.
-
+  
+191975 K messages per second.  
+  
 # Metadata and offsets
 
 This is more for tooling and UI(s).
@@ -204,13 +205,13 @@ The consumer instance returned by Consumer.connect and all of its methods are th
 ```java
 import kakfa_clj.core.*;
 
- Consumer consumer = Consumer.connect(new KafkaConf(), new BrokerConf[]{new BrokerConf("192.168.4.40", 9092)}, new RedisConf("192.168.4.10", 6379, "test-group"), "my-topic");
- Message msg = consumer.readMsg();
+Consumer consumer = Consumer.connect(new KafkaConf(), new BrokerConf[]{new BrokerConf("192.168.4.40", 9092)}, new RedisConf("192.168.4.10", 6379, "test-group"), "my-topic");
+Message msg = consumer.readMsg();
 
- String topic = msg.getTopic();
- long partition = msg.getPartition();
- long offset = msg.getOffset();
- byte[] bts = msg.getBytes();
+String topic = msg.getTopic();
+long partition = msg.getPartition();
+long offset = msg.getOffset();
+byte[] bts = msg.getBytes();
 
 //Add topics
 consumer.addTopics("topic1", "topic2");
