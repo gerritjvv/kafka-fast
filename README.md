@@ -173,7 +173,7 @@ Each consumer will read and consume messages from the redis work queue.
 ## Offsets and consuming earliest
 
 Note that if no data is saved in redis the consumer will take the latest offset from kafka and set it to the topic in redis, then start consumption from that position.  
-This can be changed by setting the :use-easiest property to true. It is normally recommended to leave this property at false, run the consumer and then start producing messages.  
+This can be changed by setting the :use-earliest property to true. It is normally recommended to leave this property at false, run the consumer and then start producing messages.  
 
 ## Consuming topics
 
