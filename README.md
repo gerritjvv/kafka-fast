@@ -12,6 +12,9 @@ Note that at the moment only the *public* producer and consumer APIs have direct
 internal APIs like direct producer access and direct metadata access are for the moment only in clojure,
 albeit you can still acess them from Java using the clojure.lang.RT object.  
 
+This project contains a Vagrant template that allows you to tryout a full kafka cluster deploy on your local machine,  
+See https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/vagrant.md.
+
 #Usage
 
 ## Leiningen
@@ -64,10 +67,10 @@ One producer will be created per topic partition combination, each with its own 
 ```java
 import kakfa_clj.core.*;
 
-Object connector = Producer.createConnector(new BrokerConf("192.168.4.40", 9092));
-Producer.sendMsg(connector, "my-topic", "Hi".getBytes("UTF-8"));
+Producer producer = Producer.connect(new BrokerConf("192.168.4.40", 9092));
+producer.sendMsg("my-topic", "Hi".getBytes("UTF-8"));
+producer.close();
 
-Producer.close(connector);
 ```
 
 
@@ -198,26 +201,33 @@ This can be changed by setting the :use-easliest property to true. It is normall
 
 ### Java
 
+The consumer instance returned by Consumer.connect and all of its methods are thread safe.
+
 ```java
 import kakfa_clj.core.*;
 
-Object node = Consumer.createNode(new KafkaConf(), new BrokerConf[]{new BrokerConf("192.168.4.40", 9092)}, new RedisConf("192.168.4.10", 6379, "test-group"), "my-topic");
-Message msg = Consumer.readMsg(node);
+ Consumer consumer = Consumer.connect(new KafkaConf(), new BrokerConf[]{new BrokerConf("192.168.4.40", 9092)}, new RedisConf("192.168.4.10", 6379, "test-group"), "my-topic");
+ Message msg = consumer.readMsg();
 
-String topic = msg.getTopic();
-long partition = msg.getPartition();
-long offset = msg.getOffset();
-byte[] bts = msg.getBytes();
+ String topic = msg.getTopic();
+ long partition = msg.getPartition();
+ long offset = msg.getOffset();
+ byte[] bts = msg.getBytes();
 
 //Add topics
-Consumer.addTopics(node, "topic1", "topic2");
+consumer.addTopics("topic1", "topic2");
 
 //Remove topics
-Consumer.removeTopics(node, "topic1", "topic2");
+consumer.removeTopics("topic1", "topic2");
 
+//Iterator: Consumer is Iterable and consumer.iterator() returns a threadsafe iterator
+//          that will return true unless the consumer is closed.
+for(Message message : consumer){
+  System.out.println(message);
+}
 
 //close
-Consumer.close(node);
+consumer.close();
 
 ```
 

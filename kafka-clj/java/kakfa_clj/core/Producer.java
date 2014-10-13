@@ -14,6 +14,12 @@ public class Producer {
         RT.var("clojure.core", "require").invoke(Symbol.create("kafka-clj.client"));
     }
 
+    private final Object connector;
+
+    private Producer(Object connector){
+        this.connector = connector;
+    }
+
     protected static final IPersistentVector toKeywordListMap(BrokerConf... brokers){
         PersistentVector v = PersistentVector.EMPTY;
         for(BrokerConf conf : brokers){
@@ -22,28 +28,20 @@ public class Producer {
         return v;
     }
 
-    protected static final IPersistentMap toKeywordMap(Map<?, ?> map){
-        ITransientMap m = PersistentArrayMap.EMPTY.asTransient();
-        for(Map.Entry<?, ?> entry: map.entrySet()){
-            m = m.assoc(Keyword.intern(entry.getKey().toString()), entry.getValue());
-        }
-
-        return m.persistent();
+    public static Producer connect(BrokerConf... brokers){
+        return connect(new KafkaConf(), brokers);
     }
 
-    public static Object createConnector(BrokerConf... brokers){
-        return createConnector(new KafkaConf(), brokers);
+    public static Producer connect (KafkaConf conf, BrokerConf... brokers){
+       return new Producer(RT.var("kafka-clj.client", "create-connector").invoke(toKeywordListMap(brokers), conf.getConf()));
     }
 
-    public static Object createConnector (KafkaConf conf, BrokerConf... brokers){
-       return RT.var("kafka-clj.client", "create-connector").invoke(toKeywordListMap(brokers), conf.getConf());
-    }
-
-    public static void sendMsg(Object connector, String topic, byte[] msg){
+    public Producer sendMsg(String topic, byte[] msg){
         RT.var("kafka-clj.client", "send-msg").invoke(connector, topic, msg);
+        return this;
     }
 
-    public static void close(Object connector){
+    public void close(){
         RT.var("kafka-clj.client", "close").invoke(connector);
     }
 
@@ -52,9 +50,9 @@ public class Producer {
      */
     private static void usageProducer() throws Exception{
         {
-            Object connector = Producer.createConnector(new BrokerConf("192.168.4.40", 9092));
-            Producer.sendMsg(connector, "my-topic", "Hi".getBytes("UTF-8"));
-            Producer.close(connector);
+            Producer producer = Producer.connect(new BrokerConf("192.168.4.40", 9092));
+            producer.sendMsg("my-topic", "Hi".getBytes("UTF-8"));
+            producer.close();
 
         }
 
