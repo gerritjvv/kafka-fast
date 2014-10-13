@@ -1,5 +1,3 @@
-
-
 kafka-clj
 ==========
 
@@ -10,7 +8,7 @@ From the Java APIs you can use Scala, JRuby, Groovy etc.
 
 Note that at the moment only the *public* producer and consumer APIs have direct Java interfaces,  
 internal APIs like direct producer access and direct metadata access are for the moment only in clojure,
-albeit you can still acess them from Java using the clojure.lang.RT object.  
+albeit you can still access them from Java using the clojure.lang.RT object.  
 
 This project contains a Vagrant template that allows you to tryout a full kafka cluster deploy on your local machine,  
 See https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/vagrant.md.
@@ -39,7 +37,7 @@ See https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/vagrant.md
 
 ## Producer
 
-The ```kafka-clien.client``` namespace contains a ```create-connector``` function that returns a async multi threaded thread safe connector.
+The ```kafka-client.client``` namespace contains a ```create-connector``` function that returns a async multi threaded thread safe connector.
 One producer will be created per topic partition combination, each with its own buffer and timeout, such that compression can be maximised.
 
 
@@ -95,7 +93,7 @@ for normal random distribution use the kafka-clj.client namespace.
 ;; creates a producer, the function takes the arguments host and port
 
 (send-messages p {} d)
-;; sends the messages asyncrhonously to kafka parameters are p , a config map and a sequence of messages
+;; sends the messages asynchronously to kafka parameters are p , a config map and a sequence of messages
 
 (read-response p 100)
 ;; ({:topic "data", :partitions ({:partition 0, :error-code 0, :offset 2131})})
@@ -107,7 +105,7 @@ for normal random distribution use the kafka-clj.client namespace.
 
 Environment:
 
-Network: 10 gigbit
+Network: 10 gigabit
 Brokers: 4
 CPU: 24 (12 core hyper threaded)
 RAM: 72 gig (each kafka broker has 8 gig assigned)
@@ -169,13 +167,13 @@ The library used for redis is https://github.com/gerritjvv/group-redis
 ## Load balancing
 
 A work queue concept is used to share the load over several consumers. 
-A master is automatically sepected between the consumers, the master will run the work-organiser which is responsible for calculating and publishing work to redis.
+A master is automatically selected between the consumers, the master will run the work-organiser which is responsible for calculating and publishing work to redis.
 Each consumer will read and consume messages from the redis work queue.
 
 ## Offsets and consuming earliest
 
 Note that if no data is saved in redis the consumer will take the latest offset from kafka and set it to the topic in redis, then start consumption from that position.  
-This can be changed by setting the :use-easliest property to true. It is normally recommended to leave this property at false, run the consumer and then start producing messages.  
+This can be changed by setting the :use-easiest property to true. It is normally recommended to leave this property at false, run the consumer and then start producing messages.  
 
 ## Consuming topics
 
@@ -245,7 +243,7 @@ When a work unit has been completed by the consumer an event is sent to the work
 
 Note that the work-unit-event-ch channel is a sliding channel with a buffer or 100, meaning events not consumed will be lost.
 
-These events can be saved to disk and analyised later to gain more insight into what is being processed by each host and how fast,
+These events can be saved to disk and analysed later to gain more insight into what is being processed by each host and how fast,
 it can also help to debug a consumer.
 
 To get the channel use:
@@ -349,13 +347,13 @@ Note that the partitions must be held on the broker the request is sent for.
 
 To read the response  the read-fetch is used ```read-fetch byte-buff state f```
 
-The function f is applied everytime a message or fetch error is read, and apply as ```(apply f state msg)```,
-the state is accumelated as with reduce so that each state is the result of apply f to a previous message (or the initial state).
+The function f is applied every time a message or fetch error is read, and apply as ```(apply f state msg)```,
+the state is accumulated as with reduce so that each state is the result of apply f to a previous message (or the initial state).
 
 So to return a list of messages read fetch can be called as ```read-fetch byte-buff [] conj```
 
 
-## Exmaple
+## Example
 
 ```clojure
 (require '[kafka-clj.fetch :refer [send-fetch read-fetch create-fetch-producer]]:reload)
@@ -372,13 +370,13 @@ So to return a list of messages read fetch can be called as ```read-fetch byte-b
 ```
 
 
-# Commong errors during use
+# Common errors during use
 
 ## FetchError error code 1
 
 This means that the offset queried is out of range (does not exist on the broker any more).
 It either means that you are starting up a consumer using old offsets, or if you see this message more than on startup it means
-that the consumer cannot keepup with the producers, and that data is deleted off the brokers before the consumer could consume it.
+that the consumer cannot keep up with the producers, and that data is deleted off the brokers before the consumer could consume it.
 
 The solution to this would be to add more consumers and increase the log.retention.bytes and or log.retention.hours on the brokers.
 
