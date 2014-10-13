@@ -48,6 +48,8 @@ But first test that the cluster is up and running by running ping on each of the
 
 Remember to create the topic first using vagrant/scripts/create_topic_remote.sh "my-topic"
 
+*Clojure*
+
 ```clojure
 (use 'kafka-clj.client :reload)
 
@@ -58,10 +60,21 @@ Remember to create the topic first using vagrant/scripts/create_topic_remote.sh 
 (send-msg c "my-topic" msg1kb)
 ```
 
+*Java*
+
+```java
+import kakfa_clj.core.*;
+
+Producer producer = Producer.connect(new BrokerConf("192.168.4.40", 9092));
+producer.sendMsg("my-topic", "Hi".getBytes("UTF-8"));
+producer.close();
+```
+
 ### Consume data from the cluster
 
 Remember to create the topic first using vagrant/scripts/create_topic_remote.sh "my-topic"
 
+*Clojure*
 
 ```clojure
 (use 'kafka-clj.consumer.node :reload)
@@ -72,4 +85,33 @@ Remember to create the topic first using vagrant/scripts/create_topic_remote.sh 
 ;;for a single message
 (def m (msg-seq! node))
 
+```
+
+*Java*
+
+```java
+import kakfa_clj.core.*;
+
+Consumer consumer = Consumer.connect(new KafkaConf(), new BrokerConf[]{new BrokerConf("192.168.4.40", 9092)}, new RedisConf("192.168.4.10", 6379, "test-group"), "my-topic");
+Message msg = consumer.readMsg();
+
+String topic = msg.getTopic();
+long partition = msg.getPartition();
+long offset = msg.getOffset();
+byte[] bts = msg.getBytes();
+
+//Add topics
+consumer.addTopics("topic1", "topic2");
+
+//Remove topics
+consumer.removeTopics("topic1", "topic2");
+
+//Iterator: Consumer is Iterable and consumer.iterator() returns a threadsafe iterator
+//          that will return true unless the consumer is closed.
+for(Message message : consumer){
+  System.out.println(message);
+}
+
+//close
+consumer.close();
 ```
