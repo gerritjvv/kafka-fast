@@ -62,8 +62,8 @@
   (loop [len (redis/wcar redis-conn (car/llen from-queue))]
     (info "copy-redis-queue [" from-queue "] => [" to-queue "]: " len)
     (if (> len 0)
-      (let [wus (redis/wcar redis-conn
-                            (car/lrange from-queue 0 100))]
+      (let [wus (map #(into (sorted-map) %) (redis/wcar redis-conn
+                                                        (car/lrange from-queue 0 100)))]
         (when (not-empty wus)
           (let [res
                 (redis/wcar redis-conn
@@ -113,9 +113,6 @@
         msg-ch (chan 1000)
         consumer (consume! (assoc intermediate-conf :redis-conn redis-conn :msg-ch msg-ch :work-unit-event-ch work-unit-event-ch))
         calc-work-thread (start-work-calculate (assoc org :redis-conn redis-conn) topics-ref :freq (get conf :work-calculate-freq 10000))
-
-        working-len  (redis/wcar redis-conn
-                                 (car/llen working-queue-name))
         ]
 
 

@@ -366,9 +366,7 @@
     (let [c (client host port (merge  
                                    ;;parameters that can be over written
 			                             {
-                                   :read-group-threads 1
-                                   :write-group-threads 1
-                                   :reuse-client true 
+                                   :reuse-client true
                                    :read-buff 100
                                    }
                                    conf

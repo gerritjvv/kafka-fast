@@ -194,7 +194,8 @@
   "Remove data from the working-queue and publish to the complete-queue"
   [{:keys [redis-conn working-queue complete-queue work-queue work-unit-event-ch] :as state} org-work-units work-unit status resp-data]
   {:pre [work-unit-event-ch redis-conn working-queue complete-queue work-queue work-unit]}
-  (let [work-unit2 (assoc work-unit :status status :resp-data resp-data)]
+  (let [sorted-wu (into (sorted-map) work-unit)
+        work-unit2 (assoc sorted-wu :status status :resp-data resp-data)]
 
     (if work-unit-event-ch
       (>!! work-unit-event-ch                                 ;send to work-unit-event-channel
@@ -204,8 +205,7 @@
     ;send work complete to complete-queue
     (let [[_ removed] (redis/wcar redis-conn
                         (car/lpush complete-queue work-unit2)
-                        (car/lrem  working-queue -1 org-work-units))]
-      ;(info "publish-work-response: res: " removed ": " (type removed) " work-unit: " org-work-units)
+                        (car/lrem  working-queue -1 sorted-wu))]
       state)))
 
 (defn save-call [f state & args]
@@ -221,7 +221,7 @@
   (let [ts (System/currentTimeMillis)
         wu (wait-on-work-unit! redis-conn work-queue working-queue)
         diff (- (System/currentTimeMillis) ts)]
-    (if (> diff 500)
+    (if (> diff 1000)
       (info "Slow wait on work unit: took: " diff "ms"))
     wu))
 
@@ -300,7 +300,7 @@
          redis-conn]}
   (io!
     (redis/wcar redis-conn
-              (car/lpush work-queue work-unit))))
+              (car/lpush work-queue (into (sorted-map) work-unit)))))
 
 
 (defn- ^Runnable publish-pool-loop [{:keys [load-pool] :as state}]

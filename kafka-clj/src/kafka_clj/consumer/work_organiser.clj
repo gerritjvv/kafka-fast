@@ -48,7 +48,7 @@
    Deletes the work unit by doing nothing i.e the work unit will not get pushed to the work queue again"
   [{:keys [redis-conn error-queue] :as state} wu]
   (error "delete workunit error-code:1 " + wu)
-  (car/lpush error-queue wu))
+  (car/lpush error-queue (into (sorted-map) wu)))
 
 (defn- work-complete-fail!
   "
@@ -57,13 +57,14 @@
   [{:keys [work-queue] :as state} w-unit]
   (try
     ;we try to recalculate the broker, if any exception we reput the w-unit on the queue
-    (let [broker (get-broker-from-meta state (:topic w-unit) (:partition w-unit))]
+    (let [sorted-wu (into (sorted-map) w-unit)
+          broker (get-broker-from-meta state (:topic w-unit) (:partition w-unit))]
       (error "Rebuilding failed work unit " w-unit)
-      (car/lpush work-queue (assoc w-unit :producer broker))
+      (car/lpush work-queue (assoc sorted-wu :producer broker))
       state)
     (catch Exception e (do
                         (error e e)
-                        (car/lpush work-queue w-unit)))))
+                        (car/lpush work-queue (into (sorted-map) w-unit))))))
 
 (defn- ensure-unique-id [w-unit]
   ;function for debug purposes
@@ -76,17 +77,17 @@
    Side effects: Send data to redis work-queue"
   [{:keys [work-queue] :as state} {:keys [resp-data offset len] :as w-unit}]
   {:pre [work-queue resp-data offset len]}
-  (let [offset-read (to-int (:offset-read resp-data))]
+  (let [sorted-wu (into (sorted-map) w-unit)
+        offset-read (to-int (:offset-read resp-data))]
     (if (< offset-read (to-int offset))
       (do
-        ;(car/lpush work-queue (dissoc w-unit :resp-data))
           (info "Pushing zero read work-unit  " w-unit " sending to recalc")
-          (work-complete-fail! state w-unit))
+          (work-complete-fail! state sorted-wu))
       (let [new-offset (inc offset-read)
             diff (- (+ (to-int offset) (to-int len)) new-offset)]
         (if (> diff 0)                                      ;if any offsets left, send work to work-queue with :offset = :offset-read :len diff
-          (let [new-work-unit (assoc (dissoc w-unit :resp-data) :offset new-offset :len diff)]
-            (info "1:Recalculating work for processed work-unit " new-work-unit " prev-wu " w-unit)
+          (let [new-work-unit (assoc (dissoc sorted-wu :resp-data) :offset new-offset :len diff)]
+            (info "Recalculating work for processed work-unit " new-work-unit " prev-wu " w-unit)
             (car/lpush
               work-queue
               new-work-unit)))))
@@ -124,10 +125,12 @@
           (redis/wcar
                     redis-conn
                     (if (map? work-units)
-                      (work-complete-handler! state (ensure-unique-id work-units))
+                      (do
+                        (work-complete-handler! state (ensure-unique-id work-units))
+                        (car/lrem working-queue -1 (into (sorted-map) work-units)))
                       (doseq [work-unit work-units]
-                        (work-complete-handler! state (ensure-unique-id work-unit))))
-                    (car/lrem working-queue -1 work-units)))
+                        (work-complete-handler! state (ensure-unique-id work-unit))
+                        (car/lrem working-queue -1 (into (sorted-map) work-unit))))))
         (catch InterruptedException e1 (info "Exit work complete loop"))
         (catch Exception e (do (error e e) (prn e)))))))
 
@@ -194,7 +197,8 @@
         (let [max-offset (apply max (map #(+ ^Long (:offset %) ^Long (:len %)) work-units))
               ts (System/currentTimeMillis)]
           (redis/wcar redis-conn
-                    (apply car/lpush work-queue (map set (partition-all 4 (map #(assoc % :producer broker :ts ts) work-units))))
+                      ;we must use sorted-map here otherwise removing the wu will not be possible due to serialization with arbritary order of keys
+                    (apply car/lpush work-queue (map #(assoc (into (sorted-map) %) :producer broker :ts ts) work-units))
                     (car/set (str "/" group-name "/offsets/" topic "/" partition) max-offset))
           )))))
 
@@ -246,6 +250,19 @@
   "Helper function that returns the data from a queue using lrange 0 limit"
   [{:keys [redis-conn]} queue-name & {:keys [limit] :or {limit -1}}]
   (redis/wcar redis-conn (car/lrange queue-name 0 limit)))
+
+(defn put-queue-data
+  "Helper function that returns the data from a queue using lrange 0 limit"
+  [{:keys [redis-conn]} queue-name data]
+  (redis/wcar redis-conn (car/lpush queue-name data)))
+
+
+(defn remove-queue-data
+  "Helper function that returns the data from a queue using lrange 0 limit"
+  [{:keys [redis-conn]} queue-name data]
+  (redis/wcar redis-conn (car/lrem queue-name -1 data)))
+
+
 
 (defn create-meta-producers!
   "For each boostrap broker a metadata-request-producer is created"
