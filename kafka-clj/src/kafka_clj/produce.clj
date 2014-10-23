@@ -221,8 +221,7 @@
   "Writes out a metadata request to the producer's client"
   [{:keys [client]} conf]
       (write! client (fn [^ByteBuf buff] 
-                       (with-size buff write-metadata-request conf)
-                   )))
+                       (with-size buff write-metadata-request conf))))
 
 (defn metadata-request-producer
   "Returns a producer with a metadata-response-decoder set"

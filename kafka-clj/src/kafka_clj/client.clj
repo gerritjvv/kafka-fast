@@ -7,9 +7,10 @@
             [clojure.tools.logging :refer [error info debug]]
             [com.stuartsierra.component :as component]
             [clj-tuple :refer [tuple]]
-            [clojure.core.async :refer [chan >! >!! <! go close!] :as async])
+            [clojure.core.async :refer [chan >! >!! <! <!! thread go close!] :as async])
   (:import [java.util.concurrent.atomic AtomicInteger AtomicLong]
-           [kafka_clj.response ProduceResponse]))
+           [kafka_clj.response ProduceResponse]
+           (java.util.concurrent Executors ScheduledExecutorService TimeUnit)))
 
 (declare close-producer-buffer!)
 
@@ -84,7 +85,7 @@
 (defn- always-false ([] false) ([_ _] t))
 
 (defn create-producer-buffer [connector topic partition producer-error-ch {:keys [host port]} {:keys [batch-num-messages queue-buffering-max-ms] :or
-                                                                   {batch-num-messages 100 queue-buffering-max-ms 1000} :as conf}]
+                                                                   {batch-num-messages 100 queue-buffering-max-ms 500} :as conf}]
   "Creates a producer and buffered-chan with a go loop that will read off the buffered chan and send to the producer.
    A map with keys :producer ch-source and buff-ch is returned"
   (let [producer (producer host port conf)
@@ -97,7 +98,7 @@
         handle-send-message-error (fn [e producer conf offset v]
                                     (error e e)
                                     (prn "handle-send-message-error: v " v)
-                                    (>!! producer-error-ch {:key-val (str topic ":" partition) :error e :producer {:producer producer ::buff-ch buff-ch}
+                                    (>!! producer-error-ch {:key-val (str topic ":" partition) :error e :producer {:producer producer :buff-ch buff-ch}
                                                             :offset offset :v v :topic topic}))]
     
    
@@ -133,14 +134,14 @@
 		    
     ;send buffered messages
     ;if any exception handle the error
-    (go-seq
-        (fn [v]
-           (if (> (count v) 0)
-                 (do
-                   (try 
-                       (send-messages connector producer conf v) 
-                       (catch Exception e (handle-send-message-error e producer conf v -1)))))) buff-ch)
-    
+    (thread
+      (while true
+        (when-let [v (<!! buff-ch)]
+          (when (> (count v) 0)
+            (try
+              (send-messages connector producer conf v)
+              (catch Exception e (handle-send-message-error e producer conf v -1)))))))
+
     {:host host
      :port port
      :producer producer
@@ -251,7 +252,7 @@
 
 (defn close [{:keys [state] :as connector}]
   "Close all producers and channels created for the connected"
-  (stop-fixdelay (:metadata-fixdelay state))
+  (.shutdown ^ScheduledExecutorService (:scheduled-service state))
   
   ;(stop-fixdelay (:retry-cache-ch state))
 	(close-retry-cache connector) ;here we get 100% cpu use
@@ -264,6 +265,7 @@
 
 (defn create-connector [bootstrap-brokers {:keys [acks] :or {acks 0} :as conf}]
   (let [
+        ^ScheduledExecutorService scheduled-service (Executors/newSingleThreadScheduledExecutor)
         metadata-producers (map #(metadata-request-producer (:host %) (:port %) conf) bootstrap-brokers)
         brokers-metadata (ref (get-metadata metadata-producers conf))
         _ (if (empty? @brokers-metadata)
@@ -290,22 +292,15 @@
 								                                                          (close-producer-buffer! producer-buffer)
 								                                                          nil))))
                                               m))))
-        update-metadata (fn [] 
+        update-metadata (fn []
                           (let [metadata (get-metadata metadata-producers conf)]
 	                          (dosync 
                               (alter brokers-metadata (fn [x] metadata))
                               (alter producer-ref (fn [x] (update-producers metadata x)))
                               )))
-                           
-        metadata-fixdelay 
-                  ;start periodic metadata scanning
-							    (fixdelay 5000
-							              (try
-							                (update-metadata)
-							                (catch Exception e (error e e))))
-                  
+
         connector {:bootstrap-brokers metadata-producers :send-cache send-cache :retry-cache retry-cache
-                   :state (assoc state :metadata-fixdelay metadata-fixdelay) }
+                   :state (assoc state :scheduled-service scheduled-service) }
         
                   ;;every 5 seconds check for any data in the retry cache and resend the messages
 				retry-cache-ch (fixdelay 5000
@@ -320,6 +315,8 @@
 												              
 										                  (delete-from-retry-cache connector (:key-val retry-msg)))))
 										         (catch Exception e (error e e))))]
+
+    (.scheduleWithFixedDelay scheduled-service ^Runnable update-metadata 0 10000 TimeUnit/MILLISECONDS)
     ;listen to any producer errors, this can be sent from any producer
     ;update metadata, close the producer and write the messages in its buff cache to the 
     (go-seq
@@ -342,12 +339,12 @@
             ;close producer and cause the buffer to be flushed
             (close-producer-buffer!  producer))
           (catch Exception e (error e e)))) producer-error-ch)
-	    
-   
-          
-      
-     (assoc connector :retry-cache-ch retry-cache-ch)
-    ))
+
+
+
+
+
+     (assoc connector :retry-cache-ch retry-cache-ch)))
  
 (defrecord KafkaClientService [brokers conf client]
   component/Lifecycle
