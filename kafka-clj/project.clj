@@ -1,4 +1,4 @@
-(defproject kafka-clj "2.4.2"
+(defproject kafka-clj "2.4.3-SNAPSHOT"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -9,6 +9,7 @@
   :global-vars {*warn-on-reflection* true
                *assert* false}
 
+  :main kafka-clj.app
   :scm {:name "git"
          :url "https://github.com/gerritjvv/kafka-fast.git"}
   :java-source-paths ["java"]
@@ -22,15 +23,16 @@
   :dependencies [
                  [com.taoensso/carmine "2.7.0"]
                  [org.apache.commons/commons-pool2 "2.2"]
+                 [com.alexkasko.unsafe/unsafe-tools "1.4.4"]
                  [org.mapdb/mapdb "1.0.6"]
                  [midje "1.6.3" :scope "test"]
                  [org.clojure/tools.trace "0.7.6"]
-                 [org.xerial.snappy/snappy-java "1.1.1-M1"]
+                 [org.xerial.snappy/snappy-java "1.1.1.6"]
                  [org.clojure/tools.logging "0.3.0"]
-                 [clj-tcp "0.4.2"]
+                 [clj-tcp "0.4.3-SNAPSHOT"]
                  [fmap-clojure "LATEST" :exclusions [org.clojure/tools.logging]]
-                 [fun-utils "LATEST" :exclusions [org.clojure/tools.logging]]
-                 [clj-tuple "0.1.6"]
+                 [fun-utils "0.5.0" :exclusions [org.clojure/tools.logging]]
+                 [clj-tuple "0.1.7"]
                  [thread-load "0.1.3" :exclusions [org.clojure/clojure]]
                  [com.codahale.metrics/metrics-core "3.0.1"]
                  [org.clojure/core.async "0.1.303.0-886421-alpha"]

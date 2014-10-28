@@ -8,9 +8,9 @@
     [kafka-clj.fetch :refer [close-fetch-producer create-fetch-producer send-fetch read-fetch]]
     [thread-load.core :as tl]
     [clj-tuple :refer [tuple]]
-    [fun-utils.core :refer [go-seq]]
     [clojure.tools.logging :refer [info error debug]])
-  (:import 
+  (:import
+    [io.netty.buffer ByteBuf Unpooled PooledByteBufAllocator]
     [kafka_clj.fetch Message FetchError]
     [java.util.concurrent Future TimeoutException TimeUnit Executors ExecutorService]
     [clj_tcp.client Reconnected Poison]
@@ -37,17 +37,18 @@
 (defn- byte-array? [arr] (instance? byte_array_class arr))
 
 (defn read-fetch-message 
-  "read-fetch will return the result of fn which is [resp-vec error-vec]"
-  [{:keys [topic partition ^Long offset ^Long len]} f-delegate v]
-  (if (byte-array? v)
-	  (let [ ^Long max-offset (+ offset len)
+  "read-fetch will return the result of fn which is [max-offset-read error-vec]"
+  [{:keys [topic partition ^long offset ^long len]} f-delegate v]
+  (if v
+	  (let [ max-offset (long (+ offset len))
 	         fetch-res
-	         (read-fetch (Unpooled/wrappedBuffer ^"[B" v) [[] [] nil -1]
+	         (read-fetch v [0 [] nil -1]
 				     (fn [state msg]
 	              ;read-fetch will navigate the fetch response calling this function
                ;(info "READ FETCH MESSAGE " msg)
 	              (if (coll? state)
-			            (let [[resp errors f-state] state]
+			            (let [[^long max-offset-read errors f-state] state
+                        ^long msg-offset (:offset msg)]
 		               (try
 			               (do
 					             (cond
@@ -56,18 +57,20 @@
                          ;we also check that prev-offset < offset this catches duplicates in a same request
 								         (do
                            (if (and (= (:topic msg) topic) (= ^Long (:partition msg) ^Long partition)
-                                    (>= ^Long (:offset msg) offset)
-                                    (< ^Long (:offset msg) max-offset))
-                             (tuple (conj resp msg) errors (f-delegate f-state msg) (:offset msg))
-                             (tuple resp errors f-state)))
+                                    (>= msg-offset offset)
+                                    (< msg-offset max-offset))
+                             (tuple (Math/max max-offset-read msg-offset) errors (f-delegate f-state msg) (:offset msg))
+                             (tuple max-offset-read errors f-state)))
 								         (instance? kafka_clj.fetch.FetchError msg)
-								         (do (error "Fetch error: " msg) (tuple resp (conj errors msg) f-state))
+								         (do (error "Fetch error: " msg) (tuple max-offset-read (conj errors msg) f-state))
 								         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
 			               (catch Exception e
 		                  (do (error e e)
-		                      (tuple resp errors f-state)))))
+		                      (tuple max-offset-read errors f-state)))))
 	                  (do (error "State not supported " state)
-	                      [{} [] nil]))))]
+	                      [-1 [] nil]))))]
+      (if v
+        (.release ^ByteBuf v))
          ;(info "FETCH RESP " fetch-res)
 	       (if (coll? fetch-res)
 	          fetch-res
@@ -96,8 +99,8 @@
                                 nil))))
 
 (defn handle-read-response [work-unit f-delegate v]
-  (let [[resp-vec error-vec] (read-fetch-message work-unit f-delegate v)]
-    [(if (empty? error-vec) :ok :fail) resp-vec]))
+  (let [[max-offset-read error-vec] (read-fetch-message work-unit f-delegate v)]
+    (tuple (if (empty? error-vec) :ok :fail) max-offset-read)))
 
 ;@TODO Find a better way of closing the producers
 (defn handle-timeout-response [{:keys [producers]}]
@@ -130,7 +133,7 @@
                                        [:fail nil])
                 :else (handle-read-response work-unit f-delegate v))
       error-ch (handle-error-response v)
-      (handle-timeout-response))))
+      (handle-timeout-response state))))
 
     
 (defn fetch-and-wait 
@@ -264,13 +267,13 @@
         (try
           (do
             (if (not producer-conn) (throw (RuntimeException. "No producer created")))
-            (let [[status resp-data] (fetch-and-wait state work-unit producer-conn f-delegate)
+            (let [[status ^long max-offset-read] (fetch-and-wait state work-unit producer-conn f-delegate)
                   state2 (assoc state :status :ok)
                   ]
-              (if resp-data
-                (publish-work-response! state2 org-work-units work-unit status {:offset-read (get-offset-read resp-data)})
+              (if (and max-offset-read (> max-offset-read -1))
+                (publish-work-response! state2 org-work-units work-unit status {:offset-read max-offset-read})
                 (do
-                  (info ">>>>>>>>>>>>>> nil resp-data " resp-data  " status " status  " w-unit " work-unit)))
+                  (info ">>>>>>>>>>>>>> nil max-offset-read " max-offset-read  " status " status  " w-unit " work-unit)))
 
               state2))
           (catch Throwable t (do
@@ -349,9 +352,9 @@
   (let [
 
         {:keys [load-pool] :as ret-state} (merge state (consumer-start state) {:restart 0})
-        consumer-threads (get conf :consumer-threads 8)
+        consumer-threads (get conf :consumer-threads 2)
         ;create a chan per thread, updates are faster and there is less mutex lock contention
-        ch-vec (vec (for [i (range consumer-threads)] (chan 100)))
+        ch-vec (vec (for [i (range consumer-threads)] (chan 10)))
         publish-pool (start-publish-pool-thread ret-state)]
 
 

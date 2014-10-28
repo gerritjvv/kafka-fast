@@ -179,12 +179,14 @@
   Side effects: lpush work-units to work-queue
                 set offsets/$topic/$partition = max-offset of work-units
    "
-  [{:keys [group-name redis-conn work-queue ^Long consume-step work-assigned-flag] :as state :or {consume-step 100000}} broker topic offset-data]
-  {:pre [group-name redis-conn work-queue consume-step (integer? consume-step)]}
+  [{:keys [group-name redis-conn work-queue ^Long consume-step work-assigned-flag conf] :as state} broker topic offset-data]
+  {:pre [group-name redis-conn work-queue]}
   (let [offset-data2
         ;here we add offsets as saved-offset via the add-offset function
         ;note that this function will also write to redis
-        (filter (fn [x] (and x (< ^Long (:saved-offset x) ^Long (:offset x)))) (map (partial add-offsets! state topic) offset-data))]
+        (filter (fn [x] (and x (< ^Long (:saved-offset x) ^Long (:offset x)))) (map (partial add-offsets! state topic) offset-data))
+
+        consume-step2 (if consume-step consume-step (get conf :consume-step 100000))]
 
     (doseq [{:keys [offset partition saved-offset]} offset-data2]
       (swap! work-assigned-flag inc)
@@ -193,7 +195,7 @@
       ;push w-units
       ;save max-offset
       ;producer topic partition max-offset start-offset step
-      (if-let [work-units (calculate-work-units broker topic partition offset saved-offset consume-step)]
+      (if-let [work-units (calculate-work-units broker topic partition offset saved-offset consume-step2)]
         (let [max-offset (apply max (map #(+ ^Long (:offset %) ^Long (:len %)) work-units))
               ts (System/currentTimeMillis)]
           (redis/wcar redis-conn

@@ -1,5 +1,5 @@
 (ns kafka-clj.client
-  (:require [fun-utils.core :refer [star-channel buffered-chan fixdelay apply-get-create stop-fixdelay go-seq]]
+  (:require [fun-utils.core :refer [star-channel buffered-chan fixdelay-thread apply-get-create stop-fixdelay thread-seq]]
             [kafka-clj.produce :refer [producer metadata-request-producer send-messages message shutdown]]
             [kafka-clj.metadata :refer [get-metadata]]
             [kafka-clj.msg-persist :refer [get-sent-message close-send-cache create-send-cache close-send-cache remove-sent-message
@@ -85,7 +85,7 @@
 (defn- always-false ([] false) ([_ _] t))
 
 (defn create-producer-buffer [connector topic partition producer-error-ch {:keys [host port]} {:keys [batch-num-messages queue-buffering-max-ms] :or
-                                                                   {batch-num-messages 100 queue-buffering-max-ms 500} :as conf}]
+                                                                   {batch-num-messages 1000 queue-buffering-max-ms 500} :as conf}]
   "Creates a producer and buffered-chan with a go loop that will read off the buffered chan and send to the producer.
    A map with keys :producer ch-source and buff-ch is returned"
   (let [producer (producer host port conf)
@@ -93,7 +93,7 @@
         ch-source (chan 100)
         read-ch (-> producer :client :read-ch)
                                ;ch-source buffer-count timeout-ms buffer-or-n check-f
-        buff-ch (buffered-chan ch-source batch-num-messages queue-buffering-max-ms 10 always-false)
+        buff-ch (buffered-chan ch-source batch-num-messages queue-buffering-max-ms 2 always-false)
         
         handle-send-message-error (fn [e producer conf offset v]
                                     (error e e)
@@ -105,7 +105,7 @@
     ;if a response from the server (only when ack > 0)
     ; if error-codec > 0 then handle the error
     ; else remove the message from the cache
-    (go-seq 
+    (thread-seq
        (fn [v]
          (try
 	          (if (instance? ProduceResponse v) ;ProduceResponse [correlation-id topic partition error-code offset])
@@ -122,7 +122,7 @@
        read-ch)
     
     ;;if any error on the tcp client handle error
-    (go-seq
+    (thread-seq
       (fn [[e v]]
         (if (fn? v) 
           (handle-send-message-error 
@@ -194,8 +194,8 @@
 	  (if-let [producer (get @producers-ref k)]
    	    @producer
 		    (deref 
-          (get (dosync (alter producers-ref 
-                           (fn [x] 
+          (get (dosync (alter producers-ref
+                           (fn [x]
                              (if-let [producer (get @producers-ref k)]
                                x ; return map the producer already exists
                                (let [[partition broker] (select-broker topic partition brokers-metadata)]
@@ -254,13 +254,11 @@
   "Close all producers and channels created for the connected"
   (.shutdown ^ScheduledExecutorService (:scheduled-service state))
   
-  ;(stop-fixdelay (:retry-cache-ch state))
-	(close-retry-cache connector) ;here we get 100% cpu use
+  (close-retry-cache connector)
   (close-send-cache connector)
  
   (doseq [producer-buffer (deref (:producers-ref state))]
-    (close-producer-buffer! producer-buffer))
-  )
+    (close-producer-buffer! producer-buffer)))
 
 
 (defn create-connector [bootstrap-brokers {:keys [acks] :or {acks 0} :as conf}]
@@ -303,7 +301,7 @@
                    :state (assoc state :scheduled-service scheduled-service) }
         
                   ;;every 5 seconds check for any data in the retry cache and resend the messages
-				retry-cache-ch (fixdelay 5000
+				retry-cache-ch (fixdelay-thread 5000
 										      (try
                             (do
                              (doseq [retry-msg (retry-cache-seq connector)]
@@ -319,7 +317,7 @@
     (.scheduleWithFixedDelay scheduled-service ^Runnable update-metadata 0 10000 TimeUnit/MILLISECONDS)
     ;listen to any producer errors, this can be sent from any producer
     ;update metadata, close the producer and write the messages in its buff cache to the 
-    (go-seq
+    (thread-seq
       (fn [error-val]
         (try
           (prn "producer error producer-error-ch")

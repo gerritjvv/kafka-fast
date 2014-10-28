@@ -164,8 +164,7 @@
   (if (> acks 0)
     (write! client (partial write-message-for-ack connector conf msgs))
 	  (write! client (fn [^ByteBuf buff]
-
-	                       (if buff (with-size buff write-request conf msgs))
+                         (if buff (with-size buff write-request conf msgs))
                          msgs;we must return the msgs here, its used later by the cache for retries
 	                       ))))
 

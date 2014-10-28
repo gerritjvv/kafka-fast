@@ -10,6 +10,7 @@ import java.util.zip.GZIPInputStream;
 
 import org.xerial.snappy.Snappy;
 import org.xerial.snappy.SnappyInputStream;
+import com.alexkasko.unsafe.offheap.OffHeapMemory;
 
 
 public class Util {
@@ -28,9 +29,39 @@ public class Util {
 
 	public static final ByteBuf setUnsignedInt(ByteBuf buff, int pos, long v){
 		return buff.setInt(pos, (int)(v & 0xffffffffL));
-	}	
+	}
 
-	public static final ByteBuf writeUnsignedInt(ByteBuf buff, long v){
+
+    public static final short readShort(OffHeapMemory memory, long pos){
+        return (short)((memory.getByte(pos++) << 8) | (memory.getByte(pos++) & 0xff));
+    }
+
+    public static final int readInt(OffHeapMemory memory, long pos){
+      return  (((memory.getByte(pos++) & 0xff) << 24) | ((memory.getByte(pos++) & 0xff) << 16) |
+              ((memory.getByte(pos++) & 0xff) <<  8) | (memory.getByte(pos++) & 0xff));
+    }
+
+    public static final long readLong(OffHeapMemory memory, long pos){
+      return   (((long)(memory.getByte(pos++) & 0xff) << 56) |
+                ((long)(memory.getByte(pos++) & 0xff) << 48) |
+                ((long)(memory.getByte(pos++) & 0xff) << 40) |
+                ((long)(memory.getByte(pos++) & 0xff) << 32) |
+                ((long)(memory.getByte(pos++) & 0xff) << 24) |
+                ((long)(memory.getByte(pos++) & 0xff) << 16) |
+                ((long)(memory.getByte(pos++) & 0xff) <<  8) |
+                ((long)(memory.getByte(pos++) & 0xff)));
+    }
+
+    public static byte[] getBytes(OffHeapMemory memory, long pos, long len){
+        byte[] bts = new byte[(int)len];
+        for(int i = 0; i < len ; i++){
+            bts[i] = memory.getByte(pos++);
+        }
+        return bts;
+    }
+
+
+    public static final ByteBuf writeUnsignedInt(ByteBuf buff, long v){
 		return buff.writeInt((int)(v & 0xffffffffL));
 	}	
 	

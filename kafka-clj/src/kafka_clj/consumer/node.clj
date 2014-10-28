@@ -5,7 +5,7 @@
             [kafka-clj.consumer.consumer :refer [consume! close-consumer!]]
             [kafka-clj.redis :as redis]
             [com.stuartsierra.component :as component]
-            [fun-utils.core :refer [fixdelay stop-fixdelay buffered-chan]]
+            [fun-utils.core :refer [fixdelay-thread stop-fixdelay buffered-chan]]
             [taoensso.carmine :as car]
             [clojure.tools.logging :refer [info error]]
             [clojure.core.async :refer [chan <!! alts!! timeout close! sliding-buffer]]))
@@ -49,7 +49,8 @@
    The topics can be polled from a configuration service like zookeeper or even a DB"
   [org topics & {:keys [freq] :or {freq 10000}}]
   {:pre [org topics]}
-  (fixdelay freq
+  (fixdelay-thread
+            freq
             (safe-call work-calculate-delegate! org @topics)))
 
 (defn copy-redis-queue
@@ -95,7 +96,7 @@
   Returns a map {:conf intermediate-conf :topics-ref topics-ref :org org :msg-ch msg-ch :consumer consumer :calc-work-thread calc-work-thread :group-conn group-conn :group-name group-name}
   "
   [conf topics]
-  {:pre [conf topics]}
+  {:pre [conf topics (not-empty (:bootstrap-brokers conf)) (:redis-conf conf)]}
   (let [host-name (.getHostName (InetAddress/getLocalHost))
         topics-ref (ref (into #{} topics))
         group-name (get-in conf [:redis-conf :group-name] "default")
@@ -110,7 +111,7 @@
         work-unit-event-ch (chan (sliding-buffer 100))
         org (create-organiser! intermediate-conf)
         redis-conn (:redis-conn org)
-        msg-ch (chan 1000)
+        msg-ch (chan 100)
         consumer (consume! (assoc intermediate-conf :redis-conn redis-conn :msg-ch msg-ch :work-unit-event-ch work-unit-event-ch))
         calc-work-thread (start-work-calculate (assoc org :redis-conn redis-conn) topics-ref :freq (get conf :work-calculate-freq 10000))
         ]
