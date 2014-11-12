@@ -59,7 +59,7 @@
     ;we try to recalculate the broker, if any exception we reput the w-unit on the queue
     (let [sorted-wu (into (sorted-map) w-unit)
           broker (get-broker-from-meta state (:topic w-unit) (:partition w-unit))]
-      (error "Rebuilding failed work unit " w-unit)
+      (debug "Rebuilding failed work unit " w-unit)
       (car/lpush work-queue (assoc sorted-wu :producer broker))
       state)
     (catch Exception e (do
@@ -233,7 +233,7 @@
 (defn calculate-new-work
   "Accepts the state and returns the state as is.
    For topics new work is calculated depending on the metadata returned from the producers"
-  [{:keys [meta-producers conf] :as state} topics]
+  [{:keys [meta-producers conf error-handler] :as state} topics]
   {:pre [meta-producers conf]}
   (let [meta (get-metadata meta-producers conf)
          offsets (cutil/get-broker-offsets state meta topics conf)]
@@ -244,7 +244,7 @@
         (try
           ;we map :offset to max of :offset and :all-offets
           (send-offsets-if-any! state broker topic (map #(assoc % :offset (apply max (:offset %) (:all-offsets %))) offset-data))
-          (catch Exception e (do (error e e) (.printStackTrace e))))))
+          (catch Exception e (do (error e e) (.printStackTrace e) (if error-handler (error-handler :meta state e)))))))
     state))
 
 

@@ -98,9 +98,17 @@
                                 (.cancel f true)
                                 nil))))
 
+(defn error-vec->error-status [error-vec]
+  (let [delete-fail-status (->>
+                             error-vec
+                             (map :error-code)
+                             (filter #{1 3})                ;OffsetOutOfRange UknownTopicOrPartition
+                             first)]
+    (if delete-fail-status :fail-delete :fail)))
+
 (defn handle-read-response [work-unit f-delegate v]
   (let [[max-offset-read error-vec] (read-fetch-message work-unit f-delegate v)]
-    (tuple (if (empty? error-vec) :ok :fail) max-offset-read)))
+    (tuple (if (empty? error-vec) :ok (error-vec->error-status error-vec)) max-offset-read)))
 
 ;@TODO Find a better way of closing the producers
 (defn handle-timeout-response [{:keys [producers]}]
@@ -345,7 +353,7 @@
    The actual consume! function returns inmediately
 
   "
-  [{:keys [conf msg-ch work-unit-event-ch] :as state}]
+  [{:keys [conf msg-ch work-unit-event-ch error-handler] :as state}]
   {:pre [conf work-unit-event-ch msg-ch
          (instance? clojure.core.async.impl.channels.ManyToManyChannel msg-ch)
          (instance? clojure.core.async.impl.channels.ManyToManyChannel work-unit-event-ch)]}
@@ -382,9 +390,11 @@
                                                   ;we override the status here, from experiments it was found that its
                                                   ;not a good idea to restart threads on failure, rather to report and retry.
                                                   (error "Error doing workunit: ")
+                                                  (if error-handler (error-handler :consume state e))
                                                   (assoc state :status :ok)))))
                          (fn [state & args] ;fail
                            (info "Fail consumer thread: " state " " args)
+                           (if error-handler (error-handler :consume state (RuntimeException. "failing consumer thread")))
                            (if-let [e (:throwable state)] (error e e))
                            (close-for-restart-consumer! state)
                            (assoc (merge state (consumer-start state)) :status :ok)))))

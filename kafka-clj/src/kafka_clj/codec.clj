@@ -8,6 +8,7 @@
 
 (defonce SNAPPY "snappy")
 (defonce GZIP "gzip")
+(defonce GZIP_NATIVE "gzip-native")
 
 (defn crc32-int
   "CRC for byte array."
@@ -33,7 +34,7 @@
                   (.close dout)
                   (.close bout)
                   (.toByteArray bout))
-    (= codec 2) (Util/compressSnappy bts)))
+    (= codec 2) (Util/compressSnappy bts) ))
                 
 
 (defn ^"[B" uncompress [codec ^"[B" bts]

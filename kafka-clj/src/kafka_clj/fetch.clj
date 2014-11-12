@@ -407,8 +407,8 @@
                                   ;setting default options for big data fetch
                                   ;5mb tcp receive buffer and tcp nodelay off
                                   :channel-options [
-                                                     [ChannelOption/TCP_NODELAY true]
-                                                     [ChannelOption/SO_RCVBUF (int 1048576)] ]
+                                                    [ChannelOption/TCP_NODELAY true]
+                                                    ]
                                   }
                                 conf
                                 ;parameters tha cannot be overwritten

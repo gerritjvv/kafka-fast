@@ -33,12 +33,17 @@
   [{:keys [redis-conn group-name] :as node} topics]
   {:pre [redis-conn topics group-name]}
   ;timeout-ms wait-ms
-  (redis/with-lock
-    redis-conn
-    (str group-name "/kafka-nodes-master-lock")
-    (* 5 60000)                                             ;5 minute timeout
-    500
-    (calculate-new-work node topics)))
+  (let [lock-timeout (* 10 60000)]
+    (redis/with-lock
+      redis-conn
+      (str group-name "/kafka-nodes-master-lock")
+      lock-timeout
+      500
+      (let [start-ts (System/currentTimeMillis)]
+        ;we keep the lock for N minutes, calculating new offsets each second.
+        (while (< (- (System/currentTimeMillis) start-ts) lock-timeout)
+          (calculate-new-work node topics)
+          (Thread/sleep 1000))))))
 
 (defn- start-work-calculate
   "Returns a channel that will run in a fixed delay of 1000ms
@@ -95,7 +100,7 @@
   Note that unrecouverable work units like error-code 1 are added to the kafka-error-queue. This queue should be monitored.
   Returns a map {:conf intermediate-conf :topics-ref topics-ref :org org :msg-ch msg-ch :consumer consumer :calc-work-thread calc-work-thread :group-conn group-conn :group-name group-name}
   "
-  [conf topics]
+  [conf topics & {:keys [error-handler] :or {error-handler (fn [& args])}}]
   {:pre [conf topics (not-empty (:bootstrap-brokers conf)) (:redis-conf conf)]}
   (let [host-name (.getHostName (InetAddress/getLocalHost))
         topics-ref (ref (into #{} topics))
@@ -109,7 +114,7 @@
                                       :complete-queue (str group-name "-kafka-complete-queue"))
 
         work-unit-event-ch (chan (sliding-buffer 100))
-        org (create-organiser! intermediate-conf)
+        org (assoc (create-organiser! intermediate-conf) :error-handler error-handler)
         redis-conn (:redis-conn org)
         msg-ch (chan 100)
         consumer (consume! (assoc intermediate-conf :redis-conn redis-conn :msg-ch msg-ch :work-unit-event-ch work-unit-event-ch))

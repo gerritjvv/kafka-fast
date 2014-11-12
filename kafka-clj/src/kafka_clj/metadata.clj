@@ -49,7 +49,7 @@
       (send-metadata-request producer conf)
       (catch Exception e (error e e))))
 
-(defn get-broker-metadata [metadata-producer {:keys [metadata-timeout] :or {metadata-timeout 10000} :as conf}]
+(defn get-broker-metadata [metadata-producer {:keys [metadata-timeout] :or {metadata-timeout 60000} :as conf}]
    "
    Creates a metadata-request-producer, sends a metadata request to the broker and waits for a result,
    if no result in $metadata-timeout or an error an exception is thrown, otherwise the result of
@@ -64,7 +64,9 @@
 	             (if v
 	               (if (= c read-ch)  (convert-metadata-response v)
 	                 (throw (Exception. (str "Error reading metadata from producer " metadata-producer  " error " v))))
-	               (throw (Exception. (str "timeout reading from producer " metadata-producer)))))))
+	               (do
+                   (shutdown producer)
+                   (throw (Exception. (str "timeout reading from producer " metadata-producer))))))))
 
 (defn- _get-metadata [metadata-producers conf]
   "Iterate through the brokers, and the first one that returns a metadata response is used"
