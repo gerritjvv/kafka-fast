@@ -8,7 +8,7 @@
     [kafka-clj.fetch :refer [close-fetch-producer create-fetch-producer send-fetch read-fetch]]
     [thread-load.core :as tl]
     [clj-tuple :refer [tuple]]
-    [clojure.tools.logging :refer [info error debug]])
+    [clojure.tools.logging :refer [info error debug warn]])
   (:import
     [io.netty.buffer ByteBuf Unpooled PooledByteBufAllocator]
     [kafka_clj.fetch Message FetchError]
@@ -16,7 +16,8 @@
     [clj_tcp.client Reconnected Poison]
     [com.codahale.metrics Meter MetricRegistry Timer Histogram]
     [clojure.lang ArityException]
-    [io.netty.buffer Unpooled]))
+    [io.netty.buffer Unpooled]
+    (java.util.concurrent.atomic AtomicInteger)))
 
 ;;; This namespace requires a running redis and kafka cluster
 ;;;;;;;;;;;;;;;;;; USAGE ;;;;;;;;;;;;;;;
@@ -41,7 +42,10 @@
   [{:keys [topic partition ^long offset ^long len]} f-delegate v]
   (if v
 	  (let [ max-offset (long (+ offset len))
-	         fetch-res
+           msg-count (AtomicInteger. 0)
+           msg-waste-count (AtomicInteger. 0)
+
+          fetch-res
 	         (read-fetch v [0 [] nil -1]
 				     (fn [state msg]
 	              ;read-fetch will navigate the fetch response calling this function
@@ -59,8 +63,12 @@
                            (if (and (= (:topic msg) topic) (= ^Long (:partition msg) ^Long partition)
                                     (>= msg-offset offset)
                                     (< msg-offset max-offset))
-                             (tuple (Math/max max-offset-read msg-offset) errors (f-delegate f-state msg) (:offset msg))
-                             (tuple max-offset-read errors f-state)))
+                             (do
+                               (.incrementAndGet ^AtomicInteger msg-count)
+                               (tuple (Math/max max-offset-read msg-offset) errors (f-delegate f-state msg) (:offset msg)))
+                             (do
+                               (.incrementAndGet ^AtomicInteger msg-waste-count)
+                               (tuple max-offset-read errors f-state))))
 								         (instance? kafka_clj.fetch.FetchError msg)
 								         (do (error "Fetch error: " msg) (tuple max-offset-read (conj errors msg) f-state))
 								         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
@@ -69,6 +77,11 @@
 		                      (tuple max-offset-read errors f-state)))))
 	                  (do (error "State not supported " state)
 	                      [-1 [] nil]))))]
+
+      ;warn when wasting messages
+      (if (> (.get ^AtomicInteger msg-waste-count) (/ (.get ^AtomicInteger msg-count) 2))
+        (warn "Non optimum consumer config, increase :consume-step or possibly decrease :max-bytes: " (Thread/currentThread) ": fetch msg count: " topic "[" partition "] > count: " (.get ^AtomicInteger msg-count) " waste: " (.get ^AtomicInteger msg-waste-count)))
+
       (if v
         (.release ^ByteBuf v))
          ;(info "FETCH RESP " fetch-res)
@@ -87,7 +100,8 @@
 (defn- error-code->status [error-vec]
   (let [code (error-code error-vec)]
     (condp = code
-      1 :fail-delete
+      ;@TODO we need to delete work units here but only if they are behind the max offset
+      ;1 :fail-delete
       :fail)))
 
 
@@ -149,9 +163,17 @@
    Sends a request for the topic and partition to the producer
    Returns [status data]  status can be :ok, :fail and data is v returned from the channel"
   [state {:keys [topic partition offset len] :as work-unit} producer f-delegate]
-    (io!
-      (send-fetch producer [[topic [{:partition partition :offset offset}]]])
-      (handle-response producer work-unit f-delegate (get state :conf))))
+  ;in order to avoid reading too many megabyes in a request when its not required
+  ;we reduce max bytes by the ratio offset-diff/consume-step
+   (let [consume-step (get-in state [:conf :consume-step] 100000)
+         max-bytes (let [max-bytes (get-in state [:conf :max-bytes] 104857600)]
+                     (if (< len (- consume-step (/ consume-step 8)))
+                       (int (* max-bytes (/ len consume-step)))
+                       max-bytes))]
+     (io!
+       ;we always specify a minimum of 5 megabytes
+       (send-fetch (assoc-in producer [:conf :max-bytes] (Math/max max-bytes 5242880)) [[topic [{:partition partition :offset offset}]]])
+       (handle-response producer work-unit f-delegate (get state :conf)))))
 
 
 (defn- safe-sleep

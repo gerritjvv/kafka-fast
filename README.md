@@ -279,11 +279,11 @@ See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for wr
 | Name | Default | Description |
 | ---- | ------  | ----------- |
 |:bootstrap-brokers | nil | An array of bootstrap brokers from which the consumer and producer will read the initial broker cluster state, e.g. ```[{:host "localhost" :port 9092} {:host "host2" :port 9092}]``` |
-|:batch-num-messages | 100  | Number of messages to batch before sending. If should be high enough for performance but not too high so that the total message-set size is too big. |
+|:batch-num-messages | 100000  | Number of messages to batch before sending. If should be high enough for performance but not too high so that the total message-set size is too big. |
 |:queue-buffering-max-ms | 1000 | Number of milliseconds to wait before sending, if the :batch-num-message has no been reached yet but this timeout happens, then the currently held data will be sent.| 
 |:max-wait-time | 1000 | The number of milliseconds the server should wait to gather data (up to at least :min-bytes) for a fetch request. |
 |:min-bytes  | 1 | The minimum bytes a server should have before returning a fetch request. |
-|:max-bytes  | 52428800 (50mb) | The maximum number of bytes a fetch request should return. |
+|:max-bytes  | 104857600 (100mb) | The maximum number of bytes a fetch request should return. |
 |:client-id  | "1" | Used for identifying client requests. |
 |:codec      | 0   | The compression that should be used for sending messages, 0 = None, 1 = Gzip, 2 = Snappy. |
 |:acks       | 1   | The number of replicas that should be written and a response message returned for a produce send. | 
@@ -296,6 +296,17 @@ See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for wr
 |:send-cache-expire-after-access | 5 | seconds to expire an entry after read |
 |:consume-step | 100000 | The max number of messages to consume in a single work unit |
 |:redis-conf | ```:redis-conf {:host "localhost" :max-active 10 :timeout 500}``` | The redis configuration for the consumer |
+
+### Performance configuration for consuming
+
+Due to the way the work unit allocation works, if you read more bytes in a single request than the messages in a work unit there will be waste  
+and performance will not be optimum. The same happens if your message size is big so that only a small amount of messages falls into a single work unit  
+withing the max bytes requested. As a rule of thumb max-bytes should be big enough to fit e.g 100 000 messages in a single response (without blowing the memory)  
+some examples values are 100mb 200mb etc, the batch-num-messages should be equal to or just over that size, it could even be double.  
+
+This ensures that on each request you get a reasonable amount of messages in bytes and also a little as possible messages are wasted due to the work unit size.  
+
+The consumer will print a warning log entry when ever the wasted messages is more than half of the work-units size.
 
 ## Java 
 

@@ -39,11 +39,7 @@
       (str group-name "/kafka-nodes-master-lock")
       lock-timeout
       500
-      (let [start-ts (System/currentTimeMillis)]
-        ;we keep the lock for N minutes, calculating new offsets each second.
-        (while (< (- (System/currentTimeMillis) start-ts) lock-timeout)
-          (calculate-new-work node topics)
-          (Thread/sleep 1000))))))
+      (calculate-new-work node topics))))
 
 (defn- start-work-calculate
   "Returns a channel that will run in a fixed delay of 1000ms
@@ -180,7 +176,7 @@
 (defrecord KafkaNodeService [conf topics]
   component/Lifecycle
   (start [component]
-    (assoc component :node (create-node! conf topics)))
+    (assoc component :node (create-node! (:conf component) (:topics component))))
   (stop [component]
     (shutdown-node! (:node component))))
 
