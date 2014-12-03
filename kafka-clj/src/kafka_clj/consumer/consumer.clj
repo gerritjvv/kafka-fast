@@ -100,8 +100,7 @@
 (defn- error-code->status [error-vec]
   (let [code (error-code error-vec)]
     (condp = code
-      ;@TODO we need to delete work units here but only if they are behind the max offset
-      ;1 :fail-delete
+      1 :fail-delete
       :fail)))
 
 
@@ -171,8 +170,8 @@
                        (int (* max-bytes (/ len consume-step)))
                        max-bytes))]
      (io!
-       ;we always specify a minimum of 5 megabytes
-       (send-fetch (assoc-in producer [:conf :max-bytes] (Math/max max-bytes 5242880)) [[topic [{:partition partition :offset offset}]]])
+       ;we always specify a minimum of 1 megabytes
+       (send-fetch (assoc-in producer [:conf :max-bytes] (Math/max max-bytes 1048576)) [[topic [{:partition partition :offset offset}]]])
        (handle-response producer work-unit f-delegate (get state :conf)))))
 
 
