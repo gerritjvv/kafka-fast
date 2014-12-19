@@ -12,12 +12,12 @@
   (:import
     [io.netty.buffer ByteBuf Unpooled PooledByteBufAllocator]
     [kafka_clj.fetch Message FetchError]
-    [java.util.concurrent Future TimeoutException TimeUnit Executors ExecutorService]
+    [java.util.concurrent Future TimeoutException TimeUnit Executors ExecutorService CountDownLatch]
     [clj_tcp.client Reconnected Poison]
     [com.codahale.metrics Meter MetricRegistry Timer Histogram]
     [clojure.lang ArityException]
     [io.netty.buffer Unpooled]
-    (java.util.concurrent.atomic AtomicInteger)))
+    (java.util.concurrent.atomic AtomicInteger AtomicBoolean)))
 
 ;;; This namespace requires a running redis and kafka cluster
 ;;;;;;;;;;;;;;;;;; USAGE ;;;;;;;;;;;;;;;
@@ -335,12 +335,15 @@
               (car/lpush work-queue (into (sorted-map) work-unit)))))
 
 
-(defn- ^Runnable publish-pool-loop [{:keys [load-pool] :as state}]
+(defn- ^Runnable publish-pool-loop [{:keys [load-pool ^AtomicBoolean shutdown-flag ^CountDownLatch shutdown-confirm] :as state}]
   (fn []
-    (while (not (Thread/interrupted))
-      (try
-        (tl/publish! load-pool (get-work-unit! state))
-        (catch Exception e (error e e))))
+    (try
+      (while (and (not (Thread/interrupted)) (not (.get shutdown-flag)))
+        (try
+          (tl/publish! load-pool (get-work-unit! state))
+          (catch Exception e (error e e))))
+      (finally
+        (.countDown shutdown-confirm true)))
     (info ">>>>>>>>>>>>>>>>>>>>>>>>>>> Exit publish pool loop >>>>>>>>>>>>>")
     ))
 
@@ -351,19 +354,16 @@
   (doto (Executors/newSingleThreadExecutor) (.submit (publish-pool-loop state))))
 
 
-(defn close-consumer! [{:keys [load-pool publish-pool]}]
+(defn close-consumer! [{:keys [load-pool publish-pool ^CountDownLatch shutdown-confirm ^AtomicBoolean shutdown-flag]}]
   {:pre [load-pool (instance? ExecutorService publish-pool)]}
+  (.set shutdown-flag true)
+  (.await shutdown-confirm 10000 TimeUnit/MILLISECONDS)     ;await for shutdown confirm from all consumer threads
   (tl/shutdown-pool load-pool 5000)
   (.shutdownNow ^ExecutorService publish-pool))
 
 
 (defn- close-for-restart-consumer! [{:keys [load-pool publish-pool]}]
-  {:pre [load-pool (instance? ExecutorService publish-pool)]}
-
-  )
-
-
-
+  {:pre [load-pool (instance? ExecutorService publish-pool)]})
 
 
 
@@ -380,7 +380,7 @@
          (instance? clojure.core.async.impl.channels.ManyToManyChannel work-unit-event-ch)]}
   (let [
 
-        {:keys [load-pool] :as ret-state} (merge state (consumer-start state) {:restart 0})
+        {:keys [load-pool] :as ret-state} (merge state (consumer-start state) {:restart 0 :shutdown-flag (AtomicBoolean. false) :shutdown-confirm (CountDownLatch. 1)})
         consumer-threads (get conf :consumer-threads 2)
         ;create a chan per thread, updates are faster and there is less mutex lock contention
         ch-vec (vec (for [i (range consumer-threads)] (chan 10)))

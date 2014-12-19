@@ -8,7 +8,7 @@
     [kafka-clj.metadata :refer [get-metadata]]
     [kafka-clj.produce :refer [metadata-request-producer] :as produce]
     [kafka-clj.consumer.consumer :refer [wait-on-work-unit!]])
-  (:import [java.util.concurrent Executors ExecutorService]
+  (:import [java.util.concurrent Executors ExecutorService CountDownLatch TimeUnit]
            (java.util.concurrent.atomic AtomicBoolean)))
 
 ;;; This namespace requires a running redis and kafka cluster
@@ -116,23 +116,26 @@
 
 (defn- ^Runnable work-complete-loop
   "Returns a Function that will loop continueously and wait for work on the complete queue"
-  [{:keys [redis-conn complete-queue working-queue] :as state}]
+  [{:keys [redis-conn complete-queue working-queue ^AtomicBoolean shutdown-flag ^CountDownLatch shutdown-confirm] :as state}]
   {:pre [redis-conn complete-queue working-queue]}
   (fn []
-    (while (not (Thread/interrupted))
-      (try
-        (when-let [work-units (wait-on-work-unit! redis-conn complete-queue working-queue)]
-          (redis/wcar
-                    redis-conn
-                    (if (map? work-units)
-                      (do
-                        (work-complete-handler! state (ensure-unique-id work-units))
-                        (car/lrem working-queue -1 (into (sorted-map) work-units)))
-                      (doseq [work-unit work-units]
-                        (work-complete-handler! state (ensure-unique-id work-unit))
-                        (car/lrem working-queue -1 (into (sorted-map) work-unit))))))
-        (catch InterruptedException e1 (info "Exit work complete loop"))
-        (catch Exception e (do (error e e) (prn e)))))))
+    (try
+      (while (and (not (Thread/interrupted)) (not (.get shutdown-flag)))
+        (try
+          (when-let [work-units (wait-on-work-unit! redis-conn complete-queue working-queue)]
+            (redis/wcar
+              redis-conn
+              (if (map? work-units)
+                (do
+                  (work-complete-handler! state (ensure-unique-id work-units))
+                  (car/lrem working-queue -1 (into (sorted-map) work-units)))
+                (doseq [work-unit work-units]
+                  (work-complete-handler! state (ensure-unique-id work-unit))
+                  (car/lrem working-queue -1 (into (sorted-map) work-unit))))))
+          (catch InterruptedException e1 (info "Exit work complete loop"))
+          (catch Exception e (do (error e e) (prn e)))))
+      (finally
+        (.countDown shutdown-confirm)))))
 
 (defn start-work-complete-processor!
   "Creates a ExecutorService and starts the work-complete-loop running in a background thread
@@ -277,7 +280,9 @@
   {:pre [work-queue working-queue complete-queue
          bootstrap-brokers (> (count bootstrap-brokers) 0) (-> bootstrap-brokers first :host) (-> bootstrap-brokers first :port)]}
 
-  (let [meta-producers (create-meta-producers! bootstrap-brokers conf)
+  (let [shutdown-flag (AtomicBoolean. false)
+        shutdown-confirm (CountDownLatch. 1)
+        meta-producers (create-meta-producers! bootstrap-brokers conf)
         spec  {:host     (get redis-conf :host "localhost")
                :port     (get redis-conf :port 6379)
                :password (get redis-conf :password)
@@ -285,7 +290,7 @@
         opts {:max-active (get redis-conf :max-active 20)}
 
         redis-conn (redis/conn-pool spec opts)
-        intermediate-state (assoc state :meta-producers meta-producers :redis-conn redis-conn :offset-producers (ref {}))
+        intermediate-state (assoc state :meta-producers meta-producers :redis-conn redis-conn :offset-producers (ref {}) :shutdown-flag shutdown-flag :shutdown-confirm shutdown-confirm)
         work-complete-processor-future (start-work-complete-processor! intermediate-state)
         ]
     (assoc intermediate-state
@@ -307,8 +312,10 @@
 
 (defn close-organiser!
   "Closes the organiser passed in"
-  [{:keys [meta-producers redis-conn work-complete-processor-future redis-conn]}]
+  [{:keys [meta-producers redis-conn work-complete-processor-future redis-conn ^AtomicBoolean shutdown-flag ^CountDownLatch shutdown-confirm]}]
   {:pre [meta-producers redis-conn (instance? ExecutorService work-complete-processor-future)]}
+  (.set shutdown-flag true)
+  (.await shutdown-confirm 10000 TimeUnit/MILLISECONDS)
   (.shutdownNow ^ExecutorService work-complete-processor-future)
   (doseq [producer meta-producers]
     (produce/shutdown producer))

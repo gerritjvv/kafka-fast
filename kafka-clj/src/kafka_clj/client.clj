@@ -7,7 +7,7 @@
             [clojure.tools.logging :refer [error info debug]]
             [com.stuartsierra.component :as component]
             [clj-tuple :refer [tuple]]
-            [clojure.core.async :refer [chan >! >!! <! <!! thread go close!] :as async])
+            [clojure.core.async :refer [chan >! >!! <! <!! thread go close! dropping-buffer] :as async])
   (:import [java.util.concurrent.atomic AtomicInteger AtomicLong]
            [kafka_clj.response ProduceResponse]
            (java.util.concurrent Executors ScheduledExecutorService TimeUnit)))
@@ -129,7 +129,7 @@
                     (RuntimeException. (str "Client tcp error " e)) 
                     producer conf v -1)
           (error "Cannot react on message " v))
-        
+
         (error e e))  (:error-ch c))
 		    
     ;send buffered messages
@@ -261,6 +261,9 @@
     (close-producer-buffer! producer-buffer)))
 
 
+(defn producer-error-ch [connector]
+  (get-in connector [:state :producer-error-ch]))
+
 (defn create-connector [bootstrap-brokers {:keys [acks] :or {acks 0} :as conf}]
   (let [
         ^ScheduledExecutorService scheduled-service (Executors/newSingleThreadScheduledExecutor)
@@ -268,7 +271,7 @@
         brokers-metadata (ref (get-metadata metadata-producers conf))
         _ (if (empty? @brokers-metadata)
             (throw (RuntimeException. (str "No broker metadata could be found for " bootstrap-brokers))))
-        producer-error-ch (chan 1000)
+        producer-error-ch (chan (dropping-buffer 1000))
         producer-ref (ref {})
         send-cache (if (> acks 0) (create-send-cache conf))
         retry-cache (create-retry-cache conf)

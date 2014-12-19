@@ -322,6 +322,18 @@ https://github.com/jankotek/mapdb is used for this purpose.
 
 The latter is only true if ack is not 0. 
 
+## Producer Errors 
+
+Producer errors can be read via the "producer-error-ch" channel, the function ```producer-error-ch``` can be used to  
+get the channel from a connector.
+
+The error message sent to the channel is:
+
+```clojure
+{:key-val (str topic ":" partition) :error e 
+ :producer {:producer producer :buff-ch buff-ch}
+ :offset offset :v v :topic topic}
+```
 
 ## Retry cache logic
 
