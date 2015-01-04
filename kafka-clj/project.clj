@@ -30,7 +30,7 @@
                  [org.clojure/tools.trace "0.7.6"]
                  [org.xerial.snappy/snappy-java "1.1.1.6"]
                  [org.clojure/tools.logging "0.3.0"]
-                 [clj-tcp "0.4.4-SNAPSHOT"]
+                 [clj-tcp "0.4.4"]
                  [fmap-clojure "LATEST" :exclusions [org.clojure/tools.logging]]
                  [fun-utils "0.5.0" :exclusions [org.clojure/tools.logging]]
                  [clj-tuple "0.1.7"]
