@@ -281,6 +281,8 @@ See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for wr
 |:bootstrap-brokers | nil | An array of bootstrap brokers from which the consumer and producer will read the initial broker cluster state, e.g. ```[{:host "localhost" :port 9092} {:host "host2" :port 9092}]``` |
 |:batch-num-messages | 100000  | Number of messages to batch before sending. If should be high enough for performance but not too high so that the total message-set size is too big. |
 |:queue-buffering-max-ms | 1000 | Number of milliseconds to wait before sending, if the :batch-num-message has no been reached yet but this timeout happens, then the currently held data will be sent.| 
+|:batch-byte-limit | 10485760 (10 MB) | If the number of bytes in a batch is bigger than this limit the batch will be sent to kafka |
+|:batch-fail-message-over-limit | true | If a single message is over this limit it will not be sent, and error message printed and the message is discarded |
 |:max-wait-time | 1000 | The number of milliseconds the server should wait to gather data (up to at least :min-bytes) for a fetch request. |
 |:min-bytes  | 1 | The minimum bytes a server should have before returning a fetch request. |
 |:max-bytes  | 104857600 (100mb) | The maximum number of bytes a fetch request should return. |

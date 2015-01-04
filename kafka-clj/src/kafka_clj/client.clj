@@ -24,6 +24,17 @@
     (get x k)))
 
 
+(defn flush-on-byte->fn
+  "Returns a check-f for buffered-chan that will flush if the accumulated byte count is bigger than that of byte-limit"
+  [^long byte-limit]
+  (fn
+    ([] 0)
+    ([^long byte-cnt msg]
+      (let [total-cnt (+ byte-cnt (count (:bts msg)))]
+        (if (>= total-cnt byte-limit)
+          (tuple true 0)
+          (tuple false total-cnt))))))
+
 (defn select-rr-partition! [topic {:keys [topic-partition-ref brokers-metadata] :as state}]
   "If a counter does not exist in the topic-partition-ref it will be created
    and set using commute, the return result is an increment on the topic counter
@@ -84,8 +95,9 @@
 (defonce t (tuple false false))
 (defn- always-false ([] false) ([_ _] t))
 
-(defn create-producer-buffer [connector topic partition producer-error-ch {:keys [host port]} {:keys [batch-num-messages queue-buffering-max-ms] :or
-                                                                   {batch-num-messages 1000 queue-buffering-max-ms 500} :as conf}]
+(defn create-producer-buffer [connector topic partition producer-error-ch {:keys [host port]} {:keys [batch-num-messages queue-buffering-max-ms batch-byte-limit batch-fail-message-over-limit]
+                                                                                               :or
+                                                                                               {batch-num-messages 1000 queue-buffering-max-ms 500 batch-byte-limit 10485760} :as conf}]
   "Creates a producer and buffered-chan with a go loop that will read off the buffered chan and send to the producer.
    A map with keys :producer ch-source and buff-ch is returned"
   (let [producer (producer host port conf)
@@ -93,7 +105,7 @@
         ch-source (chan 100)
         read-ch (-> producer :client :read-ch)
                                ;ch-source buffer-count timeout-ms buffer-or-n check-f
-        buff-ch (buffered-chan ch-source batch-num-messages queue-buffering-max-ms 2 always-false)
+        buff-ch (buffered-chan ch-source batch-num-messages queue-buffering-max-ms 2 (flush-on-byte->fn batch-byte-limit))
         
         handle-send-message-error (fn [e producer conf offset v]
                                     (error e e)
@@ -227,19 +239,18 @@
           (throw (RuntimeException. (str "The message for topic " topic " could not be sent")))))))
 
 (defn send-msg [{:keys [state] :as connector} topic ^bytes bts]
-  (if (> (-> state :brokers-metadata deref count) 0)
-	  (let [partition (select-rr-partition! topic state)
-	        producer-buffer (select-producer-buffer! connector topic partition state)]
-      (try
-       (send-to-buffer producer-buffer (message topic partition bts))
-       (catch Exception e
-         (do (error e e)
-           ;here we try all of the producers, if all fail we throw an exception
-           (send-msg-retry connector (message topic partition bts))
-           
-           ))))
-         
-   (throw (RuntimeException. (str "No brokers available: " connector)))))
+  (if (and (get-in state [:conf :batch-fail-message-over-limit]) (>= (count bts) ^long (get-in state [:conf :batch-byte-limit])))
+    (throw (RuntimeException. (str "The message size [ " (count bts)  " ] is larger than the configured batch-byte-limit [ " (get-in state [:conf :batch-byte-limit]) "]")))
+    (if (> (-> state :brokers-metadata deref count) 0)
+      (let [partition (select-rr-partition! topic state)
+            producer-buffer (select-producer-buffer! connector topic partition state)]
+        (try
+          (send-to-buffer producer-buffer (message topic partition bts))
+          (catch Exception e
+            (do (error e e)
+                ;here we try all of the producers, if all fail we throw an exception
+                (send-msg-retry connector (message topic partition bts))))))
+      (throw (RuntimeException. (str "No brokers available: " connector))))))
 
 (defn close-producer-buffer! [{:keys [producer ch-source]}]
   (try
@@ -264,7 +275,7 @@
 (defn producer-error-ch [connector]
   (get-in connector [:state :producer-error-ch]))
 
-(defn create-connector [bootstrap-brokers {:keys [acks] :or {acks 0} :as conf}]
+(defn create-connector [bootstrap-brokers {:keys [acks batch-fail-message-over-limit batch-byte-limit] :or {acks 0 batch-fail-message-over-limit true batch-byte-limit 10485760} :as conf}]
   (let [
         ^ScheduledExecutorService scheduled-service (Executors/newSingleThreadScheduledExecutor)
         metadata-producers (map #(metadata-request-producer (:host %) (:port %) conf) bootstrap-brokers)
@@ -279,7 +290,7 @@
                :brokers-metadata brokers-metadata
                :topic-partition-ref (ref {})
                :producer-error-ch producer-error-ch
-               :conf conf}
+               :conf (assoc conf :batch-fail-message-over-limit batch-fail-message-over-limit :batch-byte-limit batch-byte-limit)}
         ;go through each producer, if it does not exist in the metadata, the producer is closed, otherwise we keep it.
         update-producers (fn [metadata m] 
                                (into {} (filter (complement nil?)
