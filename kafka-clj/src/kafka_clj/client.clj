@@ -297,7 +297,7 @@
     (not (and (= host host1) (= port port1)))))
 
 
-(defn create-connector [bootstrap-brokers {:keys [acks batch-fail-message-over-limit batch-byte-limit blacklisted-expire] :or {blacklisted-expire 10000 acks 0 batch-fail-message-over-limit true batch-byte-limit 10485760} :as conf}]
+(defn create-connector [bootstrap-brokers {:keys [acks batch-fail-message-over-limit batch-byte-limit blacklisted-expire producer-retry-strategy] :or {blacklisted-expire 10000 acks 0 batch-fail-message-over-limit true batch-byte-limit 10485760 producer-retry-strategy :default} :as conf}]
   (let [
         ^ScheduledExecutorService scheduled-service (Executors/newSingleThreadScheduledExecutor)
         metadata-producers-ref (ref (filter (complement nil?) (map #(metadata-request-producer (:host %) (:port %) conf) bootstrap-brokers)))
@@ -374,35 +374,32 @@
                                                                 (try (update-metadata) (catch Exception e (error e e)))) 0 10000 TimeUnit/MILLISECONDS)
     ;listen to any producer errors, this can be sent from any producer
     ;update metadata, close the producer and write the messages in its buff cache to the 
-    (thread-seq
-      (fn [error-val]
-        (try
-          (warn "producer error producer-error-ch")
-          (let [{:keys [key-val producer v topic]} error-val
-                host (-> producer :producer :host)
-                port (-> producer :producer :port)]
-            ;persist to retry cache
-            (.printStackTrace ^Throwable (:error error-val))
+    (if (= producer-retry-strategy :default)
+      (thread-seq
+        (fn [error-val]
+          (try
+            (warn "producer error producer-error-ch")
+            (let [{:keys [key-val producer v topic]} error-val
+                  host (-> producer :producer :host)
+                  port (-> producer :producer :port)]
+              ;persist to retry cache
+              (.printStackTrace ^Throwable (:error error-val))
 
-            (dosync
-              (alter blacklisted-producers-ref (fn [m] (assoc m (str host ":" port) true))))
+              (dosync
+                (alter blacklisted-producers-ref (fn [m] (assoc m (str host ":" port) true))))
 
-            (dosync
-              (alter producer-ref (fn [m] (dissoc m key-val))))
+              (dosync
+                (alter producer-ref (fn [m] (dissoc m key-val))))
 
-            ;remove
-            (if (coll? v)                                   ;only write valid messages to the retry cache
-              (write-to-retry-cache connector topic v)
-              (warn "Could not send message to retry cache: invalid message " v))
+              ;remove
+              (if (coll? v)                                   ;only write valid messages to the retry cache
+                (write-to-retry-cache connector topic v)
+                (warn "Could not send message to retry cache: invalid message " v))
 
-            ;close producer and cause the buffer to be flushed
-            (close-producer-buffer! (smart-deref (:producer producer)))
-            (update-metadata :producers (filter (exclude-host host port) metadata-producers-ref) :timeout-ms 5000))
-          (catch Exception e (error e e)))) producer-error-ch)
-
-
-
-
+              ;close producer and cause the buffer to be flushed
+              (close-producer-buffer! (smart-deref (:producer producer)))
+              (update-metadata :producers (filter (exclude-host host port) metadata-producers-ref) :timeout-ms 5000))
+            (catch Exception e (error e e)))) producer-error-ch))
 
      (assoc connector :retry-cache-ch retry-cache-ch :update-metadata update-metadata)))
  

@@ -326,8 +326,32 @@ The latter is only true if ack is not 0.
 
 ## Producer Errors 
 
-Producer errors can be read via the "producer-error-ch" channel, the function ```producer-error-ch``` can be used to  
-get the channel from a connector.
+### Errors in the ```send-msg``` function
+
+The send-msg function has retry logic to search for better metadata and a broker that will accept the message, if no broker  
+is found or no metadata can be read this function throws a ```RuntimeException```.  
+
+It is the responsibility of the calling code to handle this error.  
+The best recommendation is to pause and retry (waiting for kafka to sort its metadata)  or write the message to disk  
+and or fail the application.  
+
+
+### Background errors
+
+How the connector handlers producer errors is determined by the ```producer-retry-strategy``` key passed to the ```kafka-clj.client/create-connector``` function  
+
+By default its ```(= producer-retry-strategy :default)```  
+
+if ```:default```  
+ The producer will write failed messages (only those that failed while sending to the broker in the background) to a retry cache on disk  
+ the messages will be continuously retried in search of brokers that will accept them.
+
+else
+  
+ The user has to handle any background producer errors by reading the ```producer-error-ch```  
+ Producer errors can be read via the "producer-error-ch" channel, the function ```producer-error-ch``` can be used to  
+ get the channel from a connector.  
+ Note that this channel if not cleared fast enough will block the connector's producers.
 
 The error message sent to the channel is:
 
