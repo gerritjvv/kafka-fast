@@ -225,13 +225,18 @@
 (defn metadata-request-producer
   "Returns a producer with a metadata-response-decoder set"
   [host port conf]
+  (if (not host)
+    (throw (RuntimeException. (str "Nill host is not allowed here"))))
   (try
   (let [c (client host port (merge conf 
                                    {:reuse-client true :handlers [
                                                            metadata-response-decoder
                                                            default-encoder 
                                                            ]}))]
-    (->Producer c host port))
+    (prn "Creating metadata-request-producers using: " c " " host " " port)
+    (if (record? c)
+      (->Producer c host port)
+      nil))
   
   (catch Exception e (do
                        (error "Could not create metadata-request-producer " host " " port " due to " e)

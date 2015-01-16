@@ -66,30 +66,42 @@
 	                 (throw (Exception. (str "Error reading metadata from producer " metadata-producer  " error " v))))
 	               (do
                    (shutdown producer)
-                   (throw (Exception. (str "timeout reading from producer " metadata-producer))))))))
+                   (throw (Exception. (str "timeout reading from producer " (vals metadata-producer)))))))))
 
-(defn- _get-metadata [metadata-producers conf]
+(defn- exception-if-blacklisted
+  "blacklisted-producers keys are (str host ':' port)
+   Throws a runtime exception if  host port combindation is found"
+  [{:keys [host port] :as producer} blacklisted-producers]
+  (if (get blacklisted-producers (str host ":" port))
+    (throw (RuntimeException. (str "Black listed producer: " host ":" port)))
+    producer))
+
+(defn- _get-metadata [metadata-producers blacklisted-metadata-producers-ref conf]
   "Iterate through the brokers, and the first one that returns a metadata response is used"
-     (if-let [metadata-producer (first metadata-producers)]
+     (if-let [metadata-producer (exception-if-blacklisted (first metadata-producers) @blacklisted-metadata-producers-ref)]
        (try
          (do
            (get-broker-metadata metadata-producer conf))
          (catch Exception e (do (.printStackTrace e)
-                                (error "error " e)
-                                  (if (rest metadata-producers) (_get-metadata (rest metadata-producers) conf)
-                                  (error e e)))))))
+                                (prn "error " e)
+                                  (dosync (alter blacklisted-metadata-producers-ref (fn [x] (assoc x (str (:host metadata-producer) (:port metadata-producer)) true))))
+                                  (if (rest metadata-producers) (_get-metadata (rest metadata-producers) blacklisted-metadata-producers-ref conf)
+                                  (error e e)))))
+       (throw (RuntimeException. (str "All bootstrap brokers return errors when queried for metadata, no metadata found")))))
 
-(defn get-metadata [metadata-producers conf & {:keys [retry retry-i] :or {retry 3 retry-i 0}}]
+(defn get-metadata [metadata-producers conf & {:keys [blacklisted-metadata-producers-ref retry retry-i] :or {retry 3 retry-i 0 blacklisted-metadata-producers-ref (ref {})}}]
   (if (empty? metadata-producers)
     (throw (RuntimeException. (str "At least one meta data producer must be defined")))
-    (let [meta (_get-metadata metadata-producers conf)]
+    (let [meta (_get-metadata metadata-producers blacklisted-metadata-producers-ref conf)]
       (if (empty? meta)
         (if (< retry-i retry)
           (do
-            (Thread/sleep 500)
-            (get-metadata metadata-producers conf :retry retry :retry-i (inc retry-i)))
+            (prn "retry")
+            (get-metadata metadata-producers conf :retry retry :retry-i (inc retry-i)) :blacklisted-metadata-producers-ref blacklisted-metadata-producers-ref)
           (throw (RuntimeException. (str "Unabled to get metadata from brokers meta " meta " producers " metadata-producers " conf " conf))))
-        meta))))
+        (do
+          (prn "got meta")
+          meta)))))
 
      
      
