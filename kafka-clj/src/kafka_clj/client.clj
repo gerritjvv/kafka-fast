@@ -4,7 +4,7 @@
             [kafka-clj.metadata :refer [get-metadata]]
             [kafka-clj.msg-persist :refer [get-sent-message close-send-cache create-send-cache close-send-cache remove-sent-message
                                            create-retry-cache write-to-retry-cache retry-cache-seq close-retry-cache delete-from-retry-cache]]
-            [clojure.tools.logging :refer [error info debug]]
+            [clojure.tools.logging :refer [error info debug warn]]
             [com.stuartsierra.component :as component]
             [clj-tuple :refer [tuple]]
             [clojure.core.cache :as cache]
@@ -157,7 +157,6 @@
     ;if any exception handle the error
     (thread-seq
       (fn [v]
-        (warn "ERROR: BUFF_CH v " v)
         (when (> (count v) 0)
           (try
             (send-messages connector producer conf v)
@@ -341,7 +340,7 @@
                                           new-meta-producers (reduce (fn [m {:keys [host port]}]
                                                                        (if-not (get metadata-producer-map {:host host :port port})
                                                                          (assoc m {:host host :port port} (metadata-request-producer host port conf))
-                                                                         m)) [] producers)]
+                                                                         m)) [] (map deref producers))]
                                       (dosync (alter metadata-producers-ref (fn [coll] (apply conj coll (vals new-meta-producers)))))))
 
         ;try each metadata-producer-ref entry in search of metadata

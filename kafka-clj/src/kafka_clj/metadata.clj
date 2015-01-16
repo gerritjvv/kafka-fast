@@ -3,7 +3,7 @@
             [clj-tuple :refer [tuple]]
             [kafka-clj.produce :refer [metadata-request-producer send-metadata-request shutdown]]
             [fun-utils.core :refer [fixdelay]]
-            [clojure.tools.logging :refer [info error]]
+            [clojure.tools.logging :refer [info error warn]]
             [clojure.core.async :refer [go <! <!! >!! alts!! timeout thread]])
   (:import [java.nio ByteBuffer]
            [clj_tcp.client Poison Reconnected]))
@@ -96,11 +96,10 @@
       (if (empty? meta)
         (if (< retry-i retry)
           (do
-            (prn "retry")
+            (warn "retry")
             (get-metadata metadata-producers conf :retry retry :retry-i (inc retry-i)) :blacklisted-metadata-producers-ref blacklisted-metadata-producers-ref)
           (throw (RuntimeException. (str "Unabled to get metadata from brokers meta " meta " producers " metadata-producers " conf " conf))))
         (do
-          (prn "got meta")
           meta)))))
 
      
