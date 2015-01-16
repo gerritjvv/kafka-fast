@@ -340,7 +340,7 @@
                                           new-meta-producers (reduce (fn [m {:keys [host port]}]
                                                                        (if-not (get metadata-producer-map {:host host :port port})
                                                                          (assoc m {:host host :port port} (metadata-request-producer host port conf))
-                                                                         m)) [] (map deref producers))]
+                                                                         m)) {} (map deref producers))]
                                       (dosync (alter metadata-producers-ref (fn [coll] (apply conj coll (vals new-meta-producers)))))))
 
         ;try each metadata-producer-ref entry in search of metadata
