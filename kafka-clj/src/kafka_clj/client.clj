@@ -334,21 +334,6 @@
 
         ;from the producers-ref if any new brokers add them to the metadata-producers-ref
         ;this will only include
-        update-metadata-producers (fn []
-                                    (let [producers (-> producer-ref deref vals flatten distinct)
-                                          metadata-producer-map (reduce (fn [m {:keys [host port]}] (assoc m {:host host :port port} producer)) {} @metadata-producers-ref)
-
-                                          new-meta-producers (reduce
-                                                               (fn [m {:keys [host port]}]
-                                                                 (let [k {:host host :port port}]
-                                                                   (if-not (and (get metadata-producer-map k) (get m k))
-                                                                     (assoc m {:host host :port port} (metadata-request-producer host port conf))
-                                                                     m)))
-                                                                     {}
-                                                                     (-> brokers-metadata deref vals flatten))]
-                                      (prn "new meta producers: " (count new-meta-producers))
-                                      (dosync (alter metadata-producers-ref (fn [coll]
-                                                                              (apply conj coll (vals new-meta-producers)))))))
 
         ;try each metadata-producer-ref entry in search of metadata
         ;update the producers (ref) with the new metadata found
@@ -376,8 +361,7 @@
 										                  (delete-from-retry-cache connector (:key-val retry-msg)))))
 										         (catch Exception e (error e e))))]
 
-    (.scheduleWithFixedDelay scheduled-service ^Runnable (fn [] (try (update-metadata-producers) (catch Exception e (error e e)))
-                                                                (try (update-metadata) (catch Exception e (error e e)))) 0 10000 TimeUnit/MILLISECONDS)
+    (.scheduleWithFixedDelay scheduled-service ^Runnable (fn [] (try (update-metadata) (catch Exception e (error e e)))) 0 10000 TimeUnit/MILLISECONDS)
     ;listen to any producer errors, this can be sent from any producer
     ;update metadata, close the producer and write the messages in its buff cache to the 
     (if (= producer-retry-strategy :default)
