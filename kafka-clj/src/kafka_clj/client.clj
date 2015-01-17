@@ -333,15 +333,20 @@
                                                  m))))
 
         ;from the producers-ref if any new brokers add them to the metadata-producers-ref
+        ;this will only include
         update-metadata-producers (fn []
                                     (let [producers (-> producer-ref deref vals flatten distinct)
                                           metadata-producer-map (reduce (fn [m {:keys [host port]}] (assoc m {:host host :port port} producer)) {} @metadata-producers-ref)
 
-                                          new-meta-producers (reduce (fn [m {:keys [host port]}]
-                                                                       (if-not (get metadata-producer-map {:host host :port port})
-                                                                         (assoc m {:host host :port port} (metadata-request-producer host port conf))
-                                                                         m)) {} (map deref producers))]
-                                      (dosync (alter metadata-producers-ref (fn [coll] (apply conj coll (vals new-meta-producers)))))))
+                                          new-meta-producers (reduce
+                                                               (fn [m {:keys [host port]}]
+                                                                 (if-not (get metadata-producer-map {:host host :port port})
+                                                                   (assoc m {:host host :port port} (metadata-request-producer host port conf))
+                                                                   m))
+                                                                     {}
+                                                                     (-> brokers-metadata deref vals flatten))]
+                                      (dosync (alter metadata-producers-ref (fn [coll]
+                                                                              (apply conj coll (vals new-meta-producers)))))))
 
         ;try each metadata-producer-ref entry in search of metadata
         ;update the producers (ref) with the new metadata found
