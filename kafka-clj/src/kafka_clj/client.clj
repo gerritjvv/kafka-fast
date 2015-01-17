@@ -340,11 +340,13 @@
 
                                           new-meta-producers (reduce
                                                                (fn [m {:keys [host port]}]
-                                                                 (if-not (get metadata-producer-map {:host host :port port})
-                                                                   (assoc m {:host host :port port} (metadata-request-producer host port conf))
-                                                                   m))
+                                                                 (let [k {:host host :port port}]
+                                                                   (if-not (and (get metadata-producer-map k) (get m k))
+                                                                     (assoc m {:host host :port port} (metadata-request-producer host port conf))
+                                                                     m)))
                                                                      {}
                                                                      (-> brokers-metadata deref vals flatten))]
+                                      (prn "new meta producers: " (count new-meta-producers))
                                       (dosync (alter metadata-producers-ref (fn [coll]
                                                                               (apply conj coll (vals new-meta-producers)))))))
 
