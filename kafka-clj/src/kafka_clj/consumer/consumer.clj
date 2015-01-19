@@ -171,7 +171,7 @@
                        max-bytes))]
      (io!
        ;we always specify a minimum of 1 megabytes
-       (send-fetch (assoc-in producer [:conf :max-bytes] (Math/max max-bytes 1048576)) [[topic [{:partition partition :offset offset}]]])
+       (send-fetch (assoc-in producer [:conf :max-bytes] (Math/max ^long max-bytes 1048576)) [[topic [{:partition partition :offset offset}]]])
        (handle-response producer work-unit f-delegate (get state :conf)))))
 
 
@@ -343,7 +343,7 @@
           (tl/publish! load-pool (get-work-unit! state))
           (catch Exception e (error e e))))
       (finally
-        (.countDown shutdown-confirm true)))
+        (.countDown shutdown-confirm)))
     (info ">>>>>>>>>>>>>>>>>>>>>>>>>>> Exit publish pool loop >>>>>>>>>>>>>")
     ))
 
