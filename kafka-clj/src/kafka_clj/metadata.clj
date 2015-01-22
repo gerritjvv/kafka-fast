@@ -75,7 +75,7 @@
 
 (defn- black-list-producer [blacklisted-metadata-producers-ref {:keys [host port]} e]
   (error (str "Blacklisting metadata-producer: " host ":" port) e)
-  (dosync (alter blacklisted-metadata-producers-ref assoc (str host ":" port) true))
+  (dosync (commute blacklisted-metadata-producers-ref assoc (str host ":" port) true))
   nil)
 
 (defn blacklist-if-exception [blacklisted-metadata-producers-ref metadata-producer f & args]
@@ -96,7 +96,7 @@
     (filter (complement nil?))
     (filter (complement #(is-blacklisted? % @blacklisted-metadata-producers-ref)))
     (map #(_get-metadata % conf blacklisted-metadata-producers-ref))
-    (filter (fn [[_ meta] (nil? meta)]))
+    (filter (fn [[_ meta]] (nil? meta)))
     first))
 
 (defn get-metadata [metadata-producers conf & {:keys [blacklisted-metadata-producers-ref] :or {blacklisted-metadata-producers-ref (ref {})}}]
@@ -104,7 +104,7 @@
     (info "Got meta from " (:host metadata-producer) " -> empty? " (empty? meta))
     (if
       (not (empty? meta)) meta
-                        (throw (RuntimeException. (str "Could not get metadata for any metadata server blacklisted-servers: " (smart-deref blacklisted-metadata-producers-ref)))))))
+                          (throw (RuntimeException. (str "Could not get metadata for any metadata server blacklisted-servers: " (keys (smart-deref blacklisted-metadata-producers-ref))))))))
 
      
      
