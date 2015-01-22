@@ -96,7 +96,7 @@
     (filter (complement nil?))
     (filter (complement #(is-blacklisted? % @blacklisted-metadata-producers-ref)))
     (map #(_get-metadata % conf blacklisted-metadata-producers-ref))
-    (filter (fn [[_ meta]] (nil? meta)))
+    (filter (fn [[_ meta]] (not (nil? meta))))
     first))
 
 (defn get-metadata [metadata-producers conf & {:keys [blacklisted-metadata-producers-ref] :or {blacklisted-metadata-producers-ref (ref {})}}]
