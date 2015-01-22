@@ -6,7 +6,7 @@
             [clojure.tools.logging :refer [error info]]
             [kafka-clj.buff-utils :refer [inc-capacity write-short-string with-size compression-code-mask]]
             [clj-tuple :refer [tuple]]
-            [kafka-clj.msg-persist :refer [cache-sent-messages]])
+            [kafka-clj.msg-persist :refer [cache-sent-messages create-send-cache]])
   (:import [java.net InetAddress]
            [java.nio ByteBuffer]
            [java.util.concurrent.atomic AtomicLong AtomicInteger]
@@ -152,46 +152,54 @@
     (if buff (cache-sent-messages connector (with-size buff write-request conf msgs)))
     msgs)
 
+;this is only used with the single message producer api where ack > 0
+(def global-message-ack-cache (delay (create-send-cache {})))
+
 (defn send-messages
   "Send messages by writing them to the tcp client.
   The write is async.
   If the conf properties acks is > 0 the messages will also be written to an inmemory cache,
   the cache expires and has a maximum size, but it allows us to retry failed messages."
-                    [connector
-                     {:keys [client]} 
-                     {:keys [acks] :or {acks 0} :as conf}
-                     msgs]
-  (if (> acks 0)
-    (write! client (partial write-message-for-ack connector conf msgs))
-	  (write! client (fn [^ByteBuf buff]
-                         (if buff (with-size buff write-request conf msgs))
-                         msgs;we must return the msgs here, its used later by the cache for retries
-	                       ))))
+  ([producer conf msgs]
+    (send-messages {:send-cache @global-message-ack-cache} producer conf msgs))
+  ([connector
+    {:keys [client]}
+    {:keys [acks] :or {acks 0} :as conf}
+    msgs]
+    (if (> acks 0)
+      (write! client (partial write-message-for-ack connector conf msgs))
+      (write! client (fn [^ByteBuf buff]
+                       (if buff (with-size buff write-request conf msgs))
+                       msgs                                 ;we must return the msgs here, its used later by the cache for retries
+                       )))))
 
 
 (defn producer
   "returns a producer for sending messages, the decoder is a producer-response-decoder"
-  [host port conf]
-  (try
-  (let [c (client host port (merge  
-                                   ;;parameters that can be over written
-			                             {
-			                             :reuse-client true 
+  ([host port]
+    (producer host port {}))
+  ([host port conf]
+    (try
+      (let [c (client host port (merge
+                                  ;;parameters that can be over written
+                                  {
+                                   :reuse-client true
                                    :write-buff 100
                                    :read-buff 100
                                    }
-                                   ;merge conf
-                                   conf
-                                   ;parameters tha cannot be overwritten
-                                   {
-			                             ;:channel-options [[ALLOCATOR (PooledByteBufAllocator. false)]]
-			                             :handlers [
-			                                                           produce-response-decoder
-			                                                           default-encoder 
-			                                                           
-			                                                           ]}))]
-    (->Producer c host port))
-  (catch Exception e (.printStackTrace e))))
+                                  ;merge conf
+                                  conf
+                                  ;parameters tha cannot be overwritten
+                                  {
+                                   ;:channel-options [[ALLOCATOR (PooledByteBufAllocator. false)]]
+                                   :handlers [
+                                              produce-response-decoder
+                                              default-encoder
+
+                                              ]}))]
+        (info "Creating client instance " host ":" port)
+        (->Producer c host port))
+      (catch Exception e (.printStackTrace e)))))
   
 
 

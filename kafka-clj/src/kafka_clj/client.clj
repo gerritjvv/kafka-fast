@@ -1,5 +1,5 @@
 (ns kafka-clj.client
-  (:require [fun-utils.core :refer [star-channel buffered-chan fixdelay-thread apply-get-create stop-fixdelay thread-seq]]
+  (:require [fun-utils.core :refer [star-channel buffered-chan fixdelay-thread apply-get-create stop-fixdelay thread-seq go-seq]]
             [kafka-clj.produce :refer [producer metadata-request-producer send-messages message shutdown]]
             [kafka-clj.metadata :refer [get-metadata]]
             [kafka-clj.msg-persist :refer [get-sent-message close-send-cache create-send-cache close-send-cache remove-sent-message
@@ -103,56 +103,84 @@
 (defonce t (tuple false false))
 (defn- always-false ([] false) ([_ _] t))
 
+(defmacro handle-send-message-error [async buff-ch producer-error-ch e producer conf topic partition offset v]
+  `(do
+     (error ~e ~e)
+     (prn "handle-send-message-error: v " ~v)
+     (~async ~producer-error-ch {:key-val (str ~topic ":" ~partition) :error ~e :producer {:producer ~producer :buff-ch ~buff-ch}
+                             :offset ~offset :v ~v :topic ~topic})))
+
+
+(defmacro kafka-response [connector buff-ch producer-error-ch producer conf v]
+           `(try
+              (if (instance? ProduceResponse ~v)
+                (let [{:keys [~'correlation-id ~'topic ~'partition ~'offset]} ~v]
+                  ;(debug "produce response " v)
+                  (if (> (:error-code ~v) 0)
+                    (if (:send-cache ~connector)
+                      (handle-send-message-error
+                        clojure.core.async/>! ~buff-ch ~producer-error-ch
+                        (RuntimeException. (str "Response error " (:error-code ~v)))
+                        ~producer ~conf ~'topic ~'partition ~'offset (get-sent-message ~connector ~'topic ~'partition ~'correlation-id))
+                      (error "Message received (even though acks " (:acks ~conf) " msg " ~v))) ; TODO send error back to connection and exit
+                  (remove-sent-message ~connector ~'topic ~'partition ~'correlation-id)))
+              (catch Exception ~'e (error ~'e ~'e))))
+
+(defmacro handle-error [buff-ch producer-error-ch producer conf topic partition v]
+  `(let [[e# v#] ~v]
+     (warn "ERROR: ERROR_CH: e " e# " v " v#)
+     (if (fn? v#)
+       (handle-send-message-error
+         clojure.core.async/>! ~buff-ch ~producer-error-ch
+         (RuntimeException. (str "Client tcp error " e#))
+         ~producer ~conf ~topic ~partition -1 v#)
+       (error "Cannot react on message " v#))
+
+     (error e# e#)))
+
+(defn- cached-producer-from-connector
+  "Called by create-producer-buffer and caches the producer wrapped in a delay in the producers-cache
+   The create connector uses a closure to remove closed producers on producer error"
+  [{:keys [producers-cache] :as connector} conf host port]
+  {:pre [producers-cache]}
+  (deref
+    (if-let [p
+             (get @producers-cache (str host ":" port))]
+      p
+      (get
+        (dosync (alter producers-cache assoc (str host ":" port) (delay (producer host port conf))))
+        (str host ":" port)))))
+
 (defn create-producer-buffer [connector topic partition producer-error-ch {:keys [host port]} {:keys [batch-num-messages queue-buffering-max-ms batch-byte-limit batch-fail-message-over-limit]
                                                                                                :or
                                                                                                {batch-num-messages 1000 queue-buffering-max-ms 500 batch-byte-limit 10485760} :as conf}]
   "Creates a producer and buffered-chan with a go loop that will read off the buffered chan and send to the producer.
    A map with keys :producer ch-source and buff-ch is returned"
-  (let [producer (producer host port conf)
+  (info "CREATING PRODUCER_BUFFER " topic " " partition " : " host ": " port)
+
+  (let [producer (cached-producer-from-connector connector conf host port) ;(producer host port conf)
         c (:client producer)
         ch-source (chan 100)
         read-ch (-> producer :client :read-ch)
-                               ;ch-source buffer-count timeout-ms buffer-or-n check-f
         buff-ch (buffered-chan ch-source batch-num-messages queue-buffering-max-ms 2 (flush-on-byte->fn batch-byte-limit))
-        
-        handle-send-message-error (fn [e producer conf offset v]
-                                    (error e e)
-                                    (prn "handle-send-message-error: v " v)
-                                    (>!! producer-error-ch {:key-val (str topic ":" partition) :error e :producer {:producer producer :buff-ch buff-ch}
-                                                            :offset offset :v v :topic topic}))]
-    (info "CREATE PRODUCER_BUFFER " topic " " partition " : " host)
+
+        error-ch (:error-ch c)]
+    (info "CREATED PRODUCER_BUFFER " topic " " partition " : " host ": " port)
    
     ;if a response from the server (only when ack > 0)
     ; if error-codec > 0 then handle the error
     ; else remove the message from the cache
+    ;connector buff-ch producer-error-ch producer conf v]
     (thread-seq
-       (fn [v]
-         (try
-	          (if (instance? ProduceResponse v) ;ProduceResponse [correlation-id topic partition error-code offset])
-	             (let [{:keys [correlation-id topic partition offset]} v]
-                 ;(debug "produce response " v)
-                  (if (> (:error-code v) 0)
-			              (if (:send-cache connector)
-                       (handle-send-message-error 
-			                       (RuntimeException. (str "Response error " (:error-code v))) 
-			                          producer conf offset (get-sent-message connector topic partition correlation-id))
-                       (error "Message received (even though acks " (:acks conf) " msg " v))) ; TODO send error back to connection and exit
-			              (remove-sent-message connector topic partition correlation-id)))
-           (catch Exception e (error e e)))) 
-       read-ch)
-    
-    ;;if any error on the tcp client handle error
-    (thread-seq
-      (fn [[e v]]
-        (warn "ERROR: ERROR_CH: e " e " v " v)
-        (if (fn? v) 
-          (handle-send-message-error 
-                    (RuntimeException. (str "Client tcp error " e)) 
-                    producer conf -1 v)
-          (error "Cannot react on message " v))
+      (fn [v]
+        (kafka-response connector buff-ch producer-error-ch producer conf v))
+      read-ch)
 
-        (error e e))  (:error-ch c))
-		    
+    (thread-seq
+      (fn [v]
+        (handle-error buff-ch producer-error-ch producer conf topic partition v))
+      error-ch)
+
     ;send buffered messages
     ;if any exception handle the error
     (thread-seq
@@ -160,7 +188,7 @@
         (when (> (count v) 0)
           (try
             (send-messages connector producer conf v)
-            (catch Exception e (handle-send-message-error e producer conf -1 v)))))
+            (catch Exception e (handle-send-message-error >!! buff-ch producer-error-ch e producer conf topic partition -1 v)))))
       buff-ch)
 
 
@@ -174,14 +202,15 @@
   "If any error is read on the client error-ch this producer this removed from the producers-ref"
   ;this loop will block and on the first error, close and remove the producer, then exit the loop
   (let [error-ch (-> producer-buffer :producer :client :error-ch)]
-	   (thread
-      (if-let [error-val (<!! error-ch)]
+	   (go
+      (if-let [error-val (<! error-ch)]
        (do
          ;(error (first error-val) (first error-val))
          (info "removing producer for " key-val)
-         (try 
-           (shutdown (:producer producer-buffer))
-           (catch Exception e (error e e)))
+         (thread
+           (try
+             (shutdown (:producer producer-buffer))
+             (catch Exception e (error e e))))
          ;remove from ref
          (dosync 
            (alter producers-ref (fn [m] (dissoc m key-val)))))))))
@@ -295,11 +324,20 @@
   (fn [{:keys [host port] :as msg}]
     (not (and (= host host1) (= port port1)))))
 
+(defn retry-msg-bts-seq [retry-msg]
+  (let [msg (:v retry-msg)]
+    (if (or (record? msg) (map? msg))
+      [(:bts msg)]
+      (map :bts msg))))
+
+(defn get-metadata-error-ch [connector]
+  (:metadata-error-ch connector))
+
 
 (defn create-connector [bootstrap-brokers {:keys [acks batch-fail-message-over-limit batch-byte-limit blacklisted-expire producer-retry-strategy] :or {blacklisted-expire 10000 acks 0 batch-fail-message-over-limit true batch-byte-limit 10485760 producer-retry-strategy :default} :as conf}]
   (let [
         ^ScheduledExecutorService scheduled-service (Executors/newSingleThreadScheduledExecutor)
-        metadata-producers-ref (ref (filter (complement nil?) (map #(metadata-request-producer (:host %) (:port %) conf) bootstrap-brokers)))
+        metadata-producers-ref (ref (filter (complement nil?) (map #(delay (metadata-request-producer (:host %) (:port %) conf)) bootstrap-brokers)))
         brokers-metadata (ref (get-metadata @metadata-producers-ref conf))
         _ (if (empty? @brokers-metadata)
             (throw (RuntimeException. (str "No broker metadata could be found for " bootstrap-brokers))))
@@ -308,7 +346,9 @@
         blacklisted-producers-ref (ref (cache/ttl-cache-factory {} :ttl blacklisted-expire))
         blacklisted-metadata-producers-ref (ref (cache/ttl-cache-factory {} :ttl blacklisted-expire))
 
+        producers-cache (ref {})                            ;cache (produce host port)instances
         producer-error-ch (chan 100)
+        metadata-error-ch (chan (dropping-buffer 1))
         producer-ref (ref {})
         send-cache (if (> acks 0) (create-send-cache conf))
         retry-cache (create-retry-cache conf)
@@ -338,13 +378,14 @@
         ;try each metadata-producer-ref entry in search of metadata
         ;update the producers (ref) with the new metadata found
         update-metadata (fn [& {:keys [timeout-ms producers]}]
-                          (let [metadata (get-metadata (or producers @metadata-producers-ref) (if timeout-ms (assoc conf :metadata-timeout timeout-ms) conf) :blacklisted-metadata-producers-ref blacklisted-metadata-producers-ref)]
+                          (if-let [metadata (get-metadata (or producers @metadata-producers-ref) (if timeout-ms (assoc conf :metadata-timeout timeout-ms) conf) :blacklisted-metadata-producers-ref blacklisted-metadata-producers-ref)]
                             (dosync
                               (alter brokers-metadata (fn [x] metadata))
-                              (alter producer-ref (fn [x] (update-producers metadata x)))
-                              )))
+                              (alter producer-ref (fn [x] (update-producers metadata x))))
+                            (error (str "No metadata found"))))
 
         connector {:bootstrap-brokers metadata-producers-ref :send-cache send-cache :retry-cache retry-cache
+                   :producers-cache producers-cache
                    :state (assoc state :scheduled-service scheduled-service) }
         
                   ;;every 5 seconds check for any data in the retry cache and resend the messages
@@ -354,14 +395,15 @@
                              (doseq [retry-msg (retry-cache-seq connector)]
                                  (do (warn "Retry messages for " (:topic retry-msg) " " (:key-val retry-msg))
                                    (if (coll? (:v retry-msg))
-													           (doseq [{:keys [bts]} (:v retry-msg)]
-                                        (send-msg connector (:topic retry-msg) bts))
+                                     (doseq [bts (retry-msg-bts-seq retry-msg)]
+                                       (send-msg connector (:topic retry-msg) bts))
                                      (warn "Invalid retry value " retry-msg))
 												              
 										                  (delete-from-retry-cache connector (:key-val retry-msg)))))
 										         (catch Exception e (error e e))))]
 
-    (.scheduleWithFixedDelay scheduled-service ^Runnable (fn [] (try (update-metadata) (catch Exception e (error e e)))) 0 10000 TimeUnit/MILLISECONDS)
+    (.scheduleWithFixedDelay scheduled-service ^Runnable (fn [] (try (update-metadata) (catch Exception e (do (error e e)
+                                                                                                              (>!! metadata-error-ch e))))) 0 10000 TimeUnit/MILLISECONDS)
     ;listen to any producer errors, this can be sent from any producer
     ;update metadata, close the producer and write the messages in its buff cache to the 
     (if (= producer-retry-strategy :default)
@@ -379,6 +421,7 @@
                 (alter blacklisted-producers-ref (fn [m] (assoc m (str host ":" port) true))))
 
               (dosync
+                (alter producers-cache dissoc (str host ":" port))
                 (alter producer-ref (fn [m] (dissoc m key-val))))
 
               ;remove
@@ -388,10 +431,14 @@
 
               ;close producer and cause the buffer to be flushed
               (close-producer-buffer! (smart-deref (:producer producer)))
-              (update-metadata :producers (filter (exclude-host host port) metadata-producers-ref) :timeout-ms 5000))
+              (try
+                (update-metadata :producers (filter (exclude-host host port) metadata-producers-ref) :timeout-ms 5000)
+                (catch Exception e (do
+                                     (error e e)
+                                     (>!! metadata-error-ch e)))))
             (catch Exception e (error e e)))) producer-error-ch))
 
-     (assoc connector :retry-cache-ch retry-cache-ch :update-metadata update-metadata)))
+     (assoc connector :retry-cache-ch retry-cache-ch :metadata-error-ch metadata-error-ch :update-metadata update-metadata)))
  
 (defrecord KafkaClientService [brokers conf client]
   component/Lifecycle

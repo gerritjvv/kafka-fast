@@ -100,6 +100,13 @@ for normal random distribution use the kafka-clj.client namespace.
 ;; read-response takes p and a timeout in milliseconds on timeout nil is returned
 ```
 
+Note:
+ The send-messages function has two arity versions:
+ ```(send-messages producer conf msgs)``` and ```(send-messages connector producer conf msgs)```  
+
+ The connector must contain ```{:send-cache (kafka-clj.msg-persist/create-send-cache)}```, by default if not provided  
+ the global ```kafka-clj.produce/global-message-ack-cache``` instance is used.  
+ 
 
 # Benchmark Producer
 
@@ -135,7 +142,7 @@ This is more for tooling and UI(s).
 
 (require '[kafka-clj.metadata :refer [get-metadata]])
 (require '[kafka-clj.produce :refer [metadata-request-producer]])
-(require '[kafka-clj.consumer :refer [get-broker-offsets]])
+(require '[kafka-clj.consumer.util :refer [get-broker-offsets]])
 
 (def metadata-producer (metadata-request-producer "localhost" 9092 {}))
 
