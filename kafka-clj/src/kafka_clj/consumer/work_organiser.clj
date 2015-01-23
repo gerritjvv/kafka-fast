@@ -5,7 +5,7 @@
     [taoensso.carmine :as car]
     [kafka-clj.redis :as redis]
     [fun-utils.core :as fu]
-    [kafka-clj.metadata :refer [get-metadata]]
+    [kafka-clj.metadata :refer [get-metadata get-metadata-recreate!]]
     [kafka-clj.produce :refer [metadata-request-producer] :as produce]
     [kafka-clj.consumer.consumer :refer [wait-on-work-unit!]])
   (:import [java.util.concurrent Executors ExecutorService CountDownLatch TimeUnit]
@@ -238,9 +238,11 @@
    For topics new work is calculated depending on the metadata returned from the producers"
   [{:keys [meta-producers conf error-handler] :as state} topics]
   {:pre [meta-producers conf]}
-  (let [meta (get-metadata meta-producers conf)
+  (let [[meta-producers1 meta] (get-metadata-recreate! @meta-producers conf)
          offsets (cutil/get-broker-offsets state meta topics conf)]
     ;;{{:host "gvanvuuren-compile", :port 9092} {"test" ({:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 0} {:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 1})}}
+    (dosync (alter meta-producers (fn [_] meta-producers1)))
+
     (doseq [[broker topic-data] offsets]
 
       (doseq [[topic offset-data] topic-data]
@@ -248,7 +250,7 @@
           ;we map :offset to max of :offset and :all-offets
           (send-offsets-if-any! state broker topic (map #(assoc % :offset (apply max (:offset %) (:all-offsets %))) offset-data))
           (catch Exception e (do (error e e) (.printStackTrace e) (if error-handler (error-handler :meta state e)))))))
-    state))
+    (assoc state :meta-producers meta-producers1)))
 
 
 (defn get-queue-data
@@ -282,7 +284,7 @@
 
   (let [shutdown-flag (AtomicBoolean. false)
         shutdown-confirm (CountDownLatch. 1)
-        meta-producers (create-meta-producers! bootstrap-brokers conf)
+        meta-producers (ref (create-meta-producers! bootstrap-brokers conf))
         spec  {:host     (get redis-conf :host "localhost")
                :port     (get redis-conf :port 6379)
                :password (get redis-conf :password)

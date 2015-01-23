@@ -6,7 +6,8 @@
             [clojure.tools.logging :refer [info error warn]]
             [clojure.core.async :refer [go <! <!! >!! alts!! timeout thread]])
   (:import [java.nio ByteBuffer]
-           [clj_tcp.client Poison Reconnected]))
+           [clj_tcp.client Poison Reconnected]
+           (java.util.concurrent.atomic AtomicBoolean)))
 
 "Keeps track of the metadata
  "
@@ -74,12 +75,12 @@
   (if (instance? clojure.lang.IDeref x) (deref x) x))
 
 (defn- black-list-producer [blacklisted-metadata-producers-ref {:keys [host port]} e]
-  (error (str "Blacklisting metadata-producer: " host ":" port) e)
+  (warn (str "Blacklisting metadata-producer: " host ":" port) e)
   (dosync (commute blacklisted-metadata-producers-ref assoc (str host ":" port) true))
   nil)
 
 (defn blacklist-if-exception [blacklisted-metadata-producers-ref metadata-producer f & args]
-  (info "Metadata producer1: " metadata-producer)
+  (info "Metadata producer1: " (:host metadata-producer) ":" (:port metadata-producer) ": is closed " (get-in metadata-producer [:client :closed]))
   (try
     (apply f args)
     (catch Exception e [metadata-producer (black-list-producer blacklisted-metadata-producers-ref metadata-producer e)])))
@@ -88,7 +89,6 @@
   (blacklist-if-exception blacklisted-metadata-producers-ref metadata-producer (fn [] [metadata-producer (get-broker-metadata metadata-producer conf)])))
 
 (defn iterate-metadata-producers [metadata-producers conf blacklisted-metadata-producers-ref]
-  (info "Metadata-producers: " metadata-producers)
   (->>
     metadata-producers
     smart-deref
@@ -107,5 +107,16 @@
                           (throw (RuntimeException. (str "Could not get metadata for any metadata server blacklisted-servers: " (keys (smart-deref blacklisted-metadata-producers-ref))))))))
 
      
-     
-     
+(defn- client-closed? [producer]
+  (.get ^AtomicBoolean (get-in producer [:client :closed])))
+
+(defn- recreate-producer-if-closed! [conf metadata-producer]
+  (if (client-closed? metadata-producer)
+    (metadata-request-producer (:host metadata-producer) (:port metadata-producer) conf)
+    metadata-producer))
+
+(defn get-metadata-recreate! [metadata-producers conf & args]
+  (try
+    [metadata-producers (apply get-metadata (smart-deref metadata-producers) conf args)]
+    (catch Exception e (let [producers2 (doall (map (partial recreate-producer-if-closed! conf) metadata-producers))]
+                         [producers2 (apply get-metadata producers2 conf args)]))))
