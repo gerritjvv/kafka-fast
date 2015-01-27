@@ -198,7 +198,7 @@
      :ch-source ch-source
      :buff-ch buff-ch}))
   
-(defn add-remove-on-error-listener! [producers-ref topic key-val producer-buffer brokers-metadata]
+(defn add-remove-on-error-listener! [producers-ref topic partition producer-buffer brokers-metadata]
   "If any error is read on the client error-ch this producer this removed from the producers-ref"
   ;this loop will block and on the first error, close and remove the producer, then exit the loop
   (let [error-ch (-> producer-buffer :producer :client :error-ch)]
@@ -206,14 +206,14 @@
       (if-let [error-val (<! error-ch)]
        (do
          ;(error (first error-val) (first error-val))
-         (info "removing producer for " key-val)
+         (info "removing producer for " topic ":" partition)
          (thread
            (try
              (shutdown (:producer producer-buffer))
              (catch Exception e (error e e))))
          ;remove from ref
          (dosync 
-           (alter producers-ref (fn [m] (dissoc m key-val)))))))))
+           (alter producers-ref (fn [m] (dissoc (get m topic) partition)))))))))
      
   
 (defn find-hashed-connection [broker k producers upper-limit]
@@ -234,33 +234,43 @@
                          producers))]
         producer))
 
+;perf improvment for blacklisted exception lookup
+(defonce string-cache (atom {}))
+
+(defn- string-cache-lookup [host port]
+  (if-let [s (-> string-cache deref (get host) (get port))]
+    s
+    (do
+      (swap! string-cache (fn [x] (assoc-in x [host port] (str host ":" port))))
+      (str host ":" port))))
+
 (defn- exception-if-blacklisted
   "blacklisted-producers keys are (str host ':' port)
    Throws a runtime exception if  host port combindation is found"
   [{:keys [host port] :as producer} blacklisted-producers]
-  (if (get blacklisted-producers (str host ":" port))
+  (if (get blacklisted-producers (string-cache-lookup host port))
     (throw (RuntimeException. (str "Black listed producer: " host ":" port)))
     producer))
 
 (defn select-producer-buffer! [connector topic partition {:keys [producers-ref brokers-metadata producer-error-ch conf] :as state}]
   "Select a producer or create one,
    if no broker can be found a RuntimeException is thrown"
-  (let [k (str topic ":" partition)]
-    (if-let [producer (get @producers-ref k)]
+  (let []
+    (if-let [producer (-> @producers-ref (get topic) (get partition))]
    	    @producer
 		    (deref 
           (get (dosync (alter producers-ref
                            (fn [x]
-                             (if-let [producer (get x k)]
+                             (if-let [producer (-> x (get topic) (get partition))] ;use get get for speed
                                x ; return map the producer already exists
                                (let [[partition broker] (select-broker topic partition brokers-metadata)]
-	                               (if-let [producer (find-hashed-connection broker k @producers-ref (get conf :producer-connections-max 4))]
-	                                 (assoc x k producer) ; found a producer based on hash and broker for the same partition
-	                                 (assoc x k (delay ;else create a new producer
+	                               (if-let [producer (find-hashed-connection broker (str topic ":" partition) @producers-ref (get conf :producer-connections-max 2))]
+	                                 (assoc-in x [topic partition] producer) ; found a producer based on hash and broker for the same partition
+	                                 (assoc-in x [topic partition] (delay ;else create a new producer
 		                                            (let [producer-buffer (create-producer-buffer connector topic partition producer-error-ch broker conf)]
-			                                             (add-remove-on-error-listener! producers-ref topic k producer-buffer brokers-metadata)
+			                                             (add-remove-on-error-listener! producers-ref topic partition producer-buffer brokers-metadata)
 		                                               producer-buffer)))))))))
-            k)))))
+            (str topic ":" partition))))))
 	     
 
 (defn- send-msg-retry [{:keys [state] :as connector} {:keys [topic] :as msg}]
