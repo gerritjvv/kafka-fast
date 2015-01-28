@@ -51,10 +51,10 @@
     (def state {:topic-partition-ref (ref {})})
     (select-rr-partition! b {:topic-partition-ref state})
    "
-  (let [^Long partition-count (get-partition-count topic @brokers-metadata)]
+  (let [^long partition-count (get-partition-count topic @brokers-metadata)]
    (if (> partition-count 0)	    
 		  (if-let [^AtomicLong pcounter (get @topic-partition-ref topic)]
-		    (mod ^Long (.getAndIncrement pcounter) partition-count)
+		    (mod ^long (.getAndIncrement pcounter) partition-count)
 		    (do 
 		     (dosync 
 		           (commute topic-partition-ref (fn [x] 
