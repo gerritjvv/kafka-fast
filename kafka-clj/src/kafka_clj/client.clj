@@ -60,27 +60,32 @@
 		           (commute topic-partition-ref (fn [x] 
 		                                          (assoc x topic (AtomicLong. 0)))))
 		     (select-rr-partition! topic state)))
-    (do 
-      (error "No topic found " topic " in state map " topic-partition-ref)
-      (error "broker-meta " brokers-metadata)
-      (throw (RuntimeException. 
-             (str "The topic " topic " does not exist, please create it first. See http://kafka.apache.org/documentation.html")))))))
+    (if (-> state :conf :topic-auto-create)
+      0
+      (do
+        (error "No topic found " topic " in state map " topic-partition-ref)
+        (error "broker-meta " brokers-metadata)
+        (throw (RuntimeException.
+                 (str "The topic " topic " does not exist, please create it first. See http://kafka.apache.org/documentation.html"))))))))
 
 (defn get-broker-from-metadata [topic partition brokers-metadata]
   (-> brokers-metadata (get topic) (get partition)))
 
 (defn random-select-broker [topic brokers-metadata]
   "Select a broker over all the registered topics randomly"
-  (-> (map (fn [[k v]] [k v]) brokers-metadata) rand-nth rest rand-nth))
+  (if-let [brokers (get brokers-metadata topic)]
+    (rand-nth brokers)
+    (->> brokers-metadata keys (rand-nth) (get brokers-metadata) rand-nth)))
 
   
-(defn select-broker [topic partition brokers-metadata]
+(defn select-broker
   "Try to find the broker in the brokers-metadata by topic and partition,
     if no broker can be found, a random select is done, if still
     no broker is found nil is returned"
+  [topic partition brokers-metadata & {:keys [topic-auto-create]}]
   (if-let [broker (get-broker-from-metadata topic partition @brokers-metadata)]
     [partition broker]
-    [0 (random-select-broker topic brokers-metadata)]))
+    [0 (random-select-broker topic @brokers-metadata)]))
 
 (defn send-to-buffer [{:keys [ch-source]} msg]
   (>!! ch-source msg))
@@ -220,10 +225,11 @@
                                   ))))))))
      
   
-(defn find-hashed-connection [broker k producers upper-limit]
+(defn find-hashed-connection
   "Finds the value with a key that when hashed and moded against upper-limit is the same for k
    this is an optimization for hashed partitioning where the original keys are stored in the producers-ref
    i.e. topic:partition but the connections are created on (mod (hash k) upper-limit)"
+  [broker k producers upper-limit]
   (let [hashed-k (hash k)
 	     [_ producer] (first 
                        (filter (fn [[producer-k {:keys [host port]}]]
@@ -262,7 +268,7 @@
                    (info "adding producer to ref:  topic " topic " partition " partition)
                    (if-let [producer (-> producers-ref deref (get topic) (get partition))] ;use get get for speed
                      x ; return map the producer already exists
-                     (let [[partition broker] (select-broker topic partition brokers-metadata)]
+                     (let [[partition broker] (select-broker topic partition brokers-metadata :topic-auto-create (:topic-auto-create conf))]
                        (if-let [producer (find-hashed-connection broker (str topic ":" partition) @producers-ref (get conf :producer-connections-max 2))]
                          (assoc-in x [topic partition] producer) ; found a producer based on hash and broker for the same partition
                          (assoc-in x [topic partition] (delay ;else create a new producer
@@ -283,11 +289,15 @@
 (defn- send-msg-retry [{:keys [state] :as connector} {:keys [topic] :as msg}]
   "Try sending the message to any of the producers till all of the producers have been trieds"
    (do-metadata-update connector)
-   (let [partitions (-> state :brokers-metadata deref (get topic))]
-      (if (or (empty? partitions) (= partitions 0))
-        (throw (RuntimeException. (str "No topics available for topic " topic " partitions " partitions))))
-      
-      (loop [partitions-1 partitions i 0] 
+   (let [partitions  (let [partitions(-> state :brokers-metadata deref (get topic)) ]
+                       (if (or (empty? partitions) (= partitions 0))
+                         (if (-> state :conf :topic-auto-create)
+                           [0]
+                           (throw (RuntimeException. (str "No topics available for topic " topic " partitions " partitions))))
+                         partitions))]
+
+     (prn "using partitions " partitions)
+      (loop [partitions-1 partitions i 0]
         (if-let [partition (first partitions-1)]
           (let [sent (try
 						            (let [producer-buffer (exception-if-blacklisted (select-producer-buffer! connector topic i state) @(:blacklisted-producers-ref state))]
@@ -351,7 +361,7 @@
   (:metadata-error-ch connector))
 
 
-(defn create-connector [bootstrap-brokers {:keys [acks batch-fail-message-over-limit batch-byte-limit blacklisted-expire producer-retry-strategy] :or {blacklisted-expire 10000 acks 0 batch-fail-message-over-limit true batch-byte-limit 10485760 producer-retry-strategy :default} :as conf}]
+(defn create-connector [bootstrap-brokers {:keys [acks batch-fail-message-over-limit batch-byte-limit blacklisted-expire producer-retry-strategy topic-auto-create] :or {blacklisted-expire 10000 acks 0 batch-fail-message-over-limit true batch-byte-limit 10485760 producer-retry-strategy :default topic-auto-create true} :as conf}]
   (let [
         ^ScheduledExecutorService scheduled-service (Executors/newSingleThreadScheduledExecutor)
         metadata-producers-ref (ref (filter (complement nil?) (map #(delay (metadata-request-producer (:host %) (:port %) conf)) bootstrap-brokers)))
@@ -377,7 +387,7 @@
                :topic-partition-ref (ref {})
                :producer-error-ch producer-error-ch
                :blacklisted-producers-ref blacklisted-producers-ref
-               :conf (assoc conf :batch-fail-message-over-limit batch-fail-message-over-limit :batch-byte-limit batch-byte-limit)}
+               :conf (assoc conf :batch-fail-message-over-limit batch-fail-message-over-limit :batch-byte-limit batch-byte-limit :topic-auto-create topic-auto-create)}
         ;go through each producer, if it does not exist in the metadata, the producer is closed, otherwise we keep it.
         update-producers (fn [metadata m] 
                                (into {} (filter (complement nil?)
