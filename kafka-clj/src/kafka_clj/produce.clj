@@ -241,7 +241,11 @@
                                                            metadata-response-decoder
                                                            default-encoder 
                                                            ]}))]
-    (prn "Creating metadata-request-producers using: " c " " host " " port)
+    (if-not (record? c)
+      (throw (RuntimeException. (str "Could not connect to " host ":" port))))
+
+    (prn "Creating metadata-request-producers using: " (type c) " " host " " port)
+
     (if (record? c)
       (->Producer c host port)
       nil))

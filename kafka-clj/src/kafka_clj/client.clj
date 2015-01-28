@@ -252,25 +252,27 @@
     (throw (RuntimeException. (str "Black listed producer: " host ":" port)))
     producer))
 
+(defn- add-producer! [connector topic partition {:keys [producers-ref brokers-metadata producer-error-ch conf] :as state}]
+  (dosync (alter producers-ref
+                 (fn [x]
+                   (if-let [producer (-> x (get topic) (get partition))] ;use get get for speed
+                     x ; return map the producer already exists
+                     (let [[partition broker] (select-broker topic partition brokers-metadata)]
+                       (if-let [producer (find-hashed-connection broker (str topic ":" partition) @producers-ref (get conf :producer-connections-max 2))]
+                         (assoc-in x [topic partition] producer) ; found a producer based on hash and broker for the same partition
+                         (assoc-in x [topic partition] (delay ;else create a new producer
+                                                         (let [producer-buffer (create-producer-buffer connector topic partition producer-error-ch broker conf)]
+                                                           (add-remove-on-error-listener! producers-ref topic partition producer-buffer brokers-metadata)
+                                                           producer-buffer))))))))))
+
 (defn select-producer-buffer! [connector topic partition {:keys [producers-ref brokers-metadata producer-error-ch conf] :as state}]
   "Select a producer or create one,
    if no broker can be found a RuntimeException is thrown"
-  (let []
-    (if-let [producer (-> @producers-ref (get topic) (get partition))]
-   	    @producer
-		    (deref 
-          (get (dosync (alter producers-ref
-                           (fn [x]
-                             (if-let [producer (-> x (get topic) (get partition))] ;use get get for speed
-                               x ; return map the producer already exists
-                               (let [[partition broker] (select-broker topic partition brokers-metadata)]
-	                               (if-let [producer (find-hashed-connection broker (str topic ":" partition) @producers-ref (get conf :producer-connections-max 2))]
-	                                 (assoc-in x [topic partition] producer) ; found a producer based on hash and broker for the same partition
-	                                 (assoc-in x [topic partition] (delay ;else create a new producer
-		                                            (let [producer-buffer (create-producer-buffer connector topic partition producer-error-ch broker conf)]
-			                                             (add-remove-on-error-listener! producers-ref topic partition producer-buffer brokers-metadata)
-		                                               producer-buffer)))))))))
-            (str topic ":" partition))))))
+  (if-let [producer (-> @producers-ref (get topic) (get partition))]
+    @producer
+    (do
+      (add-producer! connector topic partition state)
+      (recur connector topic partition state))))
 	     
 
 (defn- send-msg-retry [{:keys [state] :as connector} {:keys [topic] :as msg}]
