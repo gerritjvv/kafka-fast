@@ -206,6 +206,7 @@
       (if-let [error-val (<! error-ch)]
        (do
          ;(error (first error-val) (first error-val))
+         (prn "removing producer for " topic ":" partition)
          (info "removing producer for " topic ":" partition)
          (thread
            (try
@@ -213,7 +214,10 @@
              (catch Exception e (error e e))))
          ;remove from ref
          (dosync 
-           (alter producers-ref (fn [m] (dissoc (get m topic) partition)))))))))
+           (alter producers-ref (fn [m]
+                                  (prn "removing producers ref: " topic partition)
+                                  (dissoc (get m topic) partition)
+                                  ))))))))
      
   
 (defn find-hashed-connection [broker k producers upper-limit]
@@ -252,10 +256,11 @@
     (throw (RuntimeException. (str "Black listed producer: " host ":" port)))
     producer))
 
-(defn- add-producer! [connector topic partition {:keys [producers-ref brokers-metadata producer-error-ch conf] :as state}]
+(defn- add-producer! [connector topic partition {:keys [brokers-metadata producers-ref producer-error-ch conf] :as state}]
   (dosync (alter producers-ref
                  (fn [x]
-                   (if-let [producer (-> x (get topic) (get partition))] ;use get get for speed
+                   (info "adding producer to ref:  topic " topic " partition " partition)
+                   (if-let [producer (-> producers-ref deref (get topic) (get partition))] ;use get get for speed
                      x ; return map the producer already exists
                      (let [[partition broker] (select-broker topic partition brokers-metadata)]
                        (if-let [producer (find-hashed-connection broker (str topic ":" partition) @producers-ref (get conf :producer-connections-max 2))]
@@ -268,12 +273,12 @@
 (defn select-producer-buffer! [connector topic partition {:keys [producers-ref brokers-metadata producer-error-ch conf] :as state}]
   "Select a producer or create one,
    if no broker can be found a RuntimeException is thrown"
-  (if-let [producer (-> @producers-ref (get topic) (get partition))]
+  (if-let [producer (-> producers-ref deref (get topic) (get partition))]
     @producer
     (do
       (add-producer! connector topic partition state)
       (recur connector topic partition state))))
-	     
+
 
 (defn- send-msg-retry [{:keys [state] :as connector} {:keys [topic] :as msg}]
   "Try sending the message to any of the producers till all of the producers have been trieds"
@@ -361,10 +366,13 @@
         producers-cache (ref {})                            ;cache (produce host port)instances
         producer-error-ch (chan 100)
         metadata-error-ch (chan (dropping-buffer 1))
+
         producer-ref (ref {})
+
         send-cache (if (> acks 0) (create-send-cache conf))
         retry-cache (create-retry-cache conf)
         state {:producers-ref producer-ref
+
                :brokers-metadata brokers-metadata
                :topic-partition-ref (ref {})
                :producer-error-ch producer-error-ch
@@ -393,7 +401,9 @@
                           (if-let [metadata (get-metadata (or producers @metadata-producers-ref) (if timeout-ms (assoc conf :metadata-timeout timeout-ms) conf) :blacklisted-metadata-producers-ref blacklisted-metadata-producers-ref)]
                             (dosync
                               (alter brokers-metadata (fn [x] metadata))
-                              (alter producer-ref (fn [x] (update-producers metadata x))))
+                              ;causes producers to be removed and re-created causing memory leaks
+                              ;(alter producer-ref (fn [x] (update-producers metadata x)))
+                              )
                             (error (str "No metadata found"))))
 
         connector {:bootstrap-brokers metadata-producers-ref :send-cache send-cache :retry-cache retry-cache
@@ -434,7 +444,7 @@
 
               (dosync
                 (alter producers-cache dissoc (str host ":" port))
-                (alter producer-ref (fn [m] (dissoc m key-val))))
+                (alter producer-ref (fn [m] (dissoc (get m host) port))))
 
               ;remove
               (if (coll? v)                                   ;only write valid messages to the retry cache
