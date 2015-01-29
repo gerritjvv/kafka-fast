@@ -327,7 +327,7 @@
       (let [partition (select-rr-partition! topic state)
             msg (message topic partition bts)]
         (try
-          (send-to-buffer (exception-if-blacklisted  @(:blacklisted-producers-ref state)) msg)
+          (send-to-buffer (select-producer-buffer! connector topic partition state) msg)
           (catch Exception e
             (do
                 (warn "error while sending message")
