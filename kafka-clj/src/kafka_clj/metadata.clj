@@ -114,7 +114,6 @@
     metadata-producer))
 
 (defn get-metadata-recreate! [metadata-producers conf & args]
-  (prn "get-meta-recreate!")
   (try
     [metadata-producers (apply get-metadata (smart-deref metadata-producers) conf args)]
     (catch Exception e (let [producers2 (doall (map (partial recreate-producer-if-closed! conf) metadata-producers))]
