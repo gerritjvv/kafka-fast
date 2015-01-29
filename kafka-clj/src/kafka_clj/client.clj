@@ -116,7 +116,7 @@
 (defmacro handle-send-message-error [async buff-ch producer-error-ch e producer conf topic partition offset v]
   `(do
      (error ~e ~e)
-     (prn "handle-send-message-error: v " ~v)
+     (prn "handle-send-message-error: v ")
      (~async ~producer-error-ch {:key-val (str ~topic ":" ~partition) :error ~e :producer {:producer ~producer :buff-ch ~buff-ch}
                              :offset ~offset :v ~v :topic ~topic})))
 
@@ -198,7 +198,8 @@
         (when (> (count v) 0)
           (try
             (send-messages connector producer conf v)
-            (catch Exception e (handle-send-message-error >!! buff-ch producer-error-ch e producer conf topic partition -1 v)))))
+            (catch Exception e
+              (handle-send-message-error >!! buff-ch producer-error-ch e producer conf topic partition -1 v)))))
       buff-ch)
 
 
@@ -285,15 +286,20 @@
   "Select a producer or create one,
    if no broker can be found a RuntimeException is thrown"
   (if-let [producer (-> producers-ref deref (get topic) (get partition))]
-    @producer
     (do
+      ;  (prn "get producer from cache: " producer)
+      @producer)
+    (do
+      (prn "add producer!")
       (add-producer! connector topic partition state)
       (recur connector topic partition state))))
 
 
 (defn- send-msg-retry [{:keys [state] :as connector} {:keys [topic] :as msg}]
   "Try sending the message to any of the producers till all of the producers have been trieds"
-   (do-metadata-update connector)
+   (try
+     (do-metadata-update connector)
+     (catch Exception e (error e e)))
    (let [partitions  (let [partitions(-> state :brokers-metadata deref (get topic)) ]
                        (if (or (empty? partitions) (= partitions 0))
                          (if (-> state :conf :topic-auto-create)
@@ -301,16 +307,17 @@
                            (throw (RuntimeException. (str "No topics available for topic " topic " partitions " partitions))))
                          partitions))]
 
-     (prn "using partitions " partitions)
       (loop [partitions-1 partitions i 0]
         (if-let [partition (first partitions-1)]
           (let [sent (try
-						            (let [producer-buffer (exception-if-blacklisted (select-producer-buffer! connector topic i state) @(:blacklisted-producers-ref state))]
+						            (let [producer-buffer (select-producer-buffer! connector topic i state)]
                           (send-to-buffer producer-buffer msg)
 						              true)
 						            (catch Exception e (do (.printStackTrace e) (error e e) false)))]
             (if (not sent)
-              (recur (rest partitions-1) (inc i))))
+              (do
+                (prn ">>>>>>>> Retry send remaining partitions: " (rest partitions-1))
+                (recur (rest partitions-1) (inc i)))))
           (throw (RuntimeException. (str "The message for topic " topic " could not be sent")))))))
 
 (defn send-msg [{:keys [state] :as connector} topic ^bytes bts]
@@ -320,7 +327,7 @@
       (let [partition (select-rr-partition! topic state)
             msg (message topic partition bts)]
         (try
-          (send-to-buffer (exception-if-blacklisted (select-producer-buffer! connector topic partition state) @(:blacklisted-producers-ref state)) msg)
+          (send-to-buffer (exception-if-blacklisted  @(:blacklisted-producers-ref state)) msg)
           (catch Exception e
             (do
                 (warn "error while sending message")
@@ -329,11 +336,13 @@
                 (send-msg-retry connector msg)))))
       (throw (RuntimeException. (str "No brokers available: " connector))))))
 
-(defn close-producer-buffer! [{:keys [producer ch-source]}]
+(defn close-producer-buffer! [{:keys [producer ch-source error-ch]}]
   (try
 		    (do
           (if ch-source
             (close! ch-source))
+          (if error-ch
+            (close! error-ch))
           (if producer
             (shutdown producer)))
       (catch Exception e (error e (str "Error while shutdown " producer)))))
@@ -371,9 +380,10 @@
         ^ScheduledExecutorService scheduled-service (Executors/newSingleThreadScheduledExecutor (daemon-thread-factory))
         metadata-producers-ref (ref (filter (complement nil?) (map #(delay (metadata-request-producer (:host %) (:port %) conf)) bootstrap-brokers)))
         brokers-metadata (ref (get-metadata @metadata-producers-ref conf))
-        _ (if (empty? @brokers-metadata)
-            (throw (RuntimeException. (str "No broker metadata could be found for " bootstrap-brokers))))
-
+        _ (comment
+          _ (if (empty? @brokers-metadata)
+              (throw (RuntimeException. (str "No broker metadata could be found for " bootstrap-brokers))))
+          )
         ;blacklist producers and no use them in metdata updates or sending, they expire after a few seconds
         blacklisted-producers-ref (ref (cache/create-cache :expire-on-write blacklisted-expire))
         blacklisted-metadata-producers-ref (ref (cache/create-cache :expire-on-write blacklisted-expire))
@@ -394,7 +404,7 @@
                :blacklisted-producers-ref blacklisted-producers-ref
                :conf (assoc conf :batch-fail-message-over-limit batch-fail-message-over-limit :batch-byte-limit batch-byte-limit :topic-auto-create topic-auto-create)}
         ;go through each producer, if it does not exist in the metadata, the producer is closed, otherwise we keep it.
-        update-producers (fn [metadata m] 
+        update-producers (fn [metadata m]
                                (into {} (filter (complement nil?)
                                             (map (fn [[k producer-buffer]]
 								                                                    (let [[topic partition] (clojure.string/split k #"\:")
@@ -424,7 +434,7 @@
         connector {:bootstrap-brokers metadata-producers-ref :send-cache send-cache :retry-cache retry-cache
                    :producers-cache producers-cache
                    :state (assoc state :scheduled-service scheduled-service) }
-        
+
                   ;;every 5 seconds check for any data in the retry cache and resend the messages
 				retry-cache-ch (fixdelay-thread 1000
 										      (try
@@ -435,7 +445,7 @@
                                      (doseq [bts (retry-msg-bts-seq retry-msg)]
                                        (send-msg connector (:topic retry-msg) bts))
                                      (warn "Invalid retry value " retry-msg))
-												              
+
 										                  (delete-from-retry-cache connector (:key-val retry-msg)))))
 										         (catch Exception e (error e e))))]
 
@@ -447,6 +457,7 @@
       (thread-seq
         (fn [error-val]
           (try
+            (prn "producer error in producer error-ch ")
             (warn "producer error producer-error-ch")
             (let [{:keys [key-val producer v topic]} error-val
                   host (-> producer :producer :host)
@@ -454,22 +465,24 @@
               ;persist to retry cache
               (.printStackTrace ^Throwable (:error error-val))
 
-              (dosync
-                (alter blacklisted-producers-ref (fn [m] (assoc m (str host ":" port) true))))
-
-              (dosync
-                (alter producers-cache dissoc (str host ":" port))
-                (alter producer-ref (fn [m] (dissoc (get m host) port))))
-
-              ;remove
-              (if (coll? v)                                   ;only write valid messages to the retry cache
-                (write-to-retry-cache connector topic v)
-                (warn "Could not send message to retry cache: invalid message " v))
-
-              ;close producer and cause the buffer to be flushed
-              (close-producer-buffer! (smart-deref (:producer producer)))
               (try
-                (update-metadata :producers (filter (exclude-host host port) metadata-producers-ref) :timeout-ms 5000)
+                (do
+                  (dosync
+                    (alter blacklisted-producers-ref (fn [m] (assoc m (str host ":" port) true))))
+
+                  (dosync
+                    (alter producers-cache dissoc (str host ":" port))
+                    (alter producer-ref (fn [m] (dissoc (get m host) port))))
+
+                  ;remove
+                  (if (coll? v)                                   ;only write valid messages to the retry cache
+                    (write-to-retry-cache connector topic v)
+                    (warn "Could not send message to retry cache: invalid message " v)))
+                (finally
+                  (close-producer-buffer! (smart-deref (:producer producer)))))
+
+              (try
+                (update-metadata :producers (filter (exclude-host host port) @metadata-producers-ref) :timeout-ms 5000)
                 (catch Exception e (do
                                      (error e e)
                                      (>!! metadata-error-ch e)))))

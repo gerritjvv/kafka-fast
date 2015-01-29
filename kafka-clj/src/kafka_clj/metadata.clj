@@ -89,6 +89,7 @@
   (blacklist-if-exception blacklisted-metadata-producers-ref metadata-producer (fn [] [metadata-producer (get-broker-metadata metadata-producer conf)])))
 
 (defn iterate-metadata-producers [metadata-producers conf blacklisted-metadata-producers-ref]
+  ;(prn "meta : " metadata-producers)
   (->>
     metadata-producers
     smart-deref
@@ -102,11 +103,8 @@
 (defn get-metadata [metadata-producers conf & {:keys [blacklisted-metadata-producers-ref] :or {blacklisted-metadata-producers-ref (ref {})}}]
   (let [[metadata-producer meta] (iterate-metadata-producers metadata-producers conf blacklisted-metadata-producers-ref)]
     (info "Got meta from " (:host metadata-producer) " -> empty? " (empty? meta))
-    (if
-      (not (empty? meta)) meta
-                          (throw (RuntimeException. (str "Could not get metadata for any metadata server blacklisted-servers: " (keys (smart-deref blacklisted-metadata-producers-ref))))))))
+    meta))
 
-     
 (defn- client-closed? [producer]
   (.get ^AtomicBoolean (get-in producer [:client :closed])))
 
@@ -116,6 +114,7 @@
     metadata-producer))
 
 (defn get-metadata-recreate! [metadata-producers conf & args]
+  (prn "get-meta-recreate!")
   (try
     [metadata-producers (apply get-metadata (smart-deref metadata-producers) conf args)]
     (catch Exception e (let [producers2 (doall (map (partial recreate-producer-if-closed! conf) metadata-producers))]

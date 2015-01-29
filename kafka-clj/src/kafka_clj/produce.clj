@@ -1,7 +1,7 @@
 (ns kafka-clj.produce
   (:require [kafka-clj.codec :refer [crc32-int compress]]
             [kafka-clj.response :refer [produce-response-decoder metadata-response-decoder]]
-            [clj-tcp.client :refer [client write! read! close-all ALLOCATOR]]
+            [clj-tcp.client :refer [client write! read! close-all ALLOCATOR closed?]]
             [clj-tcp.codec :refer [default-encoder]]
             [clojure.tools.logging :refer [error info]]
             [kafka-clj.buff-utils :refer [inc-capacity write-short-string with-size compression-code-mask]]
@@ -173,6 +173,9 @@
                        msgs                                 ;we must return the msgs here, its used later by the cache for retries
                        )))))
 
+
+(defn producer-closed? [producer]
+  (closed? (:client producer)))
 
 (defn producer
   "returns a producer for sending messages, the decoder is a producer-response-decoder"
