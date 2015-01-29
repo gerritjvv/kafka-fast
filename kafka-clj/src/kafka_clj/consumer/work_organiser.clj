@@ -226,11 +226,9 @@
         brokers (filter #(not (nil? %)) (map (fn [[broker data]] (if (not-empty (topic-partition? data topic partition)) broker nil)) offsets))]
 
     (if (empty? brokers)
-      (if (> retry-count 9)
+      (if (> retry-count 2)
         (throw (ex-info "No broker data found" {:topic topic :partition partition :offsets offsets}))
-        (do
-          (Thread/sleep 1000)
-          (get-broker-from-meta state topic partition :retry-count (inc retry-count))))
+        (get-broker-from-meta state topic partition :retry-count (inc retry-count)))
       (first brokers))))
 
 (defn calculate-new-work

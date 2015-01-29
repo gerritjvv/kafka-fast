@@ -1,5 +1,6 @@
 (ns kafka-clj.client
   (:require [fun-utils.core :refer [star-channel buffered-chan fixdelay-thread apply-get-create stop-fixdelay thread-seq go-seq]]
+            [fun-utils.cache :as cache]
             [kafka-clj.produce :refer [producer metadata-request-producer send-messages message shutdown]]
             [kafka-clj.metadata :refer [get-metadata]]
             [kafka-clj.msg-persist :refer [get-sent-message close-send-cache create-send-cache close-send-cache remove-sent-message
@@ -7,16 +8,20 @@
             [clojure.tools.logging :refer [error info debug warn]]
             [com.stuartsierra.component :as component]
             [clj-tuple :refer [tuple]]
-            [clojure.core.cache :as cache]
             [clojure.core.async :refer [chan >! >!! <! <!! thread go close! dropping-buffer] :as async])
   (:import [java.util.concurrent.atomic AtomicInteger AtomicLong]
            [kafka_clj.response ProduceResponse]
-           (java.util.concurrent Executors ScheduledExecutorService TimeUnit)))
+           (java.util.concurrent Executors ScheduledExecutorService TimeUnit ThreadFactory)))
 
 (declare close-producer-buffer!)
 
 (defn- get-partition-count [topic brokers-metadata]
   (count (get brokers-metadata topic)))
+
+(defn- ^ThreadFactory daemon-thread-factory []
+  (reify ThreadFactory
+    (newThread [_ r]
+      (doto (Thread. ^Runnable r) (.setDaemon true)))))
 
 (defn smart-deref [x]
   (if
@@ -361,21 +366,21 @@
   (:metadata-error-ch connector))
 
 
-(defn create-connector [bootstrap-brokers {:keys [acks batch-fail-message-over-limit batch-byte-limit blacklisted-expire producer-retry-strategy topic-auto-create] :or {blacklisted-expire 10000 acks 0 batch-fail-message-over-limit true batch-byte-limit 10485760 producer-retry-strategy :default topic-auto-create true} :as conf}]
+(defn create-connector [bootstrap-brokers {:keys [acks batch-fail-message-over-limit batch-byte-limit blacklisted-expire producer-retry-strategy topic-auto-create] :or {blacklisted-expire 1000 acks 0 batch-fail-message-over-limit true batch-byte-limit 10485760 producer-retry-strategy :default topic-auto-create true} :as conf}]
   (let [
-        ^ScheduledExecutorService scheduled-service (Executors/newSingleThreadScheduledExecutor)
+        ^ScheduledExecutorService scheduled-service (Executors/newSingleThreadScheduledExecutor (daemon-thread-factory))
         metadata-producers-ref (ref (filter (complement nil?) (map #(delay (metadata-request-producer (:host %) (:port %) conf)) bootstrap-brokers)))
         brokers-metadata (ref (get-metadata @metadata-producers-ref conf))
         _ (if (empty? @brokers-metadata)
             (throw (RuntimeException. (str "No broker metadata could be found for " bootstrap-brokers))))
 
         ;blacklist producers and no use them in metdata updates or sending, they expire after a few seconds
-        blacklisted-producers-ref (ref (cache/ttl-cache-factory {} :ttl blacklisted-expire))
-        blacklisted-metadata-producers-ref (ref (cache/ttl-cache-factory {} :ttl blacklisted-expire))
+        blacklisted-producers-ref (ref (cache/create-cache :expire-on-write blacklisted-expire))
+        blacklisted-metadata-producers-ref (ref (cache/create-cache :expire-on-write blacklisted-expire))
 
         producers-cache (ref {})                            ;cache (produce host port)instances
         producer-error-ch (chan 100)
-        metadata-error-ch (chan (dropping-buffer 1))
+        metadata-error-ch (chan (dropping-buffer 10))
 
         producer-ref (ref {})
 
