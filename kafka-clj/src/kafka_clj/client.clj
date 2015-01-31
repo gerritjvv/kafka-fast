@@ -381,7 +381,7 @@
 (defn create-connector [bootstrap-brokers {:keys [acks batch-fail-message-over-limit batch-byte-limit blacklisted-expire producer-retry-strategy topic-auto-create io-threads] :or {blacklisted-expire 1000 acks 0 batch-fail-message-over-limit true batch-byte-limit 10485760 producer-retry-strategy :default topic-auto-create true :io-threads 8} :as conf}]
   (let [
         ;all connector channels will use this shared pool for listening on write read events. 3 threads was tested with over 120 k messages per second
-        async-ctx (fthreads/shared-threads (inc io-threads))
+        async-ctx (fthreads/shared-threads (if (number? io-threads) (inc io-threads) 4))
         ^ScheduledExecutorService scheduled-service (Executors/newSingleThreadScheduledExecutor (daemon-thread-factory))
         metadata-producers-ref (ref (filter (complement nil?) (map #(delay (metadata-request-producer (:host %) (:port %) conf)) bootstrap-brokers)))
         brokers-metadata (ref (get-metadata @metadata-producers-ref conf))
