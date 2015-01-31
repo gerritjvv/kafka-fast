@@ -6,7 +6,8 @@
             [clojure.tools.logging :refer [error info]]
             [kafka-clj.buff-utils :refer [inc-capacity write-short-string with-size compression-code-mask]]
             [clj-tuple :refer [tuple]]
-            [kafka-clj.msg-persist :refer [cache-sent-messages create-send-cache]])
+            [kafka-clj.msg-persist :refer [cache-sent-messages create-send-cache]]
+            [fun-utils.threads :as fthreads])
   (:import [java.net InetAddress]
            [java.nio ByteBuffer]
            [java.util.concurrent.atomic AtomicLong AtomicInteger]
@@ -41,7 +42,7 @@
       v)))
 
 (defn shutdown [{:keys [client]}]
-  (if client
+  (when client
     (try 
       (close-all client)
       (catch Exception e (error e "Error while shutting down producer")))))

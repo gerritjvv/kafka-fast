@@ -86,7 +86,8 @@
     (catch Exception e [metadata-producer (black-list-producer blacklisted-metadata-producers-ref metadata-producer e)])))
 
 (defn _get-metadata [metadata-producer conf blacklisted-metadata-producers-ref]
-  (blacklist-if-exception blacklisted-metadata-producers-ref metadata-producer (fn [] [metadata-producer (get-broker-metadata metadata-producer conf)])))
+  (blacklist-if-exception blacklisted-metadata-producers-ref metadata-producer (fn [] (let [meta (get-broker-metadata metadata-producer conf)]
+                                                                                        [metadata-producer (if (empty? meta) nil meta)]))))
 
 (defn iterate-metadata-producers [metadata-producers conf blacklisted-metadata-producers-ref]
   ;(prn "meta : " metadata-producers)
@@ -102,7 +103,7 @@
 
 (defn get-metadata [metadata-producers conf & {:keys [blacklisted-metadata-producers-ref] :or {blacklisted-metadata-producers-ref (ref {})}}]
   (let [[metadata-producer meta] (iterate-metadata-producers metadata-producers conf blacklisted-metadata-producers-ref)]
-    (info "Got meta from " (:host metadata-producer) " -> empty? " (empty? meta))
+    (prn "Got meta from " (:host metadata-producer) " -> empty? " (empty? meta))
     meta))
 
 (defn- client-closed? [producer]

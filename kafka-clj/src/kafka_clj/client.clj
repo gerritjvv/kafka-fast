@@ -1,5 +1,6 @@
 (ns kafka-clj.client
   (:require [fun-utils.core :refer [star-channel buffered-chan fixdelay-thread apply-get-create stop-fixdelay thread-seq go-seq]]
+            [fun-utils.threads :as fthreads]
             [fun-utils.cache :as cache]
             [kafka-clj.produce :refer [producer metadata-request-producer send-messages message shutdown]]
             [kafka-clj.metadata :refer [get-metadata]]
@@ -169,6 +170,7 @@
   (info "CREATING PRODUCER_BUFFER " topic " " partition " : " host ": " port)
 
   (let [producer (cached-producer-from-connector connector conf host port) ;(producer host port conf)
+        async-ctx (-> connector :state :async-ctx)
         c (:client producer)
         ch-source (chan 100)
         read-ch (-> producer :client :read-ch)
@@ -181,27 +183,25 @@
     ; if error-codec > 0 then handle the error
     ; else remove the message from the cache
     ;connector buff-ch producer-error-ch producer conf v]
-    (thread-seq
-      (fn [v]
-        (kafka-response connector buff-ch producer-error-ch producer conf v))
-      read-ch)
-
-    (thread-seq
-      (fn [v]
-        (handle-error buff-ch producer-error-ch producer conf topic partition v))
-      error-ch)
+    (fthreads/listen async-ctx
+                     read-ch
+                     (fn [v]
+                       (kafka-response connector buff-ch producer-error-ch producer conf v)))
+    (fthreads/listen async-ctx
+                     error-ch
+                     (fn [v]
+                       (handle-error buff-ch producer-error-ch producer conf topic partition v)))
 
     ;send buffered messages
     ;if any exception handle the error
-    (thread-seq
-      (fn [v]
-        (when (> (count v) 0)
-          (try
-            (send-messages connector producer conf v)
-            (catch Exception e
-              (handle-send-message-error >!! buff-ch producer-error-ch e producer conf topic partition -1 v)))))
-      buff-ch)
-
+    (fthreads/listen async-ctx
+                     buff-ch
+                     (fn [v]
+                       (when (> (count v) 0)
+                         (try
+                           (send-messages connector producer conf v)
+                           (catch Exception e
+                             (handle-send-message-error >!! buff-ch producer-error-ch e producer conf topic partition -1 v))))))
 
     {:host host
      :port port
@@ -221,7 +221,7 @@
          (info "removing producer for " topic ":" partition)
          (thread
            (try
-             (shutdown (:producer producer-buffer))
+             (close-producer-buffer! producer-buffer)
              (catch Exception e (error e e))))
          ;remove from ref
          (dosync 
@@ -353,9 +353,12 @@
   
   (close-retry-cache connector)
   (close-send-cache connector)
- 
+
+
   (doseq [producer-buffer (deref (:producers-ref state))]
-    (close-producer-buffer! (smart-deref producer-buffer))))
+    (close-producer-buffer! (smart-deref producer-buffer)))
+
+  (fthreads/close! (:async-ctx state)))
 
 
 (defn producer-error-ch [connector]
@@ -375,8 +378,10 @@
   (:metadata-error-ch connector))
 
 
-(defn create-connector [bootstrap-brokers {:keys [acks batch-fail-message-over-limit batch-byte-limit blacklisted-expire producer-retry-strategy topic-auto-create] :or {blacklisted-expire 1000 acks 0 batch-fail-message-over-limit true batch-byte-limit 10485760 producer-retry-strategy :default topic-auto-create true} :as conf}]
+(defn create-connector [bootstrap-brokers {:keys [acks batch-fail-message-over-limit batch-byte-limit blacklisted-expire producer-retry-strategy topic-auto-create io-threads] :or {blacklisted-expire 1000 acks 0 batch-fail-message-over-limit true batch-byte-limit 10485760 producer-retry-strategy :default topic-auto-create true :io-threads 8} :as conf}]
   (let [
+        ;all connector channels will use this shared pool for listening on write read events. 3 threads was tested with over 120 k messages per second
+        async-ctx (fthreads/shared-threads (inc io-threads))
         ^ScheduledExecutorService scheduled-service (Executors/newSingleThreadScheduledExecutor (daemon-thread-factory))
         metadata-producers-ref (ref (filter (complement nil?) (map #(delay (metadata-request-producer (:host %) (:port %) conf)) bootstrap-brokers)))
         brokers-metadata (ref (get-metadata @metadata-producers-ref conf))
@@ -397,7 +402,7 @@
         send-cache (if (> acks 0) (create-send-cache conf))
         retry-cache (create-retry-cache conf)
         state {:producers-ref producer-ref
-
+               :async-ctx async-ctx
                :brokers-metadata brokers-metadata
                :topic-partition-ref (ref {})
                :producer-error-ch producer-error-ch
