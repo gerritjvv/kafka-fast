@@ -183,25 +183,25 @@
     ; if error-codec > 0 then handle the error
     ; else remove the message from the cache
     ;connector buff-ch producer-error-ch producer conf v]
-    (fthreads/listen async-ctx
-                     read-ch
-                     (fn [v]
-                       (kafka-response connector buff-ch producer-error-ch producer conf v)))
-    (fthreads/listen async-ctx
-                     error-ch
-                     (fn [v]
-                       (handle-error buff-ch producer-error-ch producer conf topic partition v)))
+    (thread-seq
+      (fn [v]
+        (kafka-response connector buff-ch producer-error-ch producer conf v)) read-ch)
+
+    (thread-seq
+      (fn [v]
+        (handle-error buff-ch producer-error-ch producer conf topic partition v)) error-ch)
 
     ;send buffered messages
-    ;if any exception handle the error
-    (fthreads/listen async-ctx
-                     buff-ch
-                     (fn [v]
-                       (when (> (count v) 0)
-                         (try
-                           (send-messages connector producer conf v)
-                           (catch Exception e
-                             (handle-send-message-error >!! buff-ch producer-error-ch e producer conf topic partition -1 v))))))
+    ;if any exception handle the error do not use async-ctx
+    (thread-seq
+      (fn [v]
+        (when (> (count v) 0)
+          (try
+            (send-messages connector producer conf v)
+            (catch Exception e
+              (do
+                (error "Error in reading from buff-ch " e)
+                (handle-send-message-error >!! buff-ch producer-error-ch e producer conf topic partition -1 v)))))) buff-ch)
 
     {:host host
      :port port
@@ -336,7 +336,7 @@
                 (send-msg-retry connector msg)))))
       (throw (RuntimeException. (str "No brokers available: " connector))))))
 
-(defn close-producer-buffer! [{:keys [producer ch-source error-ch]}]
+(defn close-producer-buffer! [{:keys [producer ch-source error-ch async-ctx]}]
   (try
 		    (do
           (if ch-source
@@ -344,7 +344,9 @@
           (if error-ch
             (close! error-ch))
           (if producer
-            (shutdown producer)))
+            (shutdown producer))
+          (if async-ctx
+            (fthreads/close! async-ctx)))
       (catch Exception e (error e (str "Error while shutdown " producer)))))
 
 (defn close [{:keys [state] :as connector}]
@@ -378,10 +380,11 @@
   (:metadata-error-ch connector))
 
 
-(defn create-connector [bootstrap-brokers {:keys [acks batch-fail-message-over-limit batch-byte-limit blacklisted-expire producer-retry-strategy topic-auto-create io-threads] :or {blacklisted-expire 1000 acks 0 batch-fail-message-over-limit true batch-byte-limit 10485760 producer-retry-strategy :default topic-auto-create true :io-threads 3} :as conf}]
+(defn create-connector [bootstrap-brokers {:keys [acks batch-fail-message-over-limit batch-byte-limit blacklisted-expire producer-retry-strategy topic-auto-create io-threads read-io-threads] :or {blacklisted-expire 1000 acks 0 batch-fail-message-over-limit true batch-byte-limit 10485760 producer-retry-strategy :default topic-auto-create true :io-threads 3 read-io-threads 1} :as conf}]
   (let [
         ;all connector channels will use this shared pool for listening on write read events. 3 threads was tested with over 120 k messages per second
-        async-ctx (fthreads/shared-threads (if (number? io-threads) (inc io-threads) 4))
+        async-ctx (fthreads/shared-threads (if (number? read-io-threads) (inc read-io-threads) 2))
+
         ^ScheduledExecutorService scheduled-service (Executors/newSingleThreadScheduledExecutor (daemon-thread-factory))
         metadata-producers-ref (ref (filter (complement nil?) (map #(delay (metadata-request-producer (:host %) (:port %) conf)) bootstrap-brokers)))
         brokers-metadata (ref (get-metadata @metadata-producers-ref conf))
