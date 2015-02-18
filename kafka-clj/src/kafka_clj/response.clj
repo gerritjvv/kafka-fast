@@ -1,13 +1,13 @@
 (ns kafka-clj.response
   (:require [clojure.tools.logging :refer [info error]]
             [kafka-clj.buff-utils :refer [read-short-string]])
-  (:import 
-           [io.netty.handler.codec ByteToMessageDecoder ReplayingDecoder]
-           [io.netty.buffer ByteBuf]
-           [java.util List]
-           [kafka_clj.util SafeReplayingDecoder ProduceStates]
-           [java.util.concurrent.atomic AtomicInteger AtomicReference]
-           ))
+  (:import
+    [io.netty.handler.codec ByteToMessageDecoder ReplayingDecoder]
+    [io.netty.buffer ByteBuf]
+    [java.util List]
+    [kafka_clj.util SafeReplayingDecoder ProduceStates]
+    [java.util.concurrent.atomic AtomicInteger AtomicReference]
+    (java.io DataInputStream)))
 
 (defrecord ResponseEnd [])
 (defrecord ProduceResponse [correlation-id topic partition error-code offset])
@@ -78,98 +78,39 @@
         )))
 			        
 			        
-    
-(defn transform [state state-transformers out]
-  (let [t ((get state-transformers state) out)]
-    t))
-
-(defn checkpoint [^SafeReplayingDecoder decoder s]
-  (.checkp decoder s))
-
-(defn state [^SafeReplayingDecoder decoder]
-  (.getState decoder))
 
 
+(defn read-int [^DataInputStream in]
+  (.readInt in))
 
- 
-(defn produce-response-decoder
-  "A handler that reads produce responses"
-  []
-  (let [initial-state ProduceStates/PRODUCE_RESPONSE
-        topic-len (AtomicInteger. 0)
-        partition-len (AtomicInteger. 0)
-        topic-name (AtomicReference. nil)
-        correlation-id (AtomicReference. nil)
-        end-of-consume (fn [^List out]
-                         (.add out (->ResponseEnd))
-                         ProduceStates/PRODUCE_RESPONSE)
-        
-        decrement-partition! (fn [] 
-                               (if (= (.getAndDecrement partition-len) 1)
-                                 (.getAndDecrement topic-len)))
-        transform-messages (fn [out]
-                                                       (cond 
-                                                            (and (= (.get partition-len) 0)
-                                                                 (= (.get topic-len) 0))
-                                                            (end-of-consume out)
-                                                       
-                                                            (and (= (.get partition-len) 0)
-                                                                 (> (.get topic-len) 0))
-                                                            ProduceStates/TOPIC
-                                                            (> (.get partition-len) 0)
-                                                            ProduceStates/PARTITION
-                                                            
-                                                            :else ProduceStates/PARTITION))
-        state-transformers {
-                            ProduceStates/PRODUCE_RESPONSE (fn [out]
-                                                             (if (> (.get topic-len) 0)
-                                                                ProduceStates/TOPIC
-                                                                (end-of-consume out)))
-                                                             
-                            ProduceStates/TOPIC            transform-messages
-                            ProduceStates/PARTITION        transform-messages
-                                                             
-                            }
-        ]
-    
-	  (proxy [SafeReplayingDecoder]
-	    ;decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out)
-	    [initial-state]
-	    (decode [ctx ^ByteBuf in ^List out] 
-	          (let [state (state this)]
-	            (cond 
-	              
-	              (= state ProduceStates/PRODUCE_RESPONSE)
-	              (let [size (.readInt in)
-                     corr-id (.readInt in)]
-                 
-                 (.set correlation-id corr-id)
-                 (.set topic-len (.readInt in))
-                 (checkpoint this (transform ProduceStates/PRODUCE_RESPONSE state-transformers out)))
-               
-                (= state ProduceStates/TOPIC)
-	              (do
-                 (.set topic-name (read-short-string in))
-                 (.set partition-len (.readInt in))
-                 
-                 (checkpoint this (transform ProduceStates/TOPIC state-transformers out)))
-               
-                
-	              (= state ProduceStates/PARTITION)
-	              (let [partition (.readInt in)
-                      error-code (.readShort in)
-                      offset (.readLong in)]
-                 
-                 (decrement-partition!)
-                 
-                 (.add out
-                      (->ProduceResponse (.get correlation-id) (.get topic-name) 
-                                         partition error-code offset))
-                 (checkpoint this (transform ProduceStates/PARTITION state-transformers out)))
-               
-	              :else 
-	                  (throw (RuntimeException. (str "The state " state " is not excepted")))))
-	             
-	        ))))
-			                   
-          
+(defn read-long [^DataInputStream in]
+  (.readLong in))
+
+(defn read-short2 [^DataInputStream in]
+  (.readShort in))
+
+(defn read-short-string2 [^DataInputStream in]
+  (let [size (read-short2 in)]
+    (if (pos? size)
+      (let [arr  (byte-array size)]
+        (.read in arr)
+        (String. arr "UTF-8")))))
+
+(defn lazy-array-read [len f] (repeatedly len f))
+
+(defn inpartition->kafkarespseq [in corrid topic-name]
+  (->ProduceResponse corrid topic-name
+                     (read-int in)                          ;partition
+                     (read-short2 in)                        ;error-code
+                     (read-long in)))                       ;offset
+
+(defn intopic->kafkarespseq [in corrid]
+  (let [topic-name (read-short-string2 in)
+        partition-len (read-int in)]
+    (lazy-array-read partition-len #(inpartition->kafkarespseq in corrid topic-name))))
+
+(defn in->kafkarespseq [^DataInputStream in]
+  (let [corrid (read-int in)
+        topic-len (read-int in)]
+    (lazy-array-read topic-len #(intopic->kafkarespseq in corrid))))
+

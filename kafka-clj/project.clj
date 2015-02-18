@@ -1,4 +1,4 @@
-(defproject kafka-clj "2.4.9-SNAPSHOT"
+(defproject kafka-clj "2.6.2-SNAPSHOT"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -29,17 +29,21 @@
                  [midje "1.6.3" :scope "test"]
                  [org.clojure/tools.trace "0.7.6"]
                  [org.xerial.snappy/snappy-java "1.1.1.6"]
+
+                 [net.jpountz.lz4/lz4 "1.3.0"]
                  [org.clojure/tools.logging "0.3.0"]
-                 [clj-tcp "0.4.7"]
+                 [clj-tcp "0.4.9-SNAPSHOT"]
                  [fmap-clojure "LATEST" :exclusions [org.clojure/tools.logging]]
-                 [fun-utils "0.5.3" :exclusions [org.clojure/tools.logging]]
+                 [fun-utils "0.5.4-SNAPSHOT" :exclusions [org.clojure/tools.logging]]
                  [clj-tuple "0.1.7"]
                  [thread-load "0.1.3" :exclusions [org.clojure/clojure]]
                  [com.codahale.metrics/metrics-core "3.0.1"]
                  [org.clojure/core.async "0.1.303.0-886421-alpha"]
                  [com.stuartsierra/component "0.2.2"]
                  [org.clojure/clojure "1.6.0" :scope "provided"]
-                 [org.apache.zookeeper/zookeeper "3.4.6" :scope "provided"]
-                 [org.apache.kafka/kafka_2.10 "0.8.1.1" :scope "provided"]
+                 [org.apache.zookeeper/zookeeper "3.4.6" :scope "provided"
+                  :exclusions [io.netty/netty]]
+                 [org.apache.kafka/kafka_2.10 "0.8.1.1" :scope "provided"
+                  :exclusions [io.netty/netty]]
                  [redis.embedded/embedded-redis "0.2" :scope "provided"]
                  ])

@@ -15,7 +15,8 @@
            [java.util.concurrent.atomic AtomicInteger]
            [java.util List]
            [kafka_clj.util Util]
-           [io.netty.channel.nio NioEventLoopGroup]))
+           [io.netty.channel.nio NioEventLoopGroup]
+           (io.netty.util ReferenceCountUtil)))
 
 (defrecord Message [topic partition offset bts])
 (defrecord FetchError [topic partition error-code])
@@ -213,10 +214,13 @@
 
 (defn read-fetch [^ByteBuf in state f]
   "Will return the accumelated result of f"
-  (let [i (.readerIndex in)
-        size (.readInt in)
-        correlation-id (.readInt in)]
-    (read-array in state read-topic in f)))
+  (try
+    (let [i (.readerIndex in)
+          size (.readInt in)
+          correlation-id (.readInt in)]
+      (read-array in state read-topic in f))
+    (finally
+      (ReferenceCountUtil/release in))))
 
 (comment
   (defn read-fetch-response [^ByteBuf in]
@@ -406,6 +410,7 @@
                                   ;5mb tcp receive buffer and tcp nodelay off
                                   :channel-options [
                                                     [ChannelOption/TCP_NODELAY true]
+                                                    ;[ALLOCATOR PooledByteBufAllocator/DEFAULT]
                                                     ]
                                   }
                                 conf

@@ -56,7 +56,7 @@
 		               (try
 			               (do
 					             (cond
-								         (instance? kafka_clj.fetch.Message msg)
+								         (or (instance? kafka_clj.fetch.Message msg) (:bts msg))
                          ;only include messsages of the same topic partition and lower than max-offset
                          ;we also check that prev-offset < offset this catches duplicates in a same request
 								         (do
@@ -82,8 +82,6 @@
       (if (> (.get ^AtomicInteger msg-waste-count) (/ (.get ^AtomicInteger msg-count) 2))
         (warn "Non optimum consumer config, increase :consume-step or possibly decrease :max-bytes: " (Thread/currentThread) ": fetch msg count: " topic "[" partition "] > count: " (.get ^AtomicInteger msg-count) " waste: " (.get ^AtomicInteger msg-waste-count)))
 
-      (if v
-        (.release ^ByteBuf v))
          ;(info "FETCH RESP " fetch-res)
 	       (if (coll? fetch-res)
 	          fetch-res

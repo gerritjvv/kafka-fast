@@ -148,6 +148,7 @@
   "Returns '({:topic :partition :offset :len}) Len is exclusive"
   [producer topic partition ^Long max-offset ^Long start-offset ^Long step]
   {:pre [(and (:host producer) (:port producer))]}
+
   (if (< start-offset max-offset)
     (let [^Long t (+ start-offset step)
           ^Long l (if (> t max-offset) (- max-offset start-offset) step)]
@@ -198,7 +199,7 @@
       ;push w-units
       ;save max-offset
       ;producer topic partition max-offset start-offset step
-      (if-let [work-units (calculate-work-units broker topic partition offset saved-offset consume-step2)]
+      (when-let [work-units (calculate-work-units broker topic partition offset saved-offset consume-step2)]
         (let [max-offset (apply max (map #(+ ^Long (:offset %) ^Long (:len %)) work-units))
               ts (System/currentTimeMillis)]
           (redis/wcar redis-conn

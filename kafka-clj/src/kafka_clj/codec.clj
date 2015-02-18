@@ -9,6 +9,7 @@
 (defonce SNAPPY "snappy")
 (defonce GZIP "gzip")
 (defonce GZIP_NATIVE "gzip-native")
+(defonce LZ4 "lz4")
 
 (defn crc32-int
   "CRC for byte array."
@@ -19,6 +20,7 @@
   (cond 
     (= codec "gzip") 1
     (= codec "snappy") 2
+    (= codec "lz4") 3
     (= codec "none") 0
     :else (throw (RuntimeException. (str "Codec " codec " not supported")))))
 
@@ -34,13 +36,15 @@
                   (.close dout)
                   (.close bout)
                   (.toByteArray bout))
-    (= codec 2) (Util/compressSnappy bts) ))
+    (= codec 2) (Util/compressSnappy bts)
+    (= codec 3) (Util/compressLZ4 bts)))
                 
 
 (defn ^"[B" uncompress [codec ^"[B" bts]
   (cond 
     (= codec 1) (Util/deflateGzip bts)
-    (= codec 2) (Util/deflateSnappy bts))) ;skip the snappy header which is 8 bytes
+    (= codec 2) (Util/deflateSnappy bts)
+    (= codec 3) (Util/deflateLZ4 bts))) ;skip the snappy header which is 8 bytes
 
 
 

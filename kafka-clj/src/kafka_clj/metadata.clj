@@ -103,7 +103,7 @@
 
 (defn get-metadata [metadata-producers conf & {:keys [blacklisted-metadata-producers-ref] :or {blacklisted-metadata-producers-ref (ref {})}}]
   (let [[metadata-producer meta] (iterate-metadata-producers metadata-producers conf blacklisted-metadata-producers-ref)]
-    (prn "Got meta from " (:host metadata-producer) " -> empty? " (empty? meta))
+    ;(prn "Got meta from " (:host metadata-producer) " -> empty? " (empty? meta))
     meta))
 
 (defn- client-closed? [producer]

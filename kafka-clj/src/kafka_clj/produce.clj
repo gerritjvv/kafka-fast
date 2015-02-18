@@ -1,17 +1,18 @@
 (ns kafka-clj.produce
   (:require [kafka-clj.codec :refer [crc32-int compress]]
-            [kafka-clj.response :refer [produce-response-decoder metadata-response-decoder]]
-            [clj-tcp.client :refer [client write! read! close-all ALLOCATOR closed?]]
+            [kafka-clj.response :refer [metadata-response-decoder]]
+            [clj-tcp.client :refer [client write! read! close-all ALLOCATOR RCVBUF-ALLOCATOR WRITE-BUFFER-HIGH-WATER-MARK closed?]]
             [clj-tcp.codec :refer [default-encoder]]
             [clojure.tools.logging :refer [error info]]
             [kafka-clj.buff-utils :refer [inc-capacity write-short-string with-size compression-code-mask]]
             [clj-tuple :refer [tuple]]
             [kafka-clj.msg-persist :refer [cache-sent-messages create-send-cache]]
+            [kafka-clj.tcp :as tcp]
             [fun-utils.threads :as fthreads])
   (:import [java.net InetAddress]
            [java.nio ByteBuffer]
            [java.util.concurrent.atomic AtomicLong AtomicInteger]
-           [io.netty.buffer ByteBuf Unpooled ByteBufAllocator]
+           [io.netty.buffer ByteBuf Unpooled ByteBufAllocator UnpooledByteBufAllocator PooledByteBufAllocator]
            [java.nio.channels SocketChannel]
            [java.net InetSocketAddress]
            [kafka_clj.util Util]))
@@ -44,7 +45,9 @@
 (defn shutdown [{:keys [client]}]
   (when client
     (try
-      (close-all client)
+      (if (:socket client)
+        (tcp/close! client)
+        (close-all client))
       (catch Exception e (error e "Error while shutting down producer")))))
 
 (defn message [topic partition ^bytes bts]
@@ -168,12 +171,14 @@
     {:keys [client]}
     {:keys [acks] :or {acks 0} :as conf}
     msgs]
-    (if (> acks 0)
-      (write! client (partial write-message-for-ack connector conf msgs))
-      (write! client (fn [^ByteBuf buff]
-                       (if buff (with-size buff write-request conf msgs))
-                       msgs                                 ;we must return the msgs here, its used later by the cache for retries
-                       )))))
+    (let [byte-buff (Unpooled/buffer)]
+      (if (> acks 0)
+        (write-message-for-ack connector conf msgs byte-buff)
+        (with-size byte-buff write-request conf msgs))
+
+      (if (:flush-on-write connector)
+        (tcp/write! client byte-buff :flush true)
+        (tcp/write! client byte-buff)))))
 
 
 (defn producer-closed? [producer]
@@ -185,25 +190,8 @@
     (producer host port {}))
   ([host port conf]
     (try
-      (let [default-encoder-f (default-encoder)
-            c (client host port (merge
-                                  ;;parameters that can be over written
-                                  {
-                                   :reuse-client true
-                                   :write-buff   100
-                                   :read-buff    100
-                                   :retry-limit  0
-                                   }
-                                  ;merge conf
-                                  conf
-                                  ;parameters tha cannot be overwritten
-                                  {
-                                   ;:channel-options [[ALLOCATOR (PooledByteBufAllocator. false)]]
-                                   :handlers [
-                                              produce-response-decoder
-                                              (fn [] default-encoder-f)
+      (let [c (tcp/tcp-client host port)]
 
-                                              ]}))]
         (info "Creating client instance " host ":" port)
         (->Producer c host port))
       (catch Exception e (.printStackTrace e)))))
@@ -246,6 +234,7 @@
     (let [c (client host port (merge conf
                                      {:reuse-client true
                                       :retry-limit  0
+                                      ;:channel-options [[ALLOCATOR (KafkaAllocator.)]]
                                       :handlers     [
                                                      metadata-response-decoder
                                                      default-encoder

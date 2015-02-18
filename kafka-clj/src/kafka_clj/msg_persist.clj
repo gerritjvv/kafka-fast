@@ -92,15 +92,15 @@
 (defn create-send-cache [{:keys [send-cache-size-limit
                                  send-cache-max-entries
                                  send-cache-expire-after-write
-                                 send-cache-expire-after-access] :or {send-cache-size-limit 2
-                                                                      send-cache-max-entries 1000000
-                                                                      send-cache-expire-after-write 5 
+                                 send-cache-expire-after-access] :or {send-cache-size-limit 4
+                                                                      send-cache-max-entries 2000000
+                                                                      send-cache-expire-after-write 5
                                                                       send-cache-expire-after-access 5}}]
   "Returns {:db db :cache cache}
    db is the DBMaker newMemoryDirectDB result
    and cach is a HTreeMap cache"
    (let [^DB db (-> (DBMaker/newMemoryDirectDB)
-                 (.sizeLimit (int send-cache-size-limit))     ;limit store size to 2GB
+                 (.sizeLimit (int send-cache-size-limit))     ;limit store size to 4GB
                  (.transactionDisable)    ;better performance
                  (.make))
          
