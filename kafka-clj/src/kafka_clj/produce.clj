@@ -160,6 +160,8 @@
 ;this is only used with the single message producer api where ack > 0
 (def global-message-ack-cache (delay (create-send-cache {})))
 
+(defonce msg-counter (AtomicLong. 0))
+
 (defn send-messages
   "Send messages by writing them to the tcp client.
   The write is async.
@@ -175,6 +177,8 @@
       (if (> acks 0)
         (write-message-for-ack connector conf msgs byte-buff)
         (with-size byte-buff write-request conf msgs))
+
+      ;(info "KAFKA-DEBUG1: send-messages " (.incrementAndGet ^AtomicLong msg-counter) " connector:keys: " (keys connector) " connector:flush-on-write: " (:flush-on-write connector))
 
       (if (:flush-on-write connector)
         (tcp/write! client byte-buff :flush true)

@@ -171,7 +171,7 @@
   [connector topic partition producer-error-ch {:keys [host port]} {:keys [batch-num-messages queue-buffering-max-ms batch-byte-limit batch-fail-message-over-limit]
                                                                     :or   {batch-num-messages 25 queue-buffering-max-ms 500 batch-byte-limit 10485760} :as conf}]
 
-  (info "CREATING PRODUCER_BUFFER " topic " " partition " : " host ": " port)
+  (info "CREATING PRODUCER_BUFFER " topic " " partition " : " host ": " port  " connector keys: " (keys connector) " connetor:write-on-flush: " (:write-on-flush connector))
 
   (let [producer (cached-producer-from-connector connector conf host port) ;(producer host port conf)
         async-ctx (-> connector :state :async-ctx)
@@ -184,12 +184,13 @@
     ;(kafka-response connector buff-ch producer-error-ch producer conf )
     (tcp/read-async-loop! (:client producer)
                           (fn [^"[B" bts]
-                              (let [^DataInputStream in (DataInputStream. (ByteArrayInputStream. bts))]
-                                (try
-                                  (doseq [resp (kafka-resp/in->kafkarespseq in)]
-                                    (kafka-response connector buff-ch producer-error-ch producer conf resp))
-                                  (finally
-                                    (.close in))))))
+                              (when (> (count bts) 4)
+                                (let [^DataInputStream in (DataInputStream. (ByteArrayInputStream. bts))]
+                                  (try
+                                    (doseq [resp (kafka-resp/in->kafkarespseq in)]
+                                      (kafka-response connector buff-ch producer-error-ch producer conf resp))
+                                    (finally
+                                      (.close in)))))))
 
 
     ;send buffered messages
@@ -323,6 +324,9 @@
           (throw (RuntimeException. (str "The message for topic " topic " could not be sent")))))))
 
 (defn send-msg [{:keys [state] :as connector} topic ^bytes bts]
+
+  ;(info "KAFKA DEBUG: send-msg: connector-keys: " (keys connector) " connector:flush-on-write: " (:flush-on-write connector))
+
   (if (and (-> state :conf :batch-fail-message-over-limit) (>= (count bts) ^long (-> state :conf :batch-byte-limit)))
     (throw (RuntimeException. (str "The message size [ " (count bts)  " ] is larger than the configured batch-byte-limit [ " (get-in state [:conf :batch-byte-limit]) "]")))
     (if (> (-> state :brokers-metadata deref count) 0)
@@ -462,6 +466,8 @@
 
 										                  (delete-from-retry-cache connector (:key-val retry-msg)))))
 										         (catch Exception e (error e e))))]
+
+    ;(info "KAFKA DEBUG: flush-on-write: " flush-on-write)
 
     (.scheduleWithFixedDelay scheduled-service ^Runnable (fn [] (try (update-metadata) (catch Exception e (do (error e e)
                                                                                                               (>!! metadata-error-ch e))))) 0 10000 TimeUnit/MILLISECONDS)
