@@ -318,8 +318,9 @@
   (.set shutdown-flag true)
   (.await shutdown-confirm 10000 TimeUnit/MILLISECONDS)
   (.shutdownNow ^ExecutorService work-complete-processor-future)
-  (doseq [producer meta-producers]
-    (produce/shutdown producer))
+  (when meta-producers
+    (doseq [producer meta-producers]
+      (produce/shutdown producer)))
   (redis/close-pool redis-conn))
 
 

@@ -327,8 +327,8 @@
 
   ;(info "KAFKA DEBUG: send-msg: connector-keys: " (keys connector) " connector:flush-on-write: " (:flush-on-write connector))
 
-  (if (and (-> state :conf :batch-fail-message-over-limit) (>= (count bts) ^long (-> state :conf :batch-byte-limit)))
-    (throw (RuntimeException. (str "The message size [ " (count bts)  " ] is larger than the configured batch-byte-limit [ " (get-in state [:conf :batch-byte-limit]) "]")))
+  (if (and (-> state :conf :batch-fail-message-over-limit) (>= (alength bts) ^long (-> state :conf :batch-byte-limit)))
+    (throw (RuntimeException. (str "The message size [ " (alength bts)  " ] is larger than the configured batch-byte-limit [ " (get-in state [:conf :batch-byte-limit]) "]")))
     (if (> (-> state :brokers-metadata deref count) 0)
       (let [partition (select-rr-partition! topic state)
             msg (message topic partition bts)]
