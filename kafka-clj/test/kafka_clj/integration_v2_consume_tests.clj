@@ -5,7 +5,7 @@
             [clojure.core.async :refer [alts!! chan timeout sliding-buffer]]
             [clojure.tools.logging :refer [info]]
             [clojure.edn :as edn]
-            [kafka-clj.redis :as redis])
+            [kafka-clj.core :as redis])
   (:use midje.sweet))
 
 

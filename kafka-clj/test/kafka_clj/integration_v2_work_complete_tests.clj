@@ -1,8 +1,7 @@
 (ns kafka-clj.integration-v2-work-complete-tests
   (:require [kafka-clj.consumer.work-organiser :refer [create-organiser! close-organiser! calculate-new-work get-queue-data]]
             [kafka-clj.consumer.consumer :refer [consumer-start do-work-unit! wait-and-do-work-unit!]]
-            [taoensso.carmine :as car]
-            [kafka-clj.redis :as redis]
+            [kafka-clj.redis.core :as redis]
             [clojure.tools.logging :refer [info]]
             [clojure.edn :as edn])
   (:use midje.sweet))
@@ -21,9 +20,9 @@
 ;====================================
 
 (defn wait-for-queue-count [redis-conn queue expected-count iterations]
-  (loop [c(redis/wcar redis-conn (car/llen queue)) i 0]
+  (loop [c(redis/wcar redis-conn (redis/llen queue)) i 0]
     (if (and (< c expected-count) (< i iterations))
-      (let [v (redis/wcar redis-conn (car/llen queue))]
+      (let [v (redis/wcar redis-conn (redis/llen queue))]
         (prn "waiting " queue  " results are " v)
         (Thread/sleep 1000)
         (recur v  (inc i)))
@@ -42,15 +41,15 @@
                    working-queue (:working-queue org)
                    ]
                (redis/wcar redis-conn
-                         (car/flushall))
+                         (redis/flushall))
                (redis/wcar redis-conn
-                         (car/lpush complete-queue {:resp-data {:offset-read 10} :offset 0 :len 10}))
+                         (redis/lpush complete-queue {:resp-data {:offset-read 10} :offset 0 :len 10}))
 
                (let [[complete work working]
                      (redis/wcar redis-conn
-                               [(car/lrange complete-queue 0 -1)
-                                (car/lrange work-queue 0 -1)
-                                (car/lrange working-queue 0 -1)
+                               [(redis/lrange complete-queue 0 -1)
+                                (redis/lrange work-queue 0 -1)
+                                (redis/lrange working-queue 0 -1)
                                 ])
                      ]
                  (count complete) => 0
@@ -60,17 +59,17 @@
 
                ;test work fail processor
                (redis/wcar redis-conn
-                         (car/flushall))
+                         (redis/flushall))
                (redis/wcar redis-conn
-                         (car/lpush complete-queue {:status :fail :resp-data {:offset-read 10} :offset 0 :len 10}))
+                         (redis/lpush complete-queue {:status :fail :resp-data {:offset-read 10} :offset 0 :len 10}))
 
 
                (wait-for-queue-count redis-conn work-queue 1 10)
                (let [[complete work working :as m]
                      (redis/wcar redis-conn
-                               [(car/lrange complete-queue 0 -1)
-                                (car/lrange work-queue 0 -1)
-                                (car/lrange working-queue 0 -1)
+                               [(redis/lrange complete-queue 0 -1)
+                                (redis/lrange work-queue 0 -1)
+                                (redis/lrange working-queue 0 -1)
                                 ])
                      ]
                  (prn "TEST REST: " m)                      ;﻿ [[] [] [{:offset 0, :resp-data {:offset-read 10}, :status :fail, :len 10}]]
@@ -83,16 +82,16 @@
 
   ;test work half done
   (redis/wcar redis-conn
-              (car/flushall))
+              (redis/flushall))
   (redis/wcar redis-conn
-              (car/lpush complete-queue {:status :ok :resp-data {:offset-read 5} :offset 0 :len 10}))
+              (redis/lpush complete-queue {:status :ok :resp-data {:offset-read 5} :offset 0 :len 10}))
 
   (Thread/sleep 3000)
   (let [[complete work working]
         (redis/wcar redis-conn
-                    [(car/lrange complete-queue 0 -1)
-                     (car/lrange work-queue 0 -1)
-                     (car/lrange working-queue 0 -1)
+                    [(redis/lrange complete-queue 0 -1)
+                     (redis/lrange work-queue 0 -1)
+                     (redis/lrange working-queue 0 -1)
                      ])
         ]
     (count complete) => 0

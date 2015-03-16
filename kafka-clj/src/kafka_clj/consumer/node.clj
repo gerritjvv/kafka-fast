@@ -3,7 +3,7 @@
   (:require
             [kafka-clj.consumer.work-organiser :refer [create-organiser! close-organiser! calculate-new-work]]
             [kafka-clj.consumer.consumer :refer [consume! close-consumer!]]
-            [kafka-clj.redis :as redis]
+            [kafka-clj.redis.core :as redis]
             [com.stuartsierra.component :as component]
             [fun-utils.core :refer [fixdelay-thread stop-fixdelay buffered-chan]]
             [taoensso.carmine :as car]

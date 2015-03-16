@@ -2,7 +2,7 @@
   (:require
     [taoensso.carmine :as car]
     [kafka-clj.consumer.util :as cutil]
-    [kafka-clj.redis :as redis]
+    [kafka-clj.redis.core :as redis]
     [thread-load.core :as load]
     [clojure.core.async :refer [go alts!! >!! >! <! timeout chan] :as async]
     [kafka-clj.fetch :refer [close-fetch-producer create-fetch-producer send-fetch read-fetch]]

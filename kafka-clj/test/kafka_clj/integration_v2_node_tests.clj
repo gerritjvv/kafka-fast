@@ -2,7 +2,7 @@
   (:require [kafka-clj.consumer.node :refer [create-node! shutdown-node! msg-seq! read-msg!]]
             [kafka-clj.consumer.work-organiser :refer [get-queue-data]]
             [taoensso.carmine :as car]
-            [kafka-clj.redis :as redis]
+            [kafka-clj.core :as redis]
             [clojure.core.async :refer [alts!! chan timeout]]
             [clojure.tools.logging :refer [info]]
             [clojure.edn :as edn])
