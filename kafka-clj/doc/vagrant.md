@@ -20,9 +20,16 @@ The boxes launched are:
   
 *Zookeeper*
   * zookeeper1 192.168.4.2:2181
-  
+
+
 *Services* -- Redis
-  * redis 192.168.4.10 
+
+  * redis 192.168.4.10:6379
+  * redis 192.168.4.10:6380
+  * redis 192.168.4.10:6381
+  * redis 192.168.4.10:6382
+  * redis 192.168.4.10:6383
+
   
 The services box is there to not only run the redis instance but any other instances such as a mysql db etc that  
 is required for a particular usecase.
@@ -78,7 +85,10 @@ Remember to create the topic first using vagrant/scripts/create_topic_remote.sh 
 
 ```clojure
 (use 'kafka-clj.consumer.node :reload)
-(def consumer-conf {:bootstrap-brokers [{:host "192.168.4.40" :port 9092}] :redis-conf {:host "192.168.4.10" :max-active 5 :timeout 1000 :group-name "test"} :conf {}})
+(def consumer-conf {:bootstrap-brokers [{:host "192.168.4.40" :port 9092}]
+                    :redis-conf {:host ["192.168.4.10:6379" "192.168.4.10:6380" "192.168.4.10:6381"
+                                        "192.168.4.10:6382" "192.168.4.10:6383" ] :max-active 5 :timeout 1000 :group-name "test"} :conf {}})
+                                        
 (def node (create-node! consumer-conf ["my-topic"]))
 
 (read-msg! node)

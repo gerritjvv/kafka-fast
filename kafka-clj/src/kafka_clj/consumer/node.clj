@@ -6,7 +6,6 @@
             [kafka-clj.redis.core :as redis]
             [com.stuartsierra.component :as component]
             [fun-utils.core :refer [fixdelay-thread stop-fixdelay buffered-chan]]
-            [taoensso.carmine :as car]
             [clojure.tools.logging :refer [info error]]
             [clojure.core.async :refer [chan <!! alts!! timeout close! sliding-buffer]]))
 
@@ -38,7 +37,7 @@
       redis-conn
       (str group-name "/kafka-nodes-master-lock")
       lock-timeout
-      500
+      1000
       (calculate-new-work node topics))))
 
 (defn- start-work-calculate
@@ -61,20 +60,24 @@
   (if (= from-queue to-queue)
     (throw (RuntimeException. "Cannot copy to and from the same queue")))
 
-  (loop [len (redis/wcar redis-conn (car/llen from-queue))]
+
+  (loop [len (redis/wcar redis-conn (redis/llen redis-conn from-queue))]
     (info "copy-redis-queue [" from-queue "] => [" to-queue "]: " len)
     (if (> len 0)
-      (let [wus (map #(into (sorted-map) %) (redis/wcar redis-conn
-                                                        (car/lrange from-queue 0 100)))]
+      (let [wus (map #(do
+                       (error "value:>>>>>> " %)
+                       (into (sorted-map) %))
+                     (redis/wcar redis-conn
+                                 (redis/lrange redis-conn from-queue 0 100)))]
         (when (not-empty wus)
           (let [res
                 (redis/wcar redis-conn
-                            (doall (map #(car/lrem from-queue -1 %) wus))
-                            (apply car/lpush to-queue wus))]
+                            (doall (map #(redis/lrem redis-conn from-queue -1 %) wus))
+                            (redis/lpush* redis-conn to-queue wus))]
 
             ;drop-last to drop the result from teh apply car lpush command
             (if (>= (apply + (drop-last res)) (count wus))                            ;only recur if we did delete all the values
-              (recur (redis/wcar redis-conn (car/llen from-queue))))))))))
+              (recur (redis/wcar redis-conn (redis/llen redis-conn from-queue))))))))))
 
 (defn create-node!
   "Create a consumer node that represents a consumer using an organiser consumer and group conn to coordinate colaborative consumption

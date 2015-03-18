@@ -171,6 +171,8 @@
 
 (extend-type SingleRedis
   IRedis
+  (-lpush* [_ queue obj-coll]
+    (apply car/lpush queue obj-coll))
   (-lpush [_ queue obj]
     (car/lpush queue obj))
   (-llen  [_ queue]
@@ -191,7 +193,7 @@
   (-release-lock [{:keys [pool]} lock-name owner-uuid]
     (_release-lock pool lock-name owner-uuid))
   (-have-lock?   [{:keys [pool]} lock-name owner-uuid]
-    (_have-lock? pool))
+    (_have-lock? pool lock-name owner-uuid))
 
   (-close! [{:keys [pool]}] (close-pool pool))
   (-wcar [{:keys [pool]} f]

@@ -133,7 +133,7 @@
                   (work-complete-handler! state (ensure-unique-id work-unit))
                   (redis/lrem redis-conn working-queue -1 (into (sorted-map) work-unit))))))
           (catch InterruptedException e1 (info "Exit work complete loop"))
-          (catch Exception e (do (error e e) (prn e)))))
+          (catch Exception e (do (error e e) (.printStackTrace e)))))
       (finally
         (.countDown shutdown-confirm)))))
 
@@ -166,7 +166,7 @@
   (io!
     (let [saved-offset (redis/wcar redis-conn (redis/get redis-conn (str "/" group-name "/offsets/" topic "/" partition)))]
       (cond
-        (not-empty saved-offset) (to-int saved-offset)
+        (not (nil? saved-offset)) (to-int saved-offset)
         :else (let [meta-offset (get-offset-from-meta state topic partition)]
                 (info "Set initial offsets [" topic "/" partition "]: " meta-offset)
                 (redis/wcar redis-conn (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) meta-offset))
@@ -204,7 +204,7 @@
               ts (System/currentTimeMillis)]
           (redis/wcar redis-conn
                       ;we must use sorted-map here otherwise removing the wu will not be possible due to serialization with arbritary order of keys
-                    (apply redis/lpush redis-conn work-queue (map #(assoc (into (sorted-map) %) :producer broker :ts ts) work-units))
+                    (redis/lpush* redis-conn work-queue (map #(assoc (into (sorted-map) %) :producer broker :ts ts) work-units))
                     (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) max-offset))
           )))))
 
@@ -277,20 +277,14 @@
 
 (defn create-organiser!
   "Create a organiser state that should be passed to all the functions were state is required in this namespace"
-  [{:keys [bootstrap-brokers work-queue working-queue complete-queue redis-conf conf] :as state}]
+  [{:keys [bootstrap-brokers work-queue working-queue complete-queue redis-conf redis-factory conf] :or {redis-factory redis/create}  :as state}]
   {:pre [work-queue working-queue complete-queue
          bootstrap-brokers (> (count bootstrap-brokers) 0) (-> bootstrap-brokers first :host) (-> bootstrap-brokers first :port)]}
 
   (let [shutdown-flag (AtomicBoolean. false)
         shutdown-confirm (CountDownLatch. 1)
         meta-producers (ref (create-meta-producers! bootstrap-brokers conf))
-        spec  {:host     (get redis-conf :host "localhost")
-               :port     (get redis-conf :port 6379)
-               :password (get redis-conf :password)
-               :timeout  (get redis-conf :timeout 4000)}
-        opts {:max-active (get redis-conf :max-active 20)}
-
-        redis-conn (redis/redis-conn spec opts)
+        redis-conn (redis-factory redis-conf)
         intermediate-state (assoc state :meta-producers meta-producers :redis-conn redis-conn :offset-producers (ref {}) :shutdown-flag shutdown-flag :shutdown-confirm shutdown-confirm)
         work-complete-processor-future (start-work-complete-processor! intermediate-state)
         ]
@@ -328,9 +322,10 @@
   (use 'kafka-clj.consumer.work-organiser :reload)
 
   (def org (create-organiser!
-             {:bootstrap-brokers [{:host "localhost" :port 9092}]
+             {:bootstrap-brokers [{:host "192.168.4.40" :port 9092}]
               :consume-step      10
-              :redis-conf        {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}))
+              :redis-conf        {:host ["192.168.4.10:6379" "192.168.4.10:6380" "192.168.4.10:6381"
+                                         "192.168.4.10:6382" "192.168.4.10:6383" ] :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}))
 
 
   (calculate-new-work org ["test"])

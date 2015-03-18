@@ -1,6 +1,5 @@
 (ns kafka-clj.consumer.consumer
   (:require
-    [taoensso.carmine :as car]
     [kafka-clj.consumer.util :as cutil]
     [kafka-clj.redis.core :as redis]
     [thread-load.core :as load]
@@ -185,7 +184,7 @@
   [redis-conn queue working-queue]
   (if-let [res (try                                         ;this command throws a SocketTimeoutException if the queue does not exist
                  (redis/wcar redis-conn                       ;we check for this condition and continue to block
-                   (car/brpoplpush queue working-queue 1000))
+                             (redis/brpoplpush redis-conn queue working-queue 1000))
                  (catch java.net.SocketTimeoutException e (do (safe-sleep 1000) (debug "Timeout on queue " queue " retry ") nil)))]
     res
     (recur redis-conn queue working-queue)))
@@ -233,10 +232,10 @@
             :ts (System/currentTimeMillis)
             :wu work-unit2}))
     ;send work complete to complete-queue
-    (let [[_ removed] (redis/wcar redis-conn
-                        (car/lpush complete-queue work-unit2)
-                        (car/lrem  working-queue -1 sorted-wu))]
-      state)))
+    (redis/wcar redis-conn
+                (redis/lpush redis-conn complete-queue work-unit2)
+                (redis/lrem  redis-conn working-queue -1 sorted-wu))
+    state))
 
 (defn save-call [f state & args]
   (try
@@ -330,7 +329,7 @@
          redis-conn]}
   (io!
     (redis/wcar redis-conn
-              (car/lpush work-queue (into (sorted-map) work-unit)))))
+              (redis/lpush redis-conn work-queue (into (sorted-map) work-unit)))))
 
 
 (defn- ^Runnable publish-pool-loop [{:keys [load-pool ^AtomicBoolean shutdown-flag ^CountDownLatch shutdown-confirm] :as state}]

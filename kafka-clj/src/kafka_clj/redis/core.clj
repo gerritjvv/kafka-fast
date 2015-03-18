@@ -1,12 +1,15 @@
 (ns kafka-clj.redis.core
   (:refer-clojure :exclude [get set])
   (:require [kafka-clj.redis.protocol :refer :all]
-            [kafka-clj.redis.single :as redis-single]))
+            [kafka-clj.redis.single :as redis-single]
+            [kafka-clj.redis.cluster :as redis-cluster]
+            [clojure.tools.logging :refer [info]]))
 
 
 
 (defn flushall [pool] (-flushall pool))
 
+(defn lpush* [pool queue obj-coll] (-lpush* pool queue obj-coll))
 (defn lpush [pool queue obj] (-lpush pool queue obj))
 (defn llen [pool queue] (-llen pool queue))
 (defn lrem [pool queue n obj] (-lrem pool queue n obj))
@@ -18,7 +21,6 @@
 (defn release-lock [pool lock-name owner-uuid] (-release-lock pool lock-name owner-uuid))
 (defn have-lock? [pool lock-name owner-uuid] (-have-lock? pool lock-name owner-uuid))
 (defn close! [pool] (-close! pool))
-
 
 
 (defmacro wcar [pool & body]
@@ -50,5 +52,32 @@
 
 (defn redis-cluster-conn
   "Creates a redis connection for a redis cluster"
-  [& args]
-  (throw (RuntimeException. "Not supported yet")))
+  [& hosts]
+  (apply redis-cluster/create hosts))
+
+
+(defn create-single-conn [redis-conf]
+  (let [spec  {:host     (clojure.core/get redis-conf :host "localhost")
+               :port     (clojure.core/get redis-conf :port 6379)
+               :password (clojure.core/get redis-conf :password)
+               :timeout  (clojure.core/get redis-conf :timeout 4000)}
+        opts {:max-active (clojure.core/get redis-conf :max-active 20)}]
+    (redis-conn spec opts)))
+
+(defn create-cluster-conn [redis-conf]
+  (if (string? redis-conf)
+    (redis-cluster-conn redis-conf)
+    (apply redis-cluster-conn redis-conf)))
+
+(defn create
+  "{:host []} use cluster
+   {:host \"\"} use single"
+  [redis-conf]
+  (if (string? (clojure.core/get redis-conf :host))
+    (spit "/tmp/test" "SINGLE!!!!!")
+    (create-cluster-conn (clojure.core/get redis-conf :host))))
+
+(comment
+  (if (string? (clojure.core/get redis-conf :host))
+    (create-single-conn redis-conf)
+    (create-cluster-conn (clojure.core/get redis-conf :host))))

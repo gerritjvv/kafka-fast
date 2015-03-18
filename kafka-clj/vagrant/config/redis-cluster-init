@@ -25,6 +25,8 @@ start() {
 
 NODES=""
 
+HOST=`ip a s|sed -ne '/127.0.0.1/!{s/^[ \t]*inet[ \t]*\([0-9.]\+\)\/.*$/\1/p}' | tail -n 1`
+
 while read PORT; do
 
     echo $PORT
@@ -32,8 +34,9 @@ while read PORT; do
 
     REDIS_CONFIG="/etc/redis${PORT}.conf"
     sed "s/\$PORT/$PORT/g" $REDIS_CONFIG_ORG > $REDIS_CONFIG
+    sed -i "s/\$HOST/$HOST/g" $REDIS_CONFIG
 
-    NODES="$NODES 192.168.4.10:$PORT"
+    NODES="$NODES $HOST:$PORT"
     lockfile=/var/lock/subsys/redis$PORT
 
     [ -f $REDIS_CONFIG ] || exit 6
@@ -49,7 +52,14 @@ while read PORT; do
 
 done <$REDIS_NODES
 
-/opt/$REDIS_NAME/src/redis-trib.rb create $NODES
+sleep 1s
+
+if [ `ls /var/log/redis-dat | wc -l` == 0 ]; then
+
+ echo "Redis cluster setup"
+ /opt/$REDIS_NAME/src/redis-trib.rb create $NODES
+
+fi
 
 
     return $retval
