@@ -47,5 +47,5 @@
                   :exclusions [io.netty/netty]]
                  [org.apache.kafka/kafka_2.10 "0.8.1.1" :scope "provided"
                   :exclusions [io.netty/netty]]
-                 [redis.embedded/embedded-redis "0.2" :scope "provided"]
+                 [redis.embedded/embedded-redis "0.3" :scope "provided"]
                  ])

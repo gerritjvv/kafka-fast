@@ -64,19 +64,23 @@
   (loop [len (redis/wcar redis-conn (redis/llen redis-conn from-queue))]
     (info "copy-redis-queue [" from-queue "] => [" to-queue "]: " len)
     (if (> len 0)
-      (let [wus (map #(do
-                       (error "value:>>>>>> " %)
-                       (into (sorted-map) %))
+      (let [wus (map #(into (sorted-map) %)
                      (redis/wcar redis-conn
                                  (redis/lrange redis-conn from-queue 0 100)))]
         (when (not-empty wus)
           (let [res
-                (redis/wcar redis-conn
-                            (doall (map #(redis/lrem redis-conn from-queue -1 %) wus))
-                            (redis/lpush* redis-conn to-queue wus))]
+                (loop [wus1 wus n 0]
+                  (if-let [wu (first wus1)]
+                    (do
+                      (redis/wcar redis-conn
+                                  (redis/lrem redis-conn from-queue 1 wu)
+                                  (redis/lpush redis-conn to-queue wu))
+                      (recur (rest wus1) (inc n)))
+                    n))]
 
+            (info "Copied " res " work units")
             ;drop-last to drop the result from teh apply car lpush command
-            (if (>= (apply + (drop-last res)) (count wus))                            ;only recur if we did delete all the values
+            (when (>= res (count wus))                            ;only recur if we did delete all the values
               (recur (redis/wcar redis-conn (redis/llen redis-conn from-queue))))))))))
 
 (defn create-node!

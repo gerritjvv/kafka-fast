@@ -16,7 +16,7 @@
 (defprotocol IToBytes
   (-write [obj]))
 
-
+;; only use nippy for clojure objects (except True/False) for String and Number use a binary string
 (extend-protocol
   IToBytes
   String (-write [obj] (Util/byteString obj))

@@ -178,7 +178,7 @@
   (-llen  [_ queue]
     (car/llen queue))
   (-lrem  [_ queue n obj]
-    (car/lrem queue n obj))
+    (car/lrem queue 1 obj))
   (-get [_ k]
     (car/get k))
   (-set   [_ k v]

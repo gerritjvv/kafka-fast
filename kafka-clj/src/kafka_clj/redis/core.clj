@@ -74,7 +74,7 @@
    {:host \"\"} use single"
   [redis-conf]
   (if (string? (clojure.core/get redis-conf :host))
-    (spit "/tmp/test" "SINGLE!!!!!")
+    (create-single-conn redis-conf)
     (create-cluster-conn (clojure.core/get redis-conf :host))))
 
 (comment
