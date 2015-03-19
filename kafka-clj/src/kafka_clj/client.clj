@@ -62,13 +62,7 @@
    "
   (let [^long partition-count (get-partition-count topic @brokers-metadata)]
    (if (> partition-count 0)	    
-		  (if-let [^AtomicLong pcounter (get @topic-partition-ref topic)]
-		    (mod ^long (.getAndIncrement pcounter) (long partition-count))
-		    (do 
-		     (dosync 
-		           (commute topic-partition-ref (fn [x] 
-		                                          (assoc x topic (AtomicLong. 0)))))
-		     (select-rr-partition! topic state)))
+		  (rand-int (long partition-count))
     (if (-> state :conf :topic-auto-create)
       0
       (do
@@ -324,9 +318,6 @@
           (throw (RuntimeException. (str "The message for topic " topic " could not be sent")))))))
 
 (defn send-msg [{:keys [state] :as connector} topic ^bytes bts]
-
-  ;(info "KAFKA DEBUG: send-msg: connector-keys: " (keys connector) " connector:flush-on-write: " (:flush-on-write connector))
-
   (if (and (-> state :conf :batch-fail-message-over-limit) (>= (count bts) ^long (-> state :conf :batch-byte-limit)))
     (throw (RuntimeException. (str "The message size [ " (count bts)  " ] is larger than the configured batch-byte-limit [ " (get-in state [:conf :batch-byte-limit]) "]")))
     (if (> (-> state :brokers-metadata deref count) 0)
@@ -396,10 +387,7 @@
         ^ScheduledExecutorService scheduled-service (Executors/newSingleThreadScheduledExecutor (daemon-thread-factory))
         metadata-producers-ref (ref (filter (complement nil?) (map #(delay (metadata-request-producer (:host %) (:port %) conf)) bootstrap-brokers)))
         brokers-metadata (ref (get-metadata @metadata-producers-ref conf))
-        _ (comment
-          _ (if (empty? @brokers-metadata)
-              (throw (RuntimeException. (str "No broker metadata could be found for " bootstrap-brokers))))
-          )
+
         ;blacklist producers and no use them in metdata updates or sending, they expire after a few seconds
         blacklisted-producers-ref (ref (cache/create-cache :expire-on-write blacklisted-expire))
         blacklisted-metadata-producers-ref (ref (cache/create-cache :expire-on-write blacklisted-expire))
@@ -469,6 +457,7 @@
 
     ;(info "KAFKA DEBUG: flush-on-write: " flush-on-write)
 
+    (info "Creating connecting with io-threads: " io-threads)
     (.scheduleWithFixedDelay scheduled-service ^Runnable (fn [] (try (update-metadata) (catch Exception e (do (error e e)
                                                                                                               (>!! metadata-error-ch e))))) 0 10000 TimeUnit/MILLISECONDS)
     ;listen to any producer errors, this can be sent from any producer

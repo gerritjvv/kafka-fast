@@ -14,6 +14,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.zip.CRC32;
 import java.util.zip.GZIPInputStream;
 
@@ -159,5 +160,9 @@ public class Util {
 
     public final static byte[] byteString(Object obj) throws UnsupportedEncodingException {
         return obj.toString().getBytes("UTF-8");
+    }
+
+    public static final long randInt(long n){
+        return ThreadLocalRandom.current().nextLong(n);
     }
 }

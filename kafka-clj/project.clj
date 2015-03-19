@@ -36,7 +36,7 @@
                  [org.clojure/tools.logging "0.3.0"]
                  [clj-tcp "0.4.9-SNAPSHOT"]
                  [fmap-clojure "LATEST" :exclusions [org.clojure/tools.logging]]
-                 [fun-utils "0.5.4-SNAPSHOT" :exclusions [org.clojure/tools.logging]]
+                 [fun-utils "0.5.5" :exclusions [org.clojure/tools.logging]]
                  [clj-tuple "0.1.7"]
                  [thread-load "0.1.3" :exclusions [org.clojure/clojure]]
                  [com.codahale.metrics/metrics-core "3.0.1"]
