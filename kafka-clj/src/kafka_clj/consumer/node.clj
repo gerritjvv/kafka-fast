@@ -71,7 +71,6 @@
     (if (> len 0)
       (let [queue-data (redis/wcar redis-conn
                                    (redis/lrange redis-conn from-queue 0 100))
-            _ (do (error "QueueData: " queue-data))
             wus (map #(into (sorted-map) %)
                      (filter filter-is-map
                              queue-data))]

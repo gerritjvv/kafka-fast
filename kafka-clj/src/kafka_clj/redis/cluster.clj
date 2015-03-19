@@ -88,7 +88,7 @@
   (let [^List ls (.getList cmd queue)
         size (.size ls)]
     (flatten
-      (into [] (.subList ls (int (if (< n 0) 0 n)) (int (if (> limit size) size limit)))))))
+      (into [] (.subList ls (int (if (< n 0) 0 n)) (int (if (>= limit size) (dec size) limit)))))))
 
 
 (defn timeout? [^long start-time ^long timeout]
@@ -117,15 +117,15 @@
 
 (defn acquire-lock [^Redisson cmd ^String lock-name ^long timeout-ms ^long wait-ms]
   (let [^RLock lock (.getLock cmd lock-name)]
-    (error "Try Lock: " lock-name " wait " wait-ms " timeout-ms " timeout-ms)
-    (error "Got Lock: " (.tryLock lock wait-ms timeout-ms TimeUnit/MILLISECONDS))
-    lock))
+    (if (.tryLock lock wait-ms timeout-ms TimeUnit/MILLISECONDS) lock)))
 
-(defn release-lock [^Redisson cmd ^String lock-name _]
-  (.forceUnlock (.getLock cmd lock-name)))
+(defn release-lock [^Redisson cmd ^String lock-name ^RLock lock]
+  (when lock
+    (.unlock lock))
+  true)
 
-(defn have-lock? [^Redisson cmd ^String lock-name _]
-  (.isLocked (.getLock cmd lock-name)))
+(defn have-lock? [^Redisson cmd ^String lock-name lock]
+  (and lock (.isLocked ^RLock lock)))
 
 
 (defrecord RedissonObj [pool]

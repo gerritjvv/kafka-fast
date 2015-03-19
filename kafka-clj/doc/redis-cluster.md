@@ -5,8 +5,9 @@ Home: https://github.com/gerritjvv/kafka-fast
 
 #Overview
 
+Since: `3.0.0-SNAPSHOT`
 
-This document describe how to install Redis cluster for HA failover for kafka-clj' offset management.
+This document describe how to install Redis cluster for HA fail over for kafka-clj' offset management.
 
 For a more detailed overview of Redis cluster please see:
 
@@ -44,6 +45,25 @@ cluster-node-timeout 5000
 appendonly yes
 ```
 
+
+# Client library configuration and usage
+
+```
+:redis-conf {:host ["server1:6379" "server2:6379" "server3:6379"
+                    "server4:6379" "server5:6379" "server6:6379"] :group-name "mygroup"}
+```
+
+Example:
+
+```clojure
+(use 'kafka-clj.consumer.node :reload)
+(def consumer-conf {:bootstrap-brokers [{:host "192.168.4.40" :port 9092}]
+                    :redis-conf {:host ["192.168.4.10:6379" "192.168.4.10:6380" "192.168.4.10:6381"
+                                        "192.168.4.10:6382" "192.168.4.10:6383" ] :max-active 5 :timeout 1000 :group-name "test"} :conf {}})
+
+(def node (create-node! consumer-conf ["my-topic"]))
+
+```
 
 # Startup
 
