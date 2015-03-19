@@ -34,7 +34,8 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
   config.vm.define "services1" do |s|
     s.vm.hostname = "services1"
     s.vm.network  :private_network, ip:  "192.168.4.10"
-    s.vm.provision "shell", path: "vagrant/scripts/services.sh"
+    #cluster will start redis cluster, any other value will start a single redis
+    s.vm.provision "shell", path: "vagrant/scripts/services.sh", args:"cluster"
   end
 
   config.vm.provider "virtualbox" do |v|

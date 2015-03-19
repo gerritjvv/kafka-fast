@@ -12,6 +12,9 @@ import net.jpountz.lz4.LZ4BlockOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.nio.ByteBuffer;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.zip.CRC32;
 import java.util.zip.GZIPInputStream;
 
@@ -132,4 +135,34 @@ public class Util {
         return out.toByteArray();
     }
 
+    public static String asStr(ByteBuffer buff){
+        return new String(buff.array(), buff.arrayOffset()+buff.position(), buff.limit());
+    }
+
+    public static final String[] strArray(String str) {
+        return new String[]{str};
+    }
+
+    public static byte[] toBytes(ByteBuffer buff){
+        int limit = buff.limit();
+        byte[] arr = new byte[limit];
+        System.arraycopy(buff.array(), buff.arrayOffset()+buff.position(), arr, 0, limit);
+        return arr;
+    }
+
+    public final static boolean isNippyCompressed(byte[] bts){
+        return (bts.length > 4
+                && bts[0] == 78
+                && bts[1] == 80
+                && bts[2] == 89
+                && bts[3] == 1);
+    }
+
+    public final static byte[] byteString(Object obj) throws UnsupportedEncodingException {
+        return obj.toString().getBytes("UTF-8");
+    }
+
+    public static final long randInt(long n){
+        return ThreadLocalRandom.current().nextLong(n);
+    }
 }

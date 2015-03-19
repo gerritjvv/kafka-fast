@@ -11,7 +11,8 @@ internal APIs like direct producer access and direct metadata access are for the
 albeit you can still access them from Java using the clojure.lang.RT object.  
 
 This project contains a Vagrant template that allows you to tryout a full kafka cluster deploy on your local machine,  
-See https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/vagrant.md.
+See https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/vagrant.md
+
 
 #Usage
 
@@ -169,8 +170,11 @@ Redis was chosen over zookeeper because:
 *  Redis can do group management and distributed locks so using zookeeper does not make sense. 
 *  Also zookeeper can be a source of problems when a large amount of offsets are stored or the number of consumers become large, so in the end Redis wins the battle, simple + fast.
 
+For HA Redis (Cluster Redis) see: 
 
-The library used for redis is https://github.com/gerritjvv/group-redis
+https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/redis-cluster.md
+
+
 
 ## Load balancing
 

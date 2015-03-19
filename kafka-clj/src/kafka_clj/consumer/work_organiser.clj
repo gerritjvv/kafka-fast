@@ -2,8 +2,7 @@
   (:require
     [kafka-clj.consumer.util :as cutil]
     [clojure.tools.logging :refer [info debug error]]
-    [taoensso.carmine :as car]
-    [kafka-clj.redis :as redis]
+    [kafka-clj.redis.core :as redis]
     [fun-utils.core :as fu]
     [kafka-clj.metadata :refer [get-metadata get-metadata-recreate!]]
     [kafka-clj.produce :refer [metadata-request-producer] :as produce]
@@ -48,23 +47,23 @@
    Deletes the work unit by doing nothing i.e the work unit will not get pushed to the work queue again"
   [{:keys [redis-conn error-queue] :as state} wu]
   (error "delete workunit error-code:1 " + wu)
-  (car/lpush error-queue (into (sorted-map) wu)))
+  (redis/lpush redis-conn error-queue (into (sorted-map) wu)))
 
 (defn- work-complete-fail!
   "
    Tries to recalcualte the broker
    Side effects: Send data to redis work-queue"
-  [{:keys [work-queue] :as state} w-unit]
+  [{:keys [work-queue redis-conn] :as state} w-unit]
   (try
     ;we try to recalculate the broker, if any exception we reput the w-unit on the queue
     (let [sorted-wu (into (sorted-map) w-unit)
           broker (get-broker-from-meta state (:topic w-unit) (:partition w-unit))]
       (debug "Rebuilding failed work unit " w-unit)
-      (car/lpush work-queue (assoc sorted-wu :producer broker))
+      (redis/lpush redis-conn work-queue (assoc sorted-wu :producer broker))
       state)
     (catch Exception e (do
                         (error e e)
-                        (car/lpush work-queue (into (sorted-map) w-unit))))))
+                        (redis/lpush redis-conn work-queue (into (sorted-map) w-unit))))))
 
 (defn- ensure-unique-id [w-unit]
   ;function for debug purposes
@@ -75,7 +74,7 @@
    If [diff = (offset + len) - read-offset] > 0 then the work is republished to the work-queue with offset == (inc read-offset) and len == diff
 
    Side effects: Send data to redis work-queue"
-  [{:keys [work-queue] :as state} {:keys [resp-data offset len] :as w-unit}]
+  [{:keys [work-queue redis-conn] :as state} {:keys [resp-data offset len] :as w-unit}]
   {:pre [work-queue resp-data offset len]}
   (let [sorted-wu (into (sorted-map) w-unit)
         offset-read (to-int (:offset-read resp-data))]
@@ -88,7 +87,8 @@
         (if (> diff 0)                                      ;if any offsets left, send work to work-queue with :offset = :offset-read :len diff
           (let [new-work-unit (assoc (dissoc sorted-wu :resp-data) :offset new-offset :len diff)]
             (info "Recalculating work for processed work-unit " new-work-unit " prev-wu " w-unit)
-            (car/lpush
+            (redis/lpush
+              redis-conn
               work-queue
               new-work-unit)))))
     state))
@@ -99,7 +99,7 @@
   (if (pos? x) x 0))
 
 (defn- get-queue-len [redis-conn queue]
-  (car/wcar redis-conn (car/llen queue)))
+  (redis/wcar redis-conn (redis/llen redis-conn queue)))
 
 
 
@@ -128,12 +128,12 @@
               (if (map? work-units)
                 (do
                   (work-complete-handler! state (ensure-unique-id work-units))
-                  (car/lrem working-queue -1 (into (sorted-map) work-units)))
+                  (redis/lrem redis-conn working-queue -1 (into (sorted-map) work-units)))
                 (doseq [work-unit work-units]
                   (work-complete-handler! state (ensure-unique-id work-unit))
-                  (car/lrem working-queue -1 (into (sorted-map) work-unit))))))
+                  (redis/lrem redis-conn working-queue -1 (into (sorted-map) work-unit))))))
           (catch InterruptedException e1 (info "Exit work complete loop"))
-          (catch Exception e (do (error e e) (prn e)))))
+          (catch Exception e (do (error e e) (.printStackTrace e)))))
       (finally
         (.countDown shutdown-confirm)))))
 
@@ -164,12 +164,12 @@
   [{:keys [group-name redis-conn] :as state} topic partition]
   {:pre [group-name redis-conn topic partition]}
   (io!
-    (let [saved-offset (redis/wcar redis-conn (car/get (str "/" group-name "/offsets/" topic "/" partition)))]
+    (let [saved-offset (redis/wcar redis-conn (redis/get redis-conn (str "/" group-name "/offsets/" topic "/" partition)))]
       (cond
-        (not-empty saved-offset) (to-int saved-offset)
+        (not (nil? saved-offset)) (to-int saved-offset)
         :else (let [meta-offset (get-offset-from-meta state topic partition)]
                 (info "Set initial offsets [" topic "/" partition "]: " meta-offset)
-                (redis/wcar redis-conn (car/set (str "/" group-name "/offsets/" topic "/" partition) meta-offset))
+                (redis/wcar redis-conn (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) meta-offset))
                 meta-offset)))))
 
 (defn add-offsets! [state topic offset-datum]
@@ -204,8 +204,8 @@
               ts (System/currentTimeMillis)]
           (redis/wcar redis-conn
                       ;we must use sorted-map here otherwise removing the wu will not be possible due to serialization with arbritary order of keys
-                    (apply car/lpush work-queue (map #(assoc (into (sorted-map) %) :producer broker :ts ts) work-units))
-                    (car/set (str "/" group-name "/offsets/" topic "/" partition) max-offset))
+                    (redis/lpush* redis-conn work-queue (map #(assoc (into (sorted-map) %) :producer broker :ts ts) work-units))
+                    (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) max-offset))
           )))))
 
 (defn get-offset-from-meta [{:keys [meta-producers conf] :as state} topic partition]
@@ -255,18 +255,18 @@
 (defn get-queue-data
   "Helper function that returns the data from a queue using lrange 0 limit"
   [{:keys [redis-conn]} queue-name & {:keys [limit] :or {limit -1}}]
-  (redis/wcar redis-conn (car/lrange queue-name 0 limit)))
+  (redis/wcar redis-conn (redis/lrange redis-conn queue-name 0 limit)))
 
 (defn put-queue-data
   "Helper function that returns the data from a queue using lrange 0 limit"
   [{:keys [redis-conn]} queue-name data]
-  (redis/wcar redis-conn (car/lpush queue-name data)))
+  (redis/wcar redis-conn (redis/lpush redis-conn queue-name data)))
 
 
 (defn remove-queue-data
   "Helper function that returns the data from a queue using lrange 0 limit"
   [{:keys [redis-conn]} queue-name data]
-  (redis/wcar redis-conn (car/lrem queue-name -1 data)))
+  (redis/wcar redis-conn (redis/lrem redis-conn queue-name -1 data)))
 
 
 
@@ -277,20 +277,14 @@
 
 (defn create-organiser!
   "Create a organiser state that should be passed to all the functions were state is required in this namespace"
-  [{:keys [bootstrap-brokers work-queue working-queue complete-queue redis-conf conf] :as state}]
+  [{:keys [bootstrap-brokers work-queue working-queue complete-queue redis-conf redis-factory conf] :or {redis-factory redis/create}  :as state}]
   {:pre [work-queue working-queue complete-queue
          bootstrap-brokers (> (count bootstrap-brokers) 0) (-> bootstrap-brokers first :host) (-> bootstrap-brokers first :port)]}
 
   (let [shutdown-flag (AtomicBoolean. false)
         shutdown-confirm (CountDownLatch. 1)
         meta-producers (ref (create-meta-producers! bootstrap-brokers conf))
-        spec  {:host     (get redis-conf :host "localhost")
-               :port     (get redis-conf :port 6379)
-               :password (get redis-conf :password)
-               :timeout  (get redis-conf :timeout 4000)}
-        opts {:max-active (get redis-conf :max-active 20)}
-
-        redis-conn (redis/conn-pool spec opts)
+        redis-conn (redis-factory redis-conf)
         intermediate-state (assoc state :meta-producers meta-producers :redis-conn redis-conn :offset-producers (ref {}) :shutdown-flag shutdown-flag :shutdown-confirm shutdown-confirm)
         work-complete-processor-future (start-work-complete-processor! intermediate-state)
         ]
@@ -318,10 +312,9 @@
   (.set shutdown-flag true)
   (.await shutdown-confirm 10000 TimeUnit/MILLISECONDS)
   (.shutdownNow ^ExecutorService work-complete-processor-future)
-  (when meta-producers
-    (doseq [producer meta-producers]
-      (produce/shutdown producer)))
-  (redis/close-pool redis-conn))
+  (doseq [producer meta-producers]
+    (produce/shutdown producer))
+  (redis/close! redis-conn))
 
 
 (comment
@@ -329,9 +322,10 @@
   (use 'kafka-clj.consumer.work-organiser :reload)
 
   (def org (create-organiser!
-             {:bootstrap-brokers [{:host "localhost" :port 9092}]
+             {:bootstrap-brokers [{:host "192.168.4.40" :port 9092}]
               :consume-step      10
-              :redis-conf        {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}))
+              :redis-conf        {:host ["192.168.4.10:6379" "192.168.4.10:6380" "192.168.4.10:6381"
+                                         "192.168.4.10:6382" "192.168.4.10:6383" ] :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}))
 
 
   (calculate-new-work org ["test"])

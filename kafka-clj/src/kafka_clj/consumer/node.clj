@@ -3,10 +3,9 @@
   (:require
             [kafka-clj.consumer.work-organiser :refer [create-organiser! close-organiser! calculate-new-work]]
             [kafka-clj.consumer.consumer :refer [consume! close-consumer!]]
-            [kafka-clj.redis :as redis]
+            [kafka-clj.redis.core :as redis]
             [com.stuartsierra.component :as component]
             [fun-utils.core :refer [fixdelay-thread stop-fixdelay buffered-chan]]
-            [taoensso.carmine :as car]
             [clojure.tools.logging :refer [info error]]
             [clojure.core.async :refer [chan <!! alts!! timeout close! sliding-buffer]]))
 
@@ -38,7 +37,7 @@
       redis-conn
       (str group-name "/kafka-nodes-master-lock")
       lock-timeout
-      500
+      1000
       (calculate-new-work node topics))))
 
 (defn- start-work-calculate
@@ -54,6 +53,11 @@
             freq
             (safe-call work-calculate-delegate! org @topics)))
 
+(defn filter-is-map [wu]
+  (if (map? wu) true (do
+                       (error "Non map found in queue item: " wu)
+                       false)))
+
 (defn copy-redis-queue
   "This function copies data from one list/queue to another
    Its used on startup to copy any leftover workunits in the working queue to the work queue"
@@ -61,20 +65,30 @@
   (if (= from-queue to-queue)
     (throw (RuntimeException. "Cannot copy to and from the same queue")))
 
-  (loop [len (redis/wcar redis-conn (car/llen from-queue))]
+
+  (loop [len (redis/wcar redis-conn (redis/llen redis-conn from-queue))]
     (info "copy-redis-queue [" from-queue "] => [" to-queue "]: " len)
     (if (> len 0)
-      (let [wus (map #(into (sorted-map) %) (redis/wcar redis-conn
-                                                        (car/lrange from-queue 0 100)))]
+      (let [queue-data (redis/wcar redis-conn
+                                   (redis/lrange redis-conn from-queue 0 100))
+            wus (map #(into (sorted-map) %)
+                     (filter filter-is-map
+                             queue-data))]
         (when (not-empty wus)
           (let [res
-                (redis/wcar redis-conn
-                            (doall (map #(car/lrem from-queue -1 %) wus))
-                            (apply car/lpush to-queue wus))]
+                (loop [wus1 wus n 0]
+                  (if-let [wu (first wus1)]
+                    (do
+                      (redis/wcar redis-conn
+                                  (redis/lrem redis-conn from-queue 1 wu)
+                                  (redis/lpush redis-conn to-queue wu))
+                      (recur (rest wus1) (inc n)))
+                    n))]
 
+            (info "Copied " res " work units")
             ;drop-last to drop the result from teh apply car lpush command
-            (if (>= (apply + (drop-last res)) (count wus))                            ;only recur if we did delete all the values
-              (recur (redis/wcar redis-conn (car/llen from-queue))))))))))
+            (when (>= res (count wus))                            ;only recur if we did delete all the values
+              (recur (redis/wcar redis-conn (redis/llen redis-conn from-queue))))))))))
 
 (defn create-node!
   "Create a consumer node that represents a consumer using an organiser consumer and group conn to coordinate colaborative consumption
