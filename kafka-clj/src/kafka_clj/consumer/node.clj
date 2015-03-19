@@ -53,6 +53,11 @@
             freq
             (safe-call work-calculate-delegate! org @topics)))
 
+(defn filter-is-map [wu]
+  (if (map? wu) true (do
+                       (error "Non map found in queue item: " wu)
+                       false)))
+
 (defn copy-redis-queue
   "This function copies data from one list/queue to another
    Its used on startup to copy any leftover workunits in the working queue to the work queue"
@@ -64,9 +69,12 @@
   (loop [len (redis/wcar redis-conn (redis/llen redis-conn from-queue))]
     (info "copy-redis-queue [" from-queue "] => [" to-queue "]: " len)
     (if (> len 0)
-      (let [wus (map #(into (sorted-map) %)
-                     (redis/wcar redis-conn
-                                 (redis/lrange redis-conn from-queue 0 100)))]
+      (let [queue-data (redis/wcar redis-conn
+                                   (redis/lrange redis-conn from-queue 0 100))
+            _ (do (error "QueueData: " queue-data))
+            wus (map #(into (sorted-map) %)
+                     (filter filter-is-map
+                             queue-data))]
         (when (not-empty wus)
           (let [res
                 (loop [wus1 wus n 0]

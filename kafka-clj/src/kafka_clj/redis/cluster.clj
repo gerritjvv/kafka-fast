@@ -2,7 +2,7 @@
   (:refer-clojure :exclude [get set])
   (:require [taoensso.nippy :refer [freeze thaw]]
             [kafka-clj.redis.protocol :refer [IRedis]]
-            [clojure.tools.logging :refer [info]])
+            [clojure.tools.logging :refer [info error]])
   (:import [kafka_clj.util Util]
            [org.redisson.core RBucket RList RLock]
            [org.redisson Redisson Config ClusterServersConfig SingleServerConfig]
@@ -87,7 +87,8 @@
 (defn lrange [^Redisson cmd ^String queue ^long n ^long limit]
   (let [^List ls (.getList cmd queue)
         size (.size ls)]
-    (.subList ls (int (if (< n 0) 0 n)) (int (if (> limit size) size limit)))))
+    (flatten
+      (into [] (.subList ls (int (if (< n 0) 0 n)) (int (if (> limit size) size limit)))))))
 
 
 (defn timeout? [^long start-time ^long timeout]
@@ -106,6 +107,7 @@
 (defn brpoplpush [^Redisson cmd ^String queue1 ^String queue2 ^long timeout]
   (let [q (.getQueue cmd queue1)]
     (when-let [v (pop-retry q timeout)]
+      ;(error "brpoplpush: add to " queue2 " v " v)
       (.add ^Queue (.getQueue cmd queue2) v)
       v)))
 
@@ -115,8 +117,8 @@
 
 (defn acquire-lock [^Redisson cmd ^String lock-name ^long timeout-ms ^long wait-ms]
   (let [^RLock lock (.getLock cmd lock-name)]
-    (info "Try Lock: " lock-name " wait " wait-ms " timeout-ms " timeout-ms)
-    (info "Got Lock: " (.tryLock lock wait-ms timeout-ms TimeUnit/MILLISECONDS))
+    (error "Try Lock: " lock-name " wait " wait-ms " timeout-ms " timeout-ms)
+    (error "Got Lock: " (.tryLock lock wait-ms timeout-ms TimeUnit/MILLISECONDS))
     lock))
 
 (defn release-lock [^Redisson cmd ^String lock-name _]
