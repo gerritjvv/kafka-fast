@@ -178,8 +178,6 @@
         (write-message-for-ack connector conf msgs byte-buff)
         (with-size byte-buff write-request conf msgs))
 
-      ;(info "KAFKA-DEBUG1: send-messages " (.incrementAndGet ^AtomicLong msg-counter) " connector:keys: " (keys connector) " connector:flush-on-write: " (:flush-on-write connector))
-
       (if (:flush-on-write connector)
         (tcp/write! client byte-buff :flush true)
         (tcp/write! client byte-buff)))))

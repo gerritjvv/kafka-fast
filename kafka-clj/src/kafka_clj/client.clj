@@ -52,6 +52,25 @@
 (defn do-metadata-update [{:keys [update-metadata]}]
   (update-metadata :timeout-ms 1000))
 
+(defn partitionError?
+  "A partition has an error i.e it cannot be used if its :error-code is > 0"
+  ([partition-record]
+    (> (:error-code partition-record) 0))
+  ([brokers-metadata topic partition]
+   (> (-> brokers-metadata smart-deref (get topic) (nth partition) :error-code) 0)))
+
+(defn sequentialWalkPartitionSelect
+  "Select the first partition number that has error-code == 0"
+  ([brokers-metadata topic]
+    (sequentialWalkPartitionSelect brokers-metadata topic (get-partition-count topic (smart-deref brokers-metadata))))
+  ([brokers-metadata topic ^long partition-count]
+   (loop [i 0]
+     (when (< i partition-count)
+       (let [partition-record (-> brokers-metadata smart-deref (get topic) (nth i))]
+         (if (not (partitionError? partition-record))
+           i
+           (recur (inc i))))))))
+
 (defn select-rr-partition! [topic {:keys [topic-partition-ref brokers-metadata] :as state}]
   "If a counter does not exist in the topic-partition-ref it will be created
    and set using commute, the return result is an increment on the topic counter
@@ -62,7 +81,12 @@
    "
   (let [^long partition-count (get-partition-count topic @brokers-metadata)]
    (if (> partition-count 0)	    
-		  (rand-int (long partition-count))
+		  (let [partition (rand-int partition-count)]
+        (if (partitionError? brokers-metadata topic partition)
+          (if-let [seq-partition (sequentialWalkPartitionSelect brokers-metadata topic partition-count)]
+            seq-partition
+            (throw (RuntimeException. (str "No healthy partitions could be found for topic " topic))))
+          partition))
     (if (-> state :conf :topic-auto-create)
       0
       (do
@@ -72,13 +96,14 @@
                  (str "The topic " topic " does not exist, please create it first. See http://kafka.apache.org/documentation.html"))))))))
 
 (defn get-broker-from-metadata [topic partition brokers-metadata]
-  (-> brokers-metadata (get topic) (get partition)))
+  (-> brokers-metadata (get topic) (nth partition)))
 
 (defn random-select-broker [topic brokers-metadata]
   "Select a broker over all the registered topics randomly"
-  (if-let [brokers (get brokers-metadata topic)]
-    (rand-nth brokers)
-    (->> brokers-metadata keys (rand-nth) (get brokers-metadata) rand-nth)))
+  (let [brokers (get brokers-metadata topic)]
+    (if (not-empty brokers)
+      (rand-nth brokers)
+      (->> brokers-metadata keys (rand-nth) (get brokers-metadata) rand-nth))))
 
   
 (defn select-broker
@@ -90,7 +115,7 @@
     [partition broker]
     [0 (random-select-broker topic @brokers-metadata)]))
 
-(defn send-to-buffer [{:keys [ch-source]} msg]
+(defn send-to-buffer [{:keys [ch-source] :as buffer} msg]
   (>!! ch-source msg))
 
 (defn get-latest-msg [messages]
@@ -114,7 +139,6 @@
 (defmacro handle-send-message-error [async buff-ch producer-error-ch e producer conf topic partition offset v]
   `(do
      (error ~e ~e)
-     (prn "handle-send-message-error: v ")
      (~async ~producer-error-ch {:key-val (str ~topic ":" ~partition) :error ~e :producer {:producer ~producer :buff-ch ~buff-ch}
                              :offset ~offset :v ~v :topic ~topic})))
 
@@ -156,7 +180,7 @@
              (get @producers-cache (str host ":" port))]
       p
       (get
-        (dosync (alter producers-cache assoc (str host ":" port) (delay (producer host port conf))))
+        (dosync (commute producers-cache assoc (str host ":" port) (delay (producer host port conf))))
         (str host ":" port)))))
 
 (defn create-producer-buffer
@@ -213,7 +237,6 @@
       (if-let [error-val (<! error-ch)]
        (do
          ;(error (first error-val) (first error-val))
-         (prn "removing producer for " topic ":" partition)
          (info "removing producer for " topic ":" partition)
          (thread
            (try
@@ -221,7 +244,7 @@
              (catch Exception e (error e e))))
          ;remove from ref
          (dosync 
-           (alter producers-ref (fn [m]
+           (commute producers-ref (fn [m]
                                   (prn "removing producers ref: " topic partition)
                                   (dissoc (get m topic) partition)
                                   ))))))))
@@ -292,20 +315,23 @@
       (recur connector topic partition state))))
 
 
-(defn- send-msg-retry [{:keys [state] :as connector} {:keys [topic] :as msg}]
+(defn- send-msg-retry [{:keys [state] :as connector} {:keys [topic] :as msg} & {:keys [exclude-partitions] :or {exclude-partitions []}}]
   "Try sending the message to any of the producers till all of the producers have been trieds"
    (try
      (do-metadata-update connector)
      (catch Exception e (error e e)))
-   (let [partitions  (let [partitions(-> state :brokers-metadata deref (get topic)) ]
+   (let [partitions  (let [partitions (-> state :brokers-metadata deref (get topic)) ]
                        (if (or (empty? partitions) (= partitions 0))
                          (if (-> state :conf :topic-auto-create)
                            [0]
                            (throw (RuntimeException. (str "No topics available for topic " topic " partitions " partitions))))
                          partitions))]
 
-      (loop [partitions-1 partitions i 0]
-        (if-let [partition (first partitions-1)]
+     ;partitions are of format [{:host "host1", :port 9092} {:host "host2", :port 9092} ]
+     (info "send-msg-retry: " partitions " exclude-partition " exclude-partitions)
+
+      (loop [i 0]
+        (if-let [partition (select-rr-partition! topic state)]
           (let [sent (try
 						            (let [producer-buffer (select-producer-buffer! connector topic i state)]
                           (send-to-buffer producer-buffer msg)
@@ -313,8 +339,7 @@
 						            (catch Exception e (do (.printStackTrace e) (error e e) false)))]
             (if (not sent)
               (do
-                (prn ">>>>>>>> Retry send remaining partitions: " (rest partitions-1))
-                (recur (rest partitions-1) (inc i)))))
+                (recur (inc i)))))
           (throw (RuntimeException. (str "The message for topic " topic " could not be sent")))))))
 
 (defn send-msg [{:keys [state] :as connector} topic ^bytes bts]
@@ -330,11 +355,11 @@
                 (warn "error while sending message")
                 (error e e)
                 ;here we try all of the producers, if all fail we throw an exception
-                (send-msg-retry connector msg)))))
+                (send-msg-retry connector msg :exclude-partitions [partition])))))
       (throw (RuntimeException. (str "No brokers available: " connector))))))
 
 (defn close-producer-buffer! [{:keys [producer ch-source error-ch async-ctx] :as b}]
-  (prn "client/close-producer-buffer! " b)
+  (info "client/close-producer-buffer! " b)
   (try
 		    (do
           (if ch-source
@@ -379,7 +404,7 @@
 
 
 (defn create-connector [bootstrap-brokers {:keys [acks batch-fail-message-over-limit batch-byte-limit blacklisted-expire producer-retry-strategy topic-auto-create io-threads flush-on-write]
-                                           :or {blacklisted-expire 1000 acks 0 batch-fail-message-over-limit true batch-byte-limit 10485760 producer-retry-strategy :default topic-auto-create true io-threads 4 flush-on-write false} :as conf}]
+                                           :or {blacklisted-expire 1000 acks 0 batch-fail-message-over-limit true batch-byte-limit 10485760 producer-retry-strategy :default topic-auto-create true io-threads 10 flush-on-write false} :as conf}]
   (let [
         ;all connector channels will use this shared pool for listening on write read events. 3 threads was tested with over 120 k messages per second
         async-ctx (fthreads/shared-threads (if (number? io-threads) (inc io-threads) 5))
@@ -455,7 +480,6 @@
 										                  (delete-from-retry-cache connector (:key-val retry-msg)))))
 										         (catch Exception e (error e e))))]
 
-    ;(info "KAFKA DEBUG: flush-on-write: " flush-on-write)
 
     (info "Creating connecting with io-threads: " io-threads)
     (.scheduleWithFixedDelay scheduled-service ^Runnable (fn [] (try (update-metadata) (catch Exception e (do (error e e)
@@ -466,37 +490,33 @@
       (thread-seq
         (fn [error-val]
           (try
-            (prn "producer error in producer error-ch ")
-            (warn "producer error producer-error-ch")
             (let [{:keys [key-val producer v topic]} error-val
                   host (-> producer :producer :host)
                   port (-> producer :producer :port)]
               ;persist to retry cache
-              (.printStackTrace ^Throwable (:error error-val))
-
+              (warn "producer error => host: " host ":" port)
               (try
                 (do
                   (dosync
-                    (alter blacklisted-producers-ref (fn [m] (assoc m (str host ":" port) true))))
+                    (commute blacklisted-producers-ref (fn [m] (assoc m (str host ":" port) true)))
+                    (commute producers-cache dissoc (str host ":" port)))
 
-                  (dosync
-                    (alter producers-cache dissoc (str host ":" port))
-                    (alter producer-ref (fn [m] (dissoc (get m host) port))))
 
                   ;remove
-                  (if (coll? v)                                   ;only write valid messages to the retry cache
+                  (if (coll? v)                             ;only write valid messages to the retry cache
                     (write-to-retry-cache connector topic v)
                     (warn "Could not send message to retry cache: invalid message " v)))
                 (finally
                   (close-producer-buffer! (smart-deref (:producer producer)))))
 
-              (try
-                (update-metadata :producers (filter (exclude-host host port) @metadata-producers-ref) :timeout-ms 5000)
-                (catch Exception e (do
-                                     (error e e)
-                                     (>!! metadata-error-ch e)))))
+                (try
+                  (update-metadata :producers (filter (exclude-host host port) @metadata-producers-ref) :timeout-ms 5000)
+                  (catch Exception e (do
+                                       (error e e)
+                                       (>!! metadata-error-ch e)))))
+
             (catch Exception e (error e e)))) producer-error-ch))
-     (assoc connector :retry-cache-ch retry-cache-ch :metadata-error-ch metadata-error-ch :update-metadata update-metadata)))
+    (assoc connector :retry-cache-ch retry-cache-ch :metadata-error-ch metadata-error-ch :update-metadata update-metadata)))
  
 (defrecord KafkaClientService [brokers conf client]
   component/Lifecycle

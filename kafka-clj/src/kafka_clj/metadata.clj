@@ -14,7 +14,7 @@
 
 (defn convert-metadata-response [resp]
   ;; transform the resp into a map
-  ;; {topic-name [{:host host :port port} ] }
+  ;; {topic-name [{:host host :port port :isr [ {:host :port}] :error-code code} ] }
   ;; the index of the vector (value of the topic-name) is sorted by partition number 
   ;; here topic-name:String and partition-n:Integer are keys but not keywords
   ;;{:correlation-id 2,
@@ -35,14 +35,13 @@
 			                 (for [topic (:topics resp) :when (= (:error-code topic) 0)]
 			                      [(:topic topic) (apply tuple (vals (apply sorted-map (flatten
 																																	                  (for [partition (:partitions topic)
-																																	                         :when (= (:partition-error-code partition) 0) 
-																			                                                     :let [broker (get brokers-by-node (:leader partition))]
-						                                                                               ]
-																																	                     [(:partition-id partition) broker])))))])))
-						                    
-                  
-                
-        ]
+																																	                         :let [broker (get brokers-by-node (:leader partition))
+                                                                                                 isr (mapv #(get brokers-by-node %) (:isr partition))]]
+																																	                     [(:partition-id partition)
+                                                                                        {:host (:host broker)
+                                                                                         :port (:port broker)
+                                                                                         :isr  isr
+                                                                                         :error-code (:partition-error-code partition)}])))))])))]
     m))
 
 (defn send-update-metadata [producer conf]
@@ -80,7 +79,7 @@
   nil)
 
 (defn blacklist-if-exception [blacklisted-metadata-producers-ref metadata-producer f & args]
-  (info "Metadata producer1: " (:host metadata-producer) ":" (:port metadata-producer) ": is closed " (get-in metadata-producer [:client :closed]))
+  ;(info "Metadata producer1: " (:host metadata-producer) ":" (:port metadata-producer) ": is closed " (get-in metadata-producer [:client :closed]))
   (try
     (apply f args)
     (catch Exception e [metadata-producer (black-list-producer blacklisted-metadata-producers-ref metadata-producer e)])))
@@ -103,7 +102,7 @@
 
 (defn get-metadata [metadata-producers conf & {:keys [blacklisted-metadata-producers-ref] :or {blacklisted-metadata-producers-ref (ref {})}}]
   (let [[metadata-producer meta] (iterate-metadata-producers metadata-producers conf blacklisted-metadata-producers-ref)]
-    ;(prn "Got meta from " (:host metadata-producer) " -> empty? " (empty? meta))
+    ;(info "Got meta from " (:host metadata-producer) " -> " meta)
     meta))
 
 (defn- client-closed? [producer]

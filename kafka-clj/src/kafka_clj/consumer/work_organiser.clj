@@ -188,7 +188,8 @@
   (let [offset-data2
         ;here we add offsets as saved-offset via the add-offset function
         ;note that this function will also write to redis
-        (filter (fn [x] (and x (< ^Long (:saved-offset x) ^Long (:offset x)))) (map (partial add-offsets! state topic) offset-data))
+        (filter (fn [x] (and x (:saved-offset x) (:offset x) (< ^Long (:saved-offset x) ^Long (:offset x))))
+                (map (partial add-offsets! state topic) offset-data))
 
         consume-step2 (if consume-step consume-step (get conf :consume-step 100000))]
 
