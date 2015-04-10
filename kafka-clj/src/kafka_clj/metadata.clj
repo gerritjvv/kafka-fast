@@ -41,6 +41,7 @@
                                                                                         {:host (:host broker)
                                                                                          :port (:port broker)
                                                                                          :isr  isr
+                                                                                         :id (:partition-id partition)
                                                                                          :error-code (:partition-error-code partition)}])))))])))]
     m))
 

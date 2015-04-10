@@ -34,6 +34,17 @@
 
 (defonce ^AtomicInteger corr-counter (AtomicInteger.))
 
+(defn flush-on-byte->fn
+  "Returns a check-f for buffered-chan that will flush if the accumulated byte count is bigger than that of byte-limit"
+  [^long byte-limit]
+  (fn
+    ([] 0)
+    ([^long byte-cnt msg]
+     (let [total-cnt (+ byte-cnt (count (:bts msg)))]
+       (if (>= total-cnt byte-limit)
+         (tuple true 0)
+         (tuple false total-cnt))))))
+
 (defn ^Long unique-corrid! []
   (let [v (.getAndIncrement corr-counter)]
     (if (= v Integer/MAX_VALUE)
@@ -173,6 +184,7 @@
     {:keys [client]}
     {:keys [acks] :or {acks 0} :as conf}
     msgs]
+   {:pre [client]}
     (let [byte-buff (Unpooled/buffer)]
       (if (> acks 0)
         (write-message-for-ack connector conf msgs byte-buff)
