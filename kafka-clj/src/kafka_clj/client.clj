@@ -14,7 +14,7 @@
             [clojure.core.async :as async])
   (:import [java.util.concurrent.atomic AtomicInteger AtomicLong AtomicBoolean]
            [kafka_clj.response ProduceResponse]
-           (java.util.concurrent Executors ScheduledExecutorService TimeUnit ThreadFactory)
+           (java.util.concurrent Executors ScheduledExecutorService TimeUnit ThreadFactory ExecutorService)
            (java.io IOException)))
 
 (defonce ^Long PRODUCER_ERROR_BACKOFF_DEFAULT 2000)
@@ -96,17 +96,16 @@
 
   (persist/close-retry-cache retry-cache))
 
-
-(defn producer-error-ch [connector]
-  (get-in connector [:state :producer-error-ch]))
-
 (defn- retry-msg-bts-seq [retry-msg]
   (let [msg (:v retry-msg)]
     (if (or (record? msg) (map? msg))
       [(:bts msg)]
       (map :bts msg))))
 
-(defn- get-metadata-error-ch [connector]
+(defn producer-error-ch [connector]
+  (get-in connector [:state :producer-error-ch]))
+
+(defn get-metadata-error-ch [connector]
   (:metadata-error-ch connector))
 
 (defn- blacklist!
@@ -207,30 +206,41 @@
             (handle-async-topic-messages state topic topic-msgs)) producer-state (group-by :topic msgs)))
 
 
-(defn- async-handler [^ProducerState producer-state msg-ch msg-buff]
-  (async/thread
-    (do
-      (loop [state producer-state]
-        (when-let [msgs (async/<!! msg-buff)]
-          (recur (if (empty? msgs) state (handle-async-messages state msgs))))))))
+(defn- async-handler [async-ctx io-threads ^ProducerState producer-state msg-ch msg-buff]
+
+  ;Instead of async-ctx do
+  ; loop on msg-buff, for each group of mssages do group-by
+  ; send each separate topic to a different thread
+  (dotimes [i io-threads]
+    (fthreads/listen async-ctx msg-buff
+                     (fn [msgs]
+                       (handle-async-messages producer-state msgs))))
+  (comment
+    (async/thread
+      (do
+        (loop [state producer-state]
+          (when-let [msgs (async/<!! msg-buff)]
+            (recur (if (empty? msgs) state (handle-async-messages state msgs)))))))))
 
 (defn create-connector
   "Creates a connector for sending to kafka
    All sends are asynchronous, unrecoverable errors are saved to a local retry cache and
    also notified to the producer-error-ch with data of type ErrorCtx"
                        [bootstrap-brokers {:keys [acks
+                                                  io-threads
                                                   batch-num-messages
                                                   queue-buffering-max-ms
                                                   batch-fail-message-over-limit batch-byte-limit blacklisted-expire producer-retry-strategy topic-auto-create flush-on-write]
                                            :or {batch-num-messages 25
                                                 queue-buffering-max-ms 500
+                                                io-threads 4
                                                 blacklisted-expire 10000 acks 0 batch-fail-message-over-limit true batch-byte-limit 10485760
                                                 topic-auto-create true flush-on-write false}
                                            :as conf}]
   (let [
 
         ^ScheduledExecutorService scheduled-service (Executors/newSingleThreadScheduledExecutor (daemon-thread-factory))
-
+        async-ctx (fthreads/shared-threads (inc io-threads))
         metadata-producers-ref (ref (filter (complement nil?) (map #(delay (produce/metadata-request-producer (:host %) (:port %) conf)) bootstrap-brokers)))
         brokers-metadata-ref (ref (meta/get-metadata @metadata-producers-ref conf))
 
@@ -260,7 +270,7 @@
 
         update-metadata (fn [& {:keys [timeout-ms producers]}]
                           (if-let [metadata (meta/get-metadata (or producers @metadata-producers-ref) (if timeout-ms (assoc conf :metadata-timeout timeout-ms) conf) :blacklisted-metadata-producers-ref blacklisted-metadata-producers-ref)]
-                            (ref-set brokers-metadata-ref metadata)
+                            (dosync (ref-set brokers-metadata-ref metadata))
                             (error (str "No metadata found"))))
 
         connector {:bootstrap-brokers metadata-producers-ref :send-cache send-cache :retry-cache retry-cache
@@ -268,29 +278,33 @@
                    :flush-on-write flush-on-write
                    :state state}
 
+        msg-ch (async/chan 100)
+        msg-buff (futils/buffered-chan msg-ch batch-num-messages queue-buffering-max-ms 5 (produce/flush-on-byte->fn batch-byte-limit))
 
                   ;;every 5 seconds check for any data in the retry cache and resend the messages
-				retry-cache-ch (futils/fixdelay-thread 1000
+        connector2 (assoc connector :msg-ch msg-ch :metadata-error-ch metadata-error-ch :update-metadata update-metadata)
+
+				-               (futils/fixdelay-thread 1000
 										      (try
                             (do
                              (doseq [retry-msg (persist/retry-cache-seq connector)]
                                  (do (warn "Retry messages for " (:topic retry-msg) " " (:key-val retry-msg))
                                    (if (coll? (:v retry-msg))
                                      (doseq [bts (retry-msg-bts-seq retry-msg)]
-                                       (send-msg connector (:topic retry-msg) bts))
+                                       (send-msg connector2 (:topic retry-msg) bts))
                                      (warn "Invalid retry value " retry-msg))
 
 										                  (persist/delete-from-retry-cache connector (:key-val retry-msg)))))
 										         (catch Exception e (error e e))))
 
-        msg-ch (async/chan 100)
-        msg-buff (futils/buffered-chan msg-ch batch-num-messages queue-buffering-max-ms 5 (produce/flush-on-byte->fn batch-byte-limit))
 
-        connector2 (assoc connector :msg-ch msg-ch :retry-cache-ch retry-cache-ch :metadata-error-ch metadata-error-ch :update-metadata update-metadata)
+
 
         ]
 
-    (async-handler (->ProducerState conf activity-counter retry-cache producers-cache-ref metadata-producers-ref blacklisted-producers-ref brokers-metadata-ref producer-error-ch) msg-ch msg-buff)
+    (async-handler async-ctx
+                   io-threads
+                   (->ProducerState conf activity-counter retry-cache producers-cache-ref metadata-producers-ref blacklisted-producers-ref brokers-metadata-ref producer-error-ch) msg-ch msg-buff)
     (.scheduleWithFixedDelay scheduled-service ^Runnable (fn [] (try (update-metadata) (catch Exception e (do (error e e)
                                                                                                               (async/>!! metadata-error-ch e))))) 0 10000 TimeUnit/MILLISECONDS)
 
