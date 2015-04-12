@@ -184,7 +184,6 @@
     {:keys [client]}
     {:keys [acks] :or {acks 0} :as conf}
     msgs]
-   {:pre [client]}
     (let [byte-buff (Unpooled/buffer)]
       (if (> acks 0)
         (write-message-for-ack connector conf msgs byte-buff)

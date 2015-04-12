@@ -37,6 +37,5 @@
     arr))
 
 (defn codec-from-attributes [attributes-byte]
-  ;buffer.get(AttributesOffset) & CompressionCodeMask)
   (bit-and attributes-byte compression-code-mask))
 
