@@ -5,17 +5,15 @@
             [clj-tcp.client :refer [client write! read! close-all ALLOCATOR read-print-ch read-print-in]]
             [fun-utils.core :refer [fixdelay apply-get-create]]
             [kafka-clj.codec :refer [uncompress crc32-int]]
-            [kafka-clj.metadata :refer [get-metadata]]
             [kafka-clj.buff-utils :refer [write-short-string with-size read-short-string read-byte-array codec-from-attributes]]
             [kafka-clj.produce :refer [API_KEY_FETCH_REQUEST API_KEY_OFFSET_REQUEST API_VERSION MAGIC_BYTE]]
             [clojure.core.async :refer [go >! <! chan >!! <!! alts!! put! timeout]])
-  (:import [io.netty.buffer ByteBuf Unpooled PooledByteBufAllocator]
-           [io.netty.handler.codec LengthFieldBasedFrameDecoder ByteToMessageDecoder ReplayingDecoder]
+  (:import [io.netty.buffer ByteBuf Unpooled]
+           [io.netty.handler.codec LengthFieldBasedFrameDecoder ReplayingDecoder]
            [io.netty.channel ChannelOption]
            [java.util.concurrent.atomic AtomicInteger]
            [java.util List]
            [kafka_clj.util Util]
-           [io.netty.channel.nio NioEventLoopGroup]
            (io.netty.util ReferenceCountUtil)))
 
 (defrecord Message [topic partition offset bts])
@@ -93,13 +91,13 @@
   Key => bytes
   Value => bytes"
   (let [crc (Util/unsighedToNumber (.readInt buff))
-        start-index (.readerIndex buff) ;start of message + attribytes + magic byte
-        magic-byte (.readByte buff)
+        _ (.readerIndex buff) ;start of message + attribytes + magic byte => start-index
+        _ (.readByte buff)                                  ;magic-byte
         attributes (.readByte buff)
         codec (codec-from-attributes attributes)
-        key-arr (read-byte-array buff)
+        _ (read-byte-array buff)                            ;key-arr
         val-arr (read-byte-array buff)
-        end-index (.readerIndex buff)
+        _ (.readerIndex buff)                               ;end-index
                                         ;crc32-arr (byte-array (- end-index start-index))
                                         ;crc2 (do (.getBytes buff (int start-index) crc32-arr) (crc32-int crc32-arr))
         ]
@@ -222,48 +220,6 @@
     (finally
       (ReferenceCountUtil/release in))))
 
-(comment
-  (defn read-fetch-response [^ByteBuf in]
-    "
-    RequestOrResponse => Size (RequestMessage | ResponseMessage)
-    Size => int32
-
-    Response => CorrelationId ResponseMessage
-    CorrelationId => int32
-    ResponseMessage => MetadataResponse | ProduceResponse | FetchResponse | OffsetResponse | OffsetCommitResponse | OffsetFetchResponse
-
-    FetchResponse => [TopicName [Partition ErrorCode HighwaterMarkOffset MessageSetSize MessageSet]]
-    TopicName => string
-    Partition => int32
-    ErrorCode => int16
-    HighwaterMarkOffset => int64
-    MessageSetSize => int32
-    "
-
-    (let [size (.readInt in)                                ;request size int
-          correlation-id (.readInt in)                      ;correlation id int
-          topic-count (.readInt in)
-
-          ]
-      {:correlation-id correlation-id
-       :topics
-                       (doall
-                         (for [i (range topic-count)]
-                           (let [topic (read-short-string in)
-                                 partition-count (.readInt in)]
-                             [topic
-                              (doall
-                                (for [p (range topic-count)]
-                                  {:partition (.readInt in)
-                                   :error-code (.readShort in)
-                                   :high-water-mark-offset (.readLong in)
-                                   :messages  (read-messages in)
-                                   }
-                                  ))])))
-       }
-      ))
-  )
-
 (defn write-offset-request-message [^ByteBuf buff {:keys [topics max-offsets] :or {max-offsets 10}}]
   "
 	OffsetRequest => ReplicaId [TopicName [Partition Time MaxNumberOfOffsets]]
@@ -314,11 +270,11 @@
 	  ErrorCode => int16
 	  Offset => int64
   "
-  (let [size (.readInt in)                                ;request size int
-        correlation-id (.readInt in)                      ;correlation id int
+  (let [_ (.readInt in)                                ;request size int
+        _ (.readInt in)                      ;correlation id int
         topic-count (.readInt in)]                        ;topic array count int
     (doall ;we must force the operation here
-      (for [i (range topic-count)]
+      (for [_ (range topic-count)]
         (let [topic (read-short-string in)]                 ;topic name has len=short string bytes
           {:topic topic
            :partitions (let [partition-count (.readInt in)] ;read partition array count int
@@ -329,7 +285,7 @@
                               :offsets
                                (let [offset-count (.readInt in)]
                                  (doall
-                                   (for [o (range offset-count)]
+                                   (for [_ (range offset-count)]
                                      (.readLong in))))}))  )     ;read offset long
            })))))
 
@@ -341,7 +297,7 @@
   (proxy [ReplayingDecoder]
          ;decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out)
          []
-    (decode [ctx ^ByteBuf in ^List out]
+    (decode [_ ^ByteBuf in ^List out]
       (try (.add out
                  (read-offset-response in))
            (catch Exception e (do

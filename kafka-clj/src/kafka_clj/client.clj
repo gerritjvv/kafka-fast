@@ -12,10 +12,9 @@
             [com.stuartsierra.component :as component]
             [clj-tuple :refer [tuple]]
             [clojure.core.async :as async])
-  (:import [java.util.concurrent.atomic AtomicInteger AtomicLong AtomicBoolean]
+  (:import [java.util.concurrent.atomic AtomicLong]
            (java.util.concurrent Executors ScheduledExecutorService TimeUnit ThreadFactory ExecutorService)
-           (java.io IOException ByteArrayInputStream DataInputStream)
-           (kafka_clj.response ProduceResponse)))
+           (java.io IOException ByteArrayInputStream DataInputStream)))
 
 (defonce ^Long PRODUCER_ERROR_BACKOFF_DEFAULT 2000)
 
@@ -70,16 +69,17 @@
     (if (not= v (.get activity-counter))
       (recur (.get activity-counter))))
 
-  (doseq [producer @producers-cache-ref]
-    (try
-      (produce/shutdown producer)
-      (catch Exception e (error e e))))
+  (doseq [producers (->> @producers-cache-ref vals (map vals) flatten)]
+    (doseq [producer @producers]
+      (try
+        (produce/shutdown producer)
+        (catch Exception e (error e e)))))
 
   (.shutdownNow ^ScheduledExecutorService scheduled-service)
 
-  (doseq [producer @metadata-producers-ref]
+  (doseq [[k producer] @metadata-producers-ref]
     (try
-      (produce/shutdown producer)
+      (produce/shutdown @producer)
       (catch Exception e (error e e))))
 
   (persist/close-retry-cache retry-cache))
@@ -116,10 +116,6 @@
 (defn- ^ProducerState error-no-partition
   [state topic msgs]
   (unrecoverable-error state (->ErrorCtx :no-partitions topic msgs)))
-
-(defn- ^ProducerState error-no-producer
-  [state topic msgs]
-  (unrecoverable-error state (->ErrorCtx :no-producer topic msgs)))
 
 (defn- rand-nth' [v] (when-not (empty? v) (rand-nth v)))
 
@@ -163,25 +159,25 @@
                                     (.close in)))))))
     producer))
 
-(defn- get-or-create-producer!
+(defn- get-or-create-producers!
        "If a producer is not present use dosync and commute to create a delayed producer
         returns [producers-cache-ref producer]  note producer can be nil"
        [^ProducerState state {:keys [host port]}]
        (let [producers-cache-ref (:producers-cache-ref state)]
          (try
-           (if-let [prod (null-safe-deref (-> producers-cache-ref deref (get host) (get port)))]
-             [producers-cache-ref prod]
-             (let [cache (dosync
-                           (commute
-                             producers-cache-ref
-                             (fn [prod-cache]
-                               (if-not (get-in prod-cache [host port])
-                                 (assoc-in prod-cache [host port] (delay
-                                                                    (do
-                                                                      (info "Creating producer " host " " port)
-                                                                      (create-producer state host port))))
-                                 prod-cache))))]
-
+           (if-let [prods (null-safe-deref (-> producers-cache-ref deref (get host) (get port)))]
+             [producers-cache-ref prods]
+             (do
+               (dosync
+                 (commute
+                   producers-cache-ref
+                   (fn [prod-cache]
+                     (if-not (get-in prod-cache [host port])
+                       (assoc-in prod-cache [host port] (delay
+                                                          (do
+                                                            (info "Creating producer " host " " port)
+                                                            [(create-producer state host port) (create-producer state host port)])))
+                       prod-cache))))
                [producers-cache-ref (null-safe-deref (-> producers-cache-ref deref (get host) (get port)))]))
            (catch Exception e
              (do
@@ -190,8 +186,10 @@
                (error e e)
                [producers-cache-ref nil])))))
 
+(defonce counter (atom 0))
 (defn- send-data [^ProducerState state partition-rc topic msgs]
-  (let [[producers-cache-ref prod] (get-or-create-producer! state partition-rc)]
+  (let [[producers-cache-ref prods] (get-or-create-producers! state partition-rc)
+        prod (rand-nth prods)]
     (if prod
       (try
         (do
@@ -202,7 +200,7 @@
           (do
             (when (instance? IOException e)
               (try
-                (produce/shutdown prod)
+                (doseq [prod prods] (produce/shutdown prod))
                 (dosync (alter producers-cache-ref dissoc-in [(:host partition-rc) (:port partition-rc)]))
                 (catch Exception e (error e e))))
 
@@ -222,7 +220,7 @@
             (handle-async-topic-messages state topic topic-msgs)) producer-state (group-by :topic msgs)))
 
 
-(defn- async-handler [^ExecutorService exec-service io-threads ^ProducerState producer-state msg-ch msg-buff]
+(defn- async-handler [^ExecutorService exec-service ^ProducerState producer-state msg-buff]
 
   ;Instead of async-ctx do
   ; loop on msg-buff, for each group of mssages do group-by
@@ -241,7 +239,7 @@
                                                   io-threads
                                                   batch-num-messages
                                                   queue-buffering-max-ms
-                                                  batch-fail-message-over-limit batch-byte-limit blacklisted-expire producer-retry-strategy topic-auto-create flush-on-write]
+                                                  batch-fail-message-over-limit batch-byte-limit blacklisted-expire topic-auto-create flush-on-write]
                                            :or {batch-num-messages 25
                                                 queue-buffering-max-ms 500
                                                 io-threads 10
@@ -252,8 +250,7 @@
 
         ^ScheduledExecutorService scheduled-service (Executors/newSingleThreadScheduledExecutor (daemon-thread-factory))
         async-ctx (fthreads/create-exec-service io-threads)                                       ;(fthreads/shared-threads (inc io-threads))
-        metadata-producers-ref (ref (filter (complement nil?) (map #(delay (produce/metadata-request-producer (:host %) (:port %) conf)) bootstrap-brokers)))
-        brokers-metadata-ref (ref (meta/get-metadata @metadata-producers-ref conf))
+        metadata-producers-ref (ref (meta/bootstrap->producermap bootstrap-brokers conf))
 
         ;blacklist producers and no use them in metdata updates or sending, they expire after a few seconds
         blacklisted-producers-ref (ref (cache/create-cache :expire-after-write blacklisted-expire))
@@ -272,50 +269,46 @@
                :activity-counter activity-counter
                :retry-cache retry-cache
                :metadata-producers-ref metadata-producers-ref
+               :blacklisted-metadata-producers-ref blacklisted-metadata-producers-ref
                :producers-cache-ref producers-cache-ref
-               :brokers-metadata-ref brokers-metadata-ref
                :producer-error-ch producer-error-ch
                :blacklisted-producers-ref blacklisted-producers-ref
                :scheduled-service scheduled-service
                :conf (assoc conf :batch-fail-message-over-limit batch-fail-message-over-limit :batch-byte-limit batch-byte-limit :topic-auto-create topic-auto-create)}
 
+        brokers-metadata-ref (ref (meta/get-metadata! state conf))
 
-        update-metadata (fn [& {:keys [timeout-ms producers]}]
-                          (if-let [metadata (meta/get-metadata (or producers @metadata-producers-ref) (if timeout-ms (assoc conf :metadata-timeout timeout-ms) conf) :blacklisted-metadata-producers-ref blacklisted-metadata-producers-ref)]
+        update-metadata (fn []
+                          (if-let [metadata (meta/get-metadata! state conf)]
                             (dosync (ref-set brokers-metadata-ref metadata))
                             (error (str "No metadata found"))))
+
 
         connector {:metadata-producers-ref metadata-producers-ref :send-cache send-cache :retry-cache retry-cache
                    :producers-cache-ref producers-cache-ref
                    :flush-on-write flush-on-write
-                   :state state}
+                   :state (assoc state :brokers-metadata-ref brokers-metadata-ref)}
 
         msg-ch (async/chan 100)
         msg-buff (futils/buffered-chan msg-ch batch-num-messages queue-buffering-max-ms 5 (produce/flush-on-byte->fn batch-byte-limit))
 
                   ;;every 5 seconds check for any data in the retry cache and resend the messages
         connector2 (assoc connector :msg-ch msg-ch :metadata-error-ch metadata-error-ch :update-metadata update-metadata)
-
-				-               (futils/fixdelay-thread 1000
-										      (try
-                            (do
-                             (doseq [retry-msg (persist/retry-cache-seq connector)]
-                                 (do (warn "Retry messages for " (:topic retry-msg) " " (:key-val retry-msg))
-                                   (if (coll? (:v retry-msg))
-                                     (doseq [bts (retry-msg-bts-seq retry-msg)]
-                                       (send-msg connector2 (:topic retry-msg) bts))
-                                     (warn "Invalid retry value " retry-msg))
-
-										                  (persist/delete-from-retry-cache connector (:key-val retry-msg)))))
-										         (catch Exception e (error e e))))
-
-
-
-
         ]
 
+    (futils/fixdelay-thread 1000
+                            (try
+                              (do
+                                (doseq [retry-msg (persist/retry-cache-seq connector)]
+                                  (do (warn "Retry messages for " (:topic retry-msg) " " (:key-val retry-msg))
+                                      (if (coll? (:v retry-msg))
+                                        (doseq [bts (retry-msg-bts-seq retry-msg)]
+                                          (send-msg connector2 (:topic retry-msg) bts))
+                                        (warn "Invalid retry value " retry-msg))
+
+                                      (persist/delete-from-retry-cache connector (:key-val retry-msg)))))
+                              (catch Exception e (error e e))))
     (async-handler async-ctx
-                   io-threads
                    (->ProducerState conf
                                     activity-counter
                                     send-cache
@@ -325,7 +318,6 @@
                                     blacklisted-producers-ref
                                     brokers-metadata-ref
                                     producer-error-ch)
-                   msg-ch
                    msg-buff)
     (.scheduleWithFixedDelay scheduled-service ^Runnable (fn [] (try (update-metadata) (catch Exception e (do (error e e)
                                                                                                               (async/>!! metadata-error-ch e))))) 0 10000 TimeUnit/MILLISECONDS)

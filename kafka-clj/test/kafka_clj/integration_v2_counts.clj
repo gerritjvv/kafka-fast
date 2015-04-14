@@ -57,5 +57,4 @@
         (wait-on-work-assigned-flag (:org @node-ref) 30000)
 
         (let [msgs (read-messages @node-ref)]
-          (count msgs) => msg-count)
-        ))
+          (count msgs) => msg-count)))

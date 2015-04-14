@@ -189,7 +189,7 @@
         (write-message-for-ack connector conf msgs byte-buff)
         (with-size byte-buff write-request conf msgs))
 
-      (if (:flush-on-write connector)
+      (if (:flush-on-write conf)
         (tcp/write! client byte-buff :flush true)
         (tcp/write! client byte-buff)))))
 

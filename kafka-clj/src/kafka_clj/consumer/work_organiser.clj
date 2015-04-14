@@ -3,8 +3,8 @@
     [kafka-clj.consumer.util :as cutil]
     [clojure.tools.logging :refer [info debug error]]
     [kafka-clj.redis.core :as redis]
-    [fun-utils.core :as fu]
-    [kafka-clj.metadata :refer [get-metadata get-metadata-recreate!]]
+    [kafka-clj.metadata :as meta]
+    [fun-utils.cache :as cache]
     [kafka-clj.produce :refer [metadata-request-producer] :as produce]
     [kafka-clj.consumer.consumer :refer [wait-on-work-unit!]])
   (:import [java.util.concurrent Executors ExecutorService CountDownLatch TimeUnit]
@@ -34,7 +34,7 @@
       (integer? s) s
       (empty? s) -10
       :else (Long/parseLong (str s)))
-    (catch NumberFormatException n -10)))
+    (catch NumberFormatException _ -10)))
 
 (defn- ^Long to-int [s]
   (let [i (_to-int s)]
@@ -45,7 +45,7 @@
 (defn- work-complete-fail-delete!
   "
    Deletes the work unit by doing nothing i.e the work unit will not get pushed to the work queue again"
-  [{:keys [redis-conn error-queue] :as state} wu]
+  [{:keys [redis-conn error-queue]} wu]
   (error "delete workunit error-code:1 " + wu)
   (redis/lpush redis-conn error-queue (into (sorted-map) wu)))
 
@@ -93,21 +93,10 @@
               new-work-unit)))))
     state))
 
-(defn- ^Long safe-num
-  "Quick util function that returns a positive number or 0"
-  [^Long x]
-  (if (pos? x) x 0))
-
-(defn- get-queue-len [redis-conn queue]
-  (redis/wcar redis-conn (redis/llen redis-conn queue)))
-
-
-
-
 (defn work-complete-handler!
   "If the status of the w-unit is :ok the work-unit is checked for remaining work, otherwise its completed, if :fail the work-unit is sent to the work-queue.
    Must be run inside a redis connection e.g car/wcar redis-conn"
-  [{:keys [redis-conn] :as state} {:keys [status] :as w-unit}]
+  [state {:keys [status] :as w-unit}]
   (condp = status
     :fail (work-complete-fail! state w-unit)
     :fail-delete (work-complete-fail-delete! state w-unit)
@@ -132,7 +121,7 @@
                 (doseq [work-unit work-units]
                   (work-complete-handler! state (ensure-unique-id work-unit))
                   (redis/lrem redis-conn working-queue -1 (into (sorted-map) work-unit))))))
-          (catch InterruptedException e1 (info "Exit work complete loop"))
+          (catch InterruptedException _ (info "Exit work complete loop"))
           (catch Exception e (do (error e e) (.printStackTrace e)))))
       (finally
         (.countDown shutdown-confirm)))))
@@ -209,8 +198,8 @@
                     (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) max-offset))
           )))))
 
-(defn get-offset-from-meta [{:keys [meta-producers conf] :as state} topic partition]
-  (let [meta (get-metadata meta-producers conf)
+(defn get-offset-from-meta [{:keys [conf] :as state} topic partition]
+  (let [meta (meta/get-metadata! state conf)
         offsets (cutil/get-broker-offsets state meta [topic] conf)
         partition-offsets (->> offsets vals (mapcat #(get % topic)) (filter #(= (:partition %) partition)) first :all-offsets)]
 
@@ -221,8 +210,8 @@
 
 (defn- topic-partition? [m topic partition] (filter (fn [[t partition-data]] (and (= topic t) (not-empty (filter #(= (:partition %) partition) partition-data)) )) m))
 
-(defn get-broker-from-meta [{:keys [meta-producers conf use-earliest] :as state} topic partition & {:keys [retry-count] :or {retry-count 0}}]
-  (let [meta (get-metadata meta-producers conf)
+(defn get-broker-from-meta [{:keys [conf] :as state} topic partition & {:keys [retry-count] :or {retry-count 0}}]
+  (let [meta (meta/get-metadata! state conf)
         offsets (cutil/get-broker-offsets state meta [topic] conf)
         ;;all this to get the broker ;;{{:host "gvanvuuren-compile", :port 9092} {"test" ({:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 0} {:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 1})}}
         brokers (filter #(not (nil? %)) (map (fn [[broker data]] (if (not-empty (topic-partition? data topic partition)) broker nil)) offsets))]
@@ -236,45 +225,29 @@
 (defn calculate-new-work
   "Accepts the state and returns the state as is.
    For topics new work is calculated depending on the metadata returned from the producers"
-  [{:keys [meta-producers conf error-handler] :as state} topics]
-  {:pre [meta-producers conf]}
-  (let [[meta-producers1 meta] (get-metadata-recreate! @meta-producers conf)
-         offsets (cutil/get-broker-offsets state meta topics conf)]
-    ;;{{:host "gvanvuuren-compile", :port 9092} {"test" ({:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 0} {:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 1})}}
-    (dosync (alter meta-producers (fn [_] meta-producers1)))
+  [{:keys [metadata-producers-ref conf error-handler] :as state} topics]
+  {:pre [metadata-producers-ref conf]}
+  (try
+    (let [meta (meta/get-metadata! state conf)
+          offsets (cutil/get-broker-offsets state meta topics conf)]
 
-    (doseq [[broker topic-data] offsets]
+      (doseq [[broker topic-data] offsets]
 
-      (doseq [[topic offset-data] topic-data]
-        (try
-          ;we map :offset to max of :offset and :all-offets
-          (send-offsets-if-any! state broker topic (map #(assoc % :offset (apply max (:offset %) (:all-offsets %))) offset-data))
-          (catch Exception e (do (error e e) (.printStackTrace e) (if error-handler (error-handler :meta state e)))))))
-    (assoc state :meta-producers meta-producers1)))
-
-
-(defn get-queue-data
-  "Helper function that returns the data from a queue using lrange 0 limit"
-  [{:keys [redis-conn]} queue-name & {:keys [limit] :or {limit -1}}]
-  (redis/wcar redis-conn (redis/lrange redis-conn queue-name 0 limit)))
-
-(defn put-queue-data
-  "Helper function that returns the data from a queue using lrange 0 limit"
-  [{:keys [redis-conn]} queue-name data]
-  (redis/wcar redis-conn (redis/lpush redis-conn queue-name data)))
-
-
-(defn remove-queue-data
-  "Helper function that returns the data from a queue using lrange 0 limit"
-  [{:keys [redis-conn]} queue-name data]
-  (redis/wcar redis-conn (redis/lrem redis-conn queue-name -1 data)))
-
-
+        (doseq [[topic offset-data] topic-data]
+          (try
+            ;we map :offset to max of :offset and :all-offets
+            (send-offsets-if-any! state broker topic (map #(assoc % :offset (apply max (:offset %) (:all-offsets %))) offset-data))
+            (catch Exception e (do (error e e) (.printStackTrace e) (if error-handler (error-handler :meta state e)))))))
+      state)
+    (catch Exception e (do
+                         (.printStackTrace e)
+                         (error e e)
+                         state))))
 
 (defn create-meta-producers!
   "For each boostrap broker a metadata-request-producer is created"
   [bootstrap-brokers conf]
-  (doall (map #(metadata-request-producer (:host %) (:port %) conf) bootstrap-brokers)))
+  (meta/bootstrap->producermap bootstrap-brokers conf))
 
 (defn create-organiser!
   "Create a organiser state that should be passed to all the functions were state is required in this namespace"
@@ -284,9 +257,12 @@
 
   (let [shutdown-flag (AtomicBoolean. false)
         shutdown-confirm (CountDownLatch. 1)
-        meta-producers (ref (create-meta-producers! bootstrap-brokers conf))
+        metadata-producers-ref (ref (create-meta-producers! bootstrap-brokers conf))
+        blacklisted-metadata-producers-ref (ref (cache/create-cache :expire-after-write (get conf :blacklisted-expire 10000)))
         redis-conn (redis-factory redis-conf)
-        intermediate-state (assoc state :meta-producers meta-producers :redis-conn redis-conn :offset-producers (ref {}) :shutdown-flag shutdown-flag :shutdown-confirm shutdown-confirm)
+        intermediate-state (assoc state :metadata-producers-ref metadata-producers-ref
+                                        :blacklisted-metadata-producers-ref blacklisted-metadata-producers-ref
+                                        :redis-conn redis-conn :offset-producers (ref {}) :shutdown-flag shutdown-flag :shutdown-confirm shutdown-confirm)
         work-complete-processor-future (start-work-complete-processor! intermediate-state)
         ]
     (assoc intermediate-state
@@ -294,52 +270,25 @@
       :work-complete-processor-future work-complete-processor-future)))
 
 
-(defn wait-on-work-assigned-flag [{:keys [work-assigned-flag] :as state} timeout-ms]
+(defn wait-on-work-assigned-flag [{:keys [work-assigned-flag]} timeout-ms]
   (loop [ts (System/currentTimeMillis)]
     (if (> @work-assigned-flag 0)
       @work-assigned-flag
       (if (>= (- (System/currentTimeMillis) ts) timeout-ms)
         -1
         (do
-           (info "waiting on work-assigned-flag: " @work-assigned-flag)
+          ;(prn "waiting on work-assigned-flag: " @work-assigned-flag)
            (Thread/sleep 1000)
 
             (recur (System/currentTimeMillis)))))))
 
 (defn close-organiser!
   "Closes the organiser passed in"
-  [{:keys [meta-producers redis-conn work-complete-processor-future redis-conn ^AtomicBoolean shutdown-flag ^CountDownLatch shutdown-confirm]}]
-  {:pre [meta-producers redis-conn (instance? ExecutorService work-complete-processor-future)]}
+  [{:keys [metadata-producers-ref work-complete-processor-future redis-conn ^AtomicBoolean shutdown-flag ^CountDownLatch shutdown-confirm]}]
+  {:pre [metadata-producers-ref redis-conn (instance? ExecutorService work-complete-processor-future)]}
   (.set shutdown-flag true)
   (.await shutdown-confirm 10000 TimeUnit/MILLISECONDS)
   (.shutdownNow ^ExecutorService work-complete-processor-future)
-  (doseq [producer meta-producers]
-    (produce/shutdown producer))
+  (doseq [[_ producer] @metadata-producers-ref]
+    (produce/shutdown @producer))
   (redis/close! redis-conn))
-
-
-(comment
-
-  (use 'kafka-clj.consumer.work-organiser :reload)
-
-  (def org (create-organiser!
-             {:bootstrap-brokers [{:host "192.168.4.40" :port 9092}]
-              :consume-step      10
-              :redis-conf        {:host ["192.168.4.10:6379" "192.168.4.10:6380" "192.168.4.10:6381"
-                                         "192.168.4.10:6382" "192.168.4.10:6383" ] :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}))
-
-
-  (calculate-new-work org ["test"])
-
-
-
-  (use 'kafka-clj.consumer.consumer :reload)
-  (def consumer (consumer-start {:redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}))
-
-  (def res (do-work-unit! consumer (fn [state status resp-data] state)))
-
-  )
-
-
-
-

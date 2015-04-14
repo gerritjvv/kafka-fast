@@ -1,18 +1,17 @@
 (ns kafka-clj.metadata
-  (:require 
-            [clj-tuple :refer [tuple]]
-            [kafka-clj.produce :refer [metadata-request-producer send-metadata-request shutdown]]
-            [fun-utils.core :refer [fixdelay]]
-            [clojure.tools.logging :refer [info error warn]]
-            [clojure.core.async :refer [go <! <!! >!! alts!! timeout thread]])
-  (:import [java.nio ByteBuffer]
-           [clj_tcp.client Poison Reconnected]
-           (java.util.concurrent.atomic AtomicBoolean)))
+  (:require
+    [clj-tuple :refer [tuple]]
+    [kafka-clj.produce :refer [metadata-request-producer send-metadata-request shutdown]]
+    [fun-utils.core :refer [fixdelay]]
+    [clojure.tools.logging :refer [info error warn]]
+    [clojure.core.async :refer [go <! <!! >!! alts!! timeout thread]]
+    [kafka-clj.produce :as produce])
+  (:import (java.util.concurrent.atomic AtomicBoolean)
+           (clojure.lang IDeref)))
 
-"Keeps track of the metadata
- "
+(declare get-metadata-recreate!)
 
-(defn convert-metadata-response [resp]
+(defn- convert-metadata-response [resp]
   ;; transform the resp into a map
   ;; {topic-name [{:host host :port port :isr [ {:host :port}] :error-code code} ] }
   ;; the index of the vector (value of the topic-name) is sorted by partition number 
@@ -68,54 +67,66 @@
                    (throw (Exception. (str "timeout reading from producer " (vals metadata-producer)))))))))
 
 (defn- is-blacklisted?
-  [{:keys [host port] :as producer} blacklisted-producers]
-  (get blacklisted-producers (str host ":" port)))
+  [blacklisted-producers [k _]]
+  (get blacklisted-producers k))
 
-(defn smart-deref [x]
-  (if (instance? clojure.lang.IDeref x) (deref x) x))
-
-(defn- black-list-producer [blacklisted-metadata-producers-ref {:keys [host port]} e]
+(defn- black-list-producer! [blacklisted-metadata-producers-ref {:keys [host port]} e]
   (warn (str "Blacklisting metadata-producer: " host ":" port) e)
-  (dosync (commute blacklisted-metadata-producers-ref assoc (str host ":" port) true))
+  (dosync (commute blacklisted-metadata-producers-ref assoc {:host host :port port} true))
   nil)
 
-(defn blacklist-if-exception [blacklisted-metadata-producers-ref metadata-producer f & args]
-  ;(info "Metadata producer1: " (:host metadata-producer) ":" (:port metadata-producer) ": is closed " (get-in metadata-producer [:client :closed]))
+(defn- client-closed? [producer]
+  (produce/producer-closed? producer))
+
+(defn- blacklist-if-exception
+  "On exception will blacklist the producer the return nil, otherwise returns what f returns"
+  [blacklisted-metadata-producers-ref k f & args]
   (try
     (apply f args)
-    (catch Exception e [metadata-producer (black-list-producer blacklisted-metadata-producers-ref metadata-producer e)])))
+    (catch Exception e (if (re-find #"timeout" (str e))
+                         (try
+                           (apply f args)
+                           (catch Exception e (black-list-producer! blacklisted-metadata-producers-ref k e)))
+                         (black-list-producer! blacklisted-metadata-producers-ref k e)))))
 
-(defn _get-metadata [metadata-producer conf blacklisted-metadata-producers-ref]
-  (blacklist-if-exception blacklisted-metadata-producers-ref metadata-producer (fn [] (let [meta (get-broker-metadata metadata-producer conf)]
-                                                                                        [metadata-producer (if (empty? meta) nil meta)]))))
+(defn- recreate-producer-if-closed! [metadata-producers-ref conf k metadata-producer-delay]
+  (let [metadata-producer @metadata-producer-delay]
+    (if (client-closed? metadata-producer)
+      (do
+        (let [producer (metadata-request-producer (:host metadata-producer) (:port metadata-producer) conf)]
+          (dosync (alter metadata-producers-ref assoc k (delay producer)))
+          producer))
+      metadata-producer)))
 
-(defn iterate-metadata-producers [metadata-producers conf blacklisted-metadata-producers-ref]
-  ;(prn "meta : " metadata-producers)
-  (->>
-    metadata-producers
-    smart-deref
-    (map smart-deref)
-    (filter (complement nil?))
-    (filter (complement #(is-blacklisted? % @blacklisted-metadata-producers-ref)))
-    (map #(_get-metadata % conf blacklisted-metadata-producers-ref))
-    (filter (fn [[_ meta]] (not (nil? meta))))
-    first))
+(defn- _get-meta! [metadata-producers-ref conf k producer-delay]
+  (when-let [metadata-producer (recreate-producer-if-closed! metadata-producers-ref conf k producer-delay)]
+    (get-broker-metadata metadata-producer conf)))
 
-(defn get-metadata [metadata-producers conf & {:keys [blacklisted-metadata-producers-ref] :or {blacklisted-metadata-producers-ref (ref {})}}]
-  (let [[metadata-producer meta] (iterate-metadata-producers metadata-producers conf blacklisted-metadata-producers-ref)]
-    ;(info "Got meta from " (:host metadata-producer) " -> " meta)
-    meta))
+(defn unchunk [s]
+  (when (seq s)
+    (lazy-seq
+      (cons (first s)
+            (unchunk (next s))))))
 
-(defn- client-closed? [producer]
-  (.get ^AtomicBoolean (get-in producer [:client :closed])))
+(defn iterate-metadata-producers! [metadata-producers-ref blacklisted-metadata-producers-ref conf]
+  {:pre [metadata-producers-ref blacklisted-metadata-producers-ref]}
+  (->> @metadata-producers-ref
+       (filter (complement (partial is-blacklisted? @blacklisted-metadata-producers-ref)))
+       shuffle
+       unchunk
+       (map (fn [[k producer-delay]] (blacklist-if-exception blacklisted-metadata-producers-ref k #(_get-meta! metadata-producers-ref conf k producer-delay))))
+       (filter (complement nil?))
+       first))
 
-(defn- recreate-producer-if-closed! [conf metadata-producer]
-  (if (client-closed? metadata-producer)
-    (metadata-request-producer (:host metadata-producer) (:port metadata-producer) conf)
-    metadata-producer))
+(defn- ref? [r]
+  (when r
+    (instance? IDeref r)))
 
-(defn get-metadata-recreate! [metadata-producers conf & args]
-  (try
-    [metadata-producers (apply get-metadata (smart-deref metadata-producers) conf args)]
-    (catch Exception e (let [producers2 (doall (map (partial recreate-producer-if-closed! conf) metadata-producers))]
-                         [producers2 (apply get-metadata producers2 conf args)]))))
+(defn get-metadata! [{:keys [metadata-producers-ref blacklisted-metadata-producers-ref]} conf]
+  {:pre [(ref? metadata-producers-ref) (ref? blacklisted-metadata-producers-ref)]}
+  (iterate-metadata-producers! metadata-producers-ref blacklisted-metadata-producers-ref conf))
+
+(defn bootstrap->producermap
+  "Takes bootstrap-brokers = [{:host :port} ...] and returns a map {host:port (delay metadata-producer}}"
+  [bootstrap-brokers conf]
+  (reduce (fn [state {:keys [host port]}]  (assoc state {:host host :port port} (delay (metadata-request-producer host port conf)))) {} bootstrap-brokers))
