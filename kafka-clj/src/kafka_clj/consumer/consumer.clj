@@ -47,15 +47,13 @@
           fetch-res
 	         (read-fetch v [0 [] nil -1]
 				     (fn [state msg]
-	              ;read-fetch will navigate the fetch response calling this function
-               ;(info "READ FETCH MESSAGE " msg)
 	              (if (coll? state)
 			            (let [[^long max-offset-read errors f-state] state
                         ^long msg-offset (:offset msg)]
 		               (try
 			               (do
 					             (cond
-								         (or (instance? kafka_clj.fetch.Message msg) (:bts msg))
+                         (:bts msg)
                          ;only include messsages of the same topic partition and lower than max-offset
                          ;we also check that prev-offset < offset this catches duplicates in a same request
 								         (do
@@ -68,7 +66,7 @@
                              (do
                                (.incrementAndGet ^AtomicInteger msg-waste-count)
                                (tuple max-offset-read errors f-state))))
-								         (instance? kafka_clj.fetch.FetchError msg)
+								         (:error-code msg)
 								         (do (error "Fetch error: " msg) (tuple max-offset-read (conj errors msg) f-state))
 								         :else (throw (RuntimeException. (str "The message type " msg " not supported")))))
 			               (catch Exception e
