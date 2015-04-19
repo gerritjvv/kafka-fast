@@ -34,6 +34,17 @@
 
 (defonce ^AtomicInteger corr-counter (AtomicInteger.))
 
+(defn flush-on-byte->fn
+  "Returns a check-f for buffered-chan that will flush if the accumulated byte count is bigger than that of byte-limit"
+  [^long byte-limit]
+  (fn
+    ([] 0)
+    ([^long byte-cnt msg]
+     (let [total-cnt (+ byte-cnt (count (:bts msg)))]
+       (if (>= total-cnt byte-limit)
+         (tuple true 0)
+         (tuple false total-cnt))))))
+
 (defn ^Long unique-corrid! []
   (let [v (.getAndIncrement corr-counter)]
     (if (= v Integer/MAX_VALUE)
@@ -178,9 +189,7 @@
         (write-message-for-ack connector conf msgs byte-buff)
         (with-size byte-buff write-request conf msgs))
 
-      ;(info "KAFKA-DEBUG1: send-messages " (.incrementAndGet ^AtomicLong msg-counter) " connector:keys: " (keys connector) " connector:flush-on-write: " (:flush-on-write connector))
-
-      (if (:flush-on-write connector)
+      (if (:flush-on-write conf)
         (tcp/write! client byte-buff :flush true)
         (tcp/write! client byte-buff)))))
 
