@@ -126,6 +126,12 @@
   {:pre [(ref? metadata-producers-ref) (ref? blacklisted-metadata-producers-ref)]}
   (iterate-metadata-producers! metadata-producers-ref blacklisted-metadata-producers-ref conf))
 
+
+(defn get-metadata [metadata-producers conf]
+  (get-metadata! {:metadata-producers-ref (ref (reduce (fn [m {:keys [host port] :as producer}] (assoc m {:host host :port port} (delay producer))) {} metadata-producers))
+                  :blacklisted-metadata-producers-ref (ref {})}
+    conf))
+
 (defn bootstrap->producermap
   "Takes bootstrap-brokers = [{:host :port} ...] and returns a map {host:port (delay metadata-producer}}"
   [bootstrap-brokers conf]

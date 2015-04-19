@@ -1,5 +1,6 @@
 (ns kafka-clj.tcp
-  (:require [clojure.tools.logging :refer [error info]])
+  (:require [clojure.tools.logging :refer [error info]]
+            [kafka-clj.response :as kafka-resp])
   (:import (java.net Socket SocketException)
            (java.io InputStream OutputStream BufferedInputStream BufferedOutputStream DataInputStream)
            (io.netty.buffer ByteBuf)))

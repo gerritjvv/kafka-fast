@@ -90,14 +90,15 @@ for normal random distribution use the kafka-clj.client namespace.
 (def d [(message "data" 0 (.getBytes "HI1")) (message "data" 0 (.getBytes "ho4"))])
 ;; this creates the same as above but using the Message record
 
-(def p (producer "localhost" 9092))
+(def p (producer "192.168.4.40" 9092 {:acks 1}))
 ;; creates a producer, the function takes the arguments host and port
 
-(send-messages p {} d)
+(dotimes [i 10000] (send-messages p {} d))
 ;; sends the messages asynchronously to kafka parameters are p , a config map and a sequence of messages
 
 (read-response p 100)
-;; ({:topic "data", :partitions ({:partition 0, :error-code 0, :offset 2131})})
+;; note that this function tries its best to not block but may still block during the actual IO read
+;; (#kafka_clj.response.ProduceResponse{:correlation-id 22, :topic "data", :partition 0, :error-code 3, :offset -1})
 ;; read-response takes p and a timeout in milliseconds on timeout nil is returned
 ```
 

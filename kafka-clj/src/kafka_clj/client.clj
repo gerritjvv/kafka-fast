@@ -186,7 +186,6 @@
                (error e e)
                [producers-cache-ref nil])))))
 
-(defonce counter (atom 0))
 (defn- send-data [^ProducerState state partition-rc topic msgs]
   (let [[producers-cache-ref prods] (get-or-create-producers! state partition-rc)
         prod (rand-nth prods)]

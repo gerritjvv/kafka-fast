@@ -1,21 +1,19 @@
 (ns kafka-clj.produce
   (:require [kafka-clj.codec :refer [crc32-int compress]]
-            [kafka-clj.response :refer [metadata-response-decoder]]
+            [kafka-clj.response :as kafka-resp :refer [metadata-response-decoder]]
             [clj-tcp.client :refer [client write! read! close-all ALLOCATOR RCVBUF-ALLOCATOR WRITE-BUFFER-HIGH-WATER-MARK closed?]]
             [clj-tcp.codec :refer [default-encoder]]
             [clojure.tools.logging :refer [error info]]
             [kafka-clj.buff-utils :refer [inc-capacity write-short-string with-size compression-code-mask]]
             [clj-tuple :refer [tuple]]
             [kafka-clj.msg-persist :refer [cache-sent-messages create-send-cache]]
-            [kafka-clj.tcp :as tcp]
-            [fun-utils.threads :as fthreads])
-  (:import [java.net InetAddress]
-           [java.nio ByteBuffer]
+            [kafka-clj.tcp :as tcp])
+  (:import
+           (java.net Socket )
            [java.util.concurrent.atomic AtomicLong AtomicInteger]
            [io.netty.buffer ByteBuf Unpooled ByteBufAllocator UnpooledByteBufAllocator PooledByteBufAllocator]
-           [java.nio.channels SocketChannel]
-           [java.net InetSocketAddress]
-           [kafka_clj.util Util]))
+           [kafka_clj.util Util]
+           (java.io ByteArrayInputStream DataInputStream)))
 
 
 
@@ -157,9 +155,21 @@
                              (with-size buff write-compressed-message-set correlation-id codec msgs))))))))))))
 
 
-
 (defn read-response [{:keys [client]} timeout]
-  (read! client timeout))
+  (let [{:keys [^Socket socket ^DataInputStream input]} client]
+    (when (not (.isClosed socket))
+      (loop [start-ts (System/currentTimeMillis)]
+        (if (> (.available input) 4)
+          (let [size (.readInt input)
+                bts (byte-array size)
+                _ (.read input bts)
+                btsIn (DataInputStream. (ByteArrayInputStream. bts))]
+            (try
+              (flatten (kafka-resp/in->kafkarespseq btsIn))
+              (finally
+                (.close btsIn))))
+          (when (<= (- (System/currentTimeMillis) start-ts) timeout)
+            (recur start-ts)))))))
 
 (defn- write-message-for-ack
   "Writes the messages to the buff and send the results of [[offset msgs] ...] to the cache.
@@ -170,8 +180,6 @@
 
 ;this is only used with the single message producer api where ack > 0
 (def global-message-ack-cache (delay (create-send-cache {})))
-
-(defonce msg-counter (AtomicLong. 0))
 
 (defn send-messages
   "Send messages by writing them to the tcp client.
