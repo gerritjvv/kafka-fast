@@ -2,19 +2,18 @@ package kafka_clj.util;
 
 import com.alexkasko.unsafe.offheap.OffHeapMemory;
 import io.netty.buffer.ByteBuf;
+import net.jpountz.lz4.LZ4BlockInputStream;
+import net.jpountz.lz4.LZ4BlockOutputStream;
 import org.apache.commons.io.IOUtils;
 import org.xerial.snappy.Snappy;
 import org.xerial.snappy.SnappyInputStream;
-
-import net.jpountz.lz4.LZ4BlockInputStream;
-import net.jpountz.lz4.LZ4BlockOutputStream;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
+import java.net.URI;
 import java.nio.ByteBuffer;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.zip.CRC32;
 import java.util.zip.GZIPInputStream;
 
@@ -88,6 +87,7 @@ public class Util {
     }
 
     public static final byte[] deflateSnappy(final byte[] bts) throws Exception {
+        //do not change Snappy.unCompress nor any other method works.
         final int buffLen = 2 * bts.length;
         final SnappyInputStream in = new SnappyInputStream(new ByteArrayInputStream(bts));
         final ByteArrayOutputStream out = new ByteArrayOutputStream(buffLen);
@@ -162,7 +162,47 @@ public class Util {
         return obj.toString().getBytes("UTF-8");
     }
 
-    public static final long randInt(long n){
-        return ThreadLocalRandom.current().nextLong(n);
+    public static final String correctURI(String uri){
+        String str = uriExternalForm(createURI(uri));
+        return (str.startsWith("//")) ? str.substring(2, str.length()) : str;
+    }
+
+    public static final String uriExternalForm(URI uri){
+        return parseCorrectURI(uri.toString());
+    }
+
+    public static final URI createURI(String uri) {
+        return URI.create("//" + parseCorrectURI(uri));
+    }
+
+    private static final String parseCorrectURI(String uri){
+        String[] parts = uri.split(":");
+
+        if (parts.length-1 >= 3) {
+            String port = parts[parts.length-1];
+            uri = "[" + uri.replace(":" + port, "") + "]:" + port;
+        }
+        return uri;
+    }
+
+    public static final byte[] decompress(int codec, byte[] bts){
+       try{
+           switch (codec){
+               case 0:
+                   return bts;
+               case 1:
+                   return Util.deflateGzip(bts);
+               case 2:
+                   return Util.deflateSnappy(bts);
+               case 3:
+                   return Util.deflateLZ4(bts);
+               default:
+                   throw new RuntimeException("Codec " + codec + " is not supported");
+           }
+       }catch(Exception e){
+           RuntimeException rte = new RuntimeException(e);
+           rte.setStackTrace(e.getStackTrace());
+           throw rte;
+       }
     }
 }

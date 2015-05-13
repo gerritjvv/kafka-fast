@@ -27,7 +27,7 @@ then
  fi
 
  if [ ! -f /etc/init.d/redis-cluster ]; then
-  cp /vagrant/vagrant/config/redis-cluster-init /etc/init.d/redis-custer
+  cp /vagrant/vagrant/config/redis-cluster-init /etc/init.d/redis-cluster
   chmod +x /etc/init.d/redis-custer
  fi
 

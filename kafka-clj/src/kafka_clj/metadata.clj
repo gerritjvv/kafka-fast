@@ -6,8 +6,7 @@
     [clojure.tools.logging :refer [info error warn]]
     [clojure.core.async :refer [go <! <!! >!! alts!! timeout thread]]
     [kafka-clj.produce :as produce])
-  (:import (java.util.concurrent.atomic AtomicBoolean)
-           (clojure.lang IDeref)))
+  (:import (clojure.lang IDeref)))
 
 (declare get-metadata-recreate!)
 
@@ -71,9 +70,18 @@
   (get blacklisted-producers k))
 
 (defn- black-list-producer! [blacklisted-metadata-producers-ref {:keys [host port]} e]
-  (warn (str "Blacklisting metadata-producer: " host ":" port) e)
+  {:pre [blacklisted-metadata-producers-ref host (number? port)]}
+  (error e (str "Blacklisting metadata-producer: " host ":" port))
   (dosync (commute blacklisted-metadata-producers-ref assoc {:host host :port port} true))
   nil)
+
+(defn- un-blacklist-producer!
+  "Remove the {:host :port} combindation from the blacklisted-metadata-producers-ref"
+  [blacklisted-metadata-producers-ref {:keys [host port]}]
+  {:pre [host (number? port)]}
+  (info "Unblacklist metadata producer: " host ":" port)
+  (dosync
+    (alter blacklisted-metadata-producers-ref dissoc {:host host :port port})))
 
 (defn- client-closed? [producer]
   (produce/producer-closed? producer))
@@ -83,11 +91,10 @@
   [blacklisted-metadata-producers-ref k f & args]
   (try
     (apply f args)
-    (catch Exception e (if (re-find #"timeout" (str e))
-                         (try
-                           (apply f args)
-                           (catch Exception e (black-list-producer! blacklisted-metadata-producers-ref k e)))
-                         (black-list-producer! blacklisted-metadata-producers-ref k e)))))
+    (catch Exception e (do
+                         (error "ERROR Blacklisting")
+                         (black-list-producer! blacklisted-metadata-producers-ref k e)
+                         nil))))
 
 (defn- recreate-producer-if-closed! [metadata-producers-ref conf k metadata-producer-delay]
   (let [metadata-producer @metadata-producer-delay]
@@ -131,6 +138,15 @@
   (get-metadata! {:metadata-producers-ref (ref (reduce (fn [m {:keys [host port] :as producer}] (assoc m {:host host :port port} (delay producer))) {} metadata-producers))
                   :blacklisted-metadata-producers-ref (ref {})}
     conf))
+
+(defn try-unblacklist!
+  "Checks all the blacklisted connections and if a reconnect is possible, the connection is moved from teh black-listed-metadata-producers-ref to metadata-producer-"
+  [metadata-producers-ref blacklisted-metadata-producers-ref conf]
+  (doseq [metadata-producer (->> @metadata-producers-ref
+                                 (filter (partial is-blacklisted? @blacklisted-metadata-producers-ref))
+                                 (map (fn [[k producer-delay]] (try (recreate-producer-if-closed! metadata-producers-ref conf k producer-delay) (catch Exception _ nil))))
+                                 (filter (complement nil?)))]
+    (un-blacklist-producer! blacklisted-metadata-producers-ref metadata-producer)))
 
 (defn bootstrap->producermap
   "Takes bootstrap-brokers = [{:host :port} ...] and returns a map {host:port (delay metadata-producer}}"

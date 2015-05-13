@@ -6,7 +6,7 @@
     [kafka-clj.metadata :as meta]
     [fun-utils.cache :as cache]
     [kafka-clj.produce :refer [metadata-request-producer] :as produce]
-    [kafka-clj.consumer.consumer :refer [wait-on-work-unit!]])
+    [kafka-clj.consumer.workunits :refer [wait-on-work-unit!]])
   (:import [java.util.concurrent Executors ExecutorService CountDownLatch TimeUnit]
            (java.util.concurrent.atomic AtomicBoolean)))
 
@@ -24,6 +24,9 @@
 ;
 ;(def res (do-work-unit! consumer (fn [state status resp-data] state)))
 ;
+;; Basic data type is the work-unit
+;; structure is {:topic topic :partition partition :offset start-offset :len l :max-offset (+ start-offset l) :producer {:host host :port port}}
+;;
 
 (declare get-offset-from-meta)
 (declare get-broker-from-meta)
@@ -116,10 +119,10 @@
               redis-conn
               (if (map? work-units)
                 (do
-                  (work-complete-handler! state (ensure-unique-id work-units))
+                  (work-complete-handler! state work-units)
                   (redis/lrem redis-conn working-queue -1 (into (sorted-map) work-units)))
                 (doseq [work-unit work-units]
-                  (work-complete-handler! state (ensure-unique-id work-unit))
+                  (work-complete-handler! state work-unit)
                   (redis/lrem redis-conn working-queue -1 (into (sorted-map) work-unit))))))
           (catch InterruptedException _ (info "Exit work complete loop"))
           (catch Exception e (do (error e e) (.printStackTrace e)))))
@@ -133,8 +136,24 @@
   (doto (Executors/newSingleThreadExecutor)
     (.submit (work-complete-loop state))))
 
+(defn start-metadata-unblacklist-processor!
+  "Creates a ExecutorService and starts the unblacklist metada producerrunning in a background thread
+   Returns the ExecutorService"
+  [metadata-producers-ref blacklisted-metadata-producers-ref conf]
+  (doto
+    (Executors/newSingleThreadScheduledExecutor)
+    (.scheduleWithFixedDelay
+      (fn []
+        (try
+          (meta/try-unblacklist! metadata-producers-ref blacklisted-metadata-producers-ref conf)
+          (catch InterruptedException _ nil)
+          (catch Exception e (error e e))))
+      10000
+      10000
+      TimeUnit/MILLISECONDS)))
+
 (defn calculate-work-units
-  "Returns '({:topic :partition :offset :len}) Len is exclusive"
+  "Returns '({:topic :partition :offset :len :max-offset}) Len is exclusive"
   [producer topic partition ^Long max-offset ^Long start-offset ^Long step]
   {:pre [(and (:host producer) (:port producer))]}
 
@@ -264,8 +283,10 @@
                                         :blacklisted-metadata-producers-ref blacklisted-metadata-producers-ref
                                         :redis-conn redis-conn :offset-producers (ref {}) :shutdown-flag shutdown-flag :shutdown-confirm shutdown-confirm)
         work-complete-processor-future (start-work-complete-processor! intermediate-state)
+        unblack-list-processor-future (start-metadata-unblacklist-processor! metadata-producers-ref blacklisted-metadata-producers-ref conf)
         ]
     (assoc intermediate-state
+      :unblack-list-processor-future unblack-list-processor-future
       :work-assigned-flag (atom 0)
       :work-complete-processor-future work-complete-processor-future)))
 
@@ -284,11 +305,16 @@
 
 (defn close-organiser!
   "Closes the organiser passed in"
-  [{:keys [metadata-producers-ref work-complete-processor-future redis-conn ^AtomicBoolean shutdown-flag ^CountDownLatch shutdown-confirm]}]
-  {:pre [metadata-producers-ref redis-conn (instance? ExecutorService work-complete-processor-future)]}
+  [{:keys [metadata-producers-ref work-complete-processor-future unblack-list-processor-future
+           redis-conn ^AtomicBoolean shutdown-flag ^CountDownLatch shutdown-confirm]}]
+  {:pre [metadata-producers-ref redis-conn
+         (instance? ExecutorService work-complete-processor-future)
+         (instance? ExecutorService unblack-list-processor-future)]}
   (.set shutdown-flag true)
   (.await shutdown-confirm 10000 TimeUnit/MILLISECONDS)
-  (.shutdownNow ^ExecutorService work-complete-processor-future)
+  (.shutdownNow ^ExecutorService unblack-list-processor-future)
+  (.shutdown ^ExecutorService work-complete-processor-future)
+
   (doseq [[_ producer] @metadata-producers-ref]
     (produce/shutdown @producer))
   (redis/close! redis-conn))

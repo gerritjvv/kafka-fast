@@ -1,4 +1,4 @@
-(defproject kafka-clj "3.0.2"
+(defproject kafka-clj "3.0.4-SNAPSHOT"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -23,7 +23,7 @@
   :dependencies [
                  [com.taoensso/carmine "2.7.0"]
                  [redis.clients/jedis "2.6.2"]
-                 [org.redisson/redisson "1.2.0"]
+                 [org.redisson/redisson "1.2.1"]
                  [org.apache.commons/commons-pool2 "2.2"]
                  [com.alexkasko.unsafe/unsafe-tools "1.4.4"]
 
@@ -36,9 +36,9 @@
                  [org.clojure/tools.logging "0.3.0"]
                  [clj-tcp "0.4.9-SNAPSHOT"]
                  [fmap-clojure "LATEST" :exclusions [org.clojure/tools.logging]]
-                 [fun-utils "0.5.5" :exclusions [org.clojure/tools.logging]]
+                 [fun-utils "0.5.8-SNAPSHOT" :exclusions [org.clojure/tools.logging]]
                  [clj-tuple "0.1.7"]
-                 [thread-load "0.1.3" :exclusions [org.clojure/clojure]]
+                 [thread-load "0.2.0-SNAPSHOT" :exclusions [org.clojure/clojure]]
                  [com.codahale.metrics/metrics-core "3.0.1"]
                  [org.clojure/core.async "0.1.303.0-886421-alpha"]
                  [com.stuartsierra/component "0.2.2"]

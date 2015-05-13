@@ -4,12 +4,12 @@
             [clj-tcp.client :refer [client write! read! close-all ALLOCATOR RCVBUF-ALLOCATOR WRITE-BUFFER-HIGH-WATER-MARK closed?]]
             [clj-tcp.codec :refer [default-encoder]]
             [clojure.tools.logging :refer [error info]]
-            [kafka-clj.buff-utils :refer [inc-capacity write-short-string with-size compression-code-mask]]
+            [kafka-clj.buff-utils :refer [write-short-string with-size compression-code-mask]]
             [clj-tuple :refer [tuple]]
             [kafka-clj.msg-persist :refer [cache-sent-messages create-send-cache]]
             [kafka-clj.tcp :as tcp])
   (:import
-           (java.net Socket )
+    (java.net Socket SocketException)
            [java.util.concurrent.atomic AtomicLong AtomicInteger]
            [io.netty.buffer ByteBuf Unpooled ByteBufAllocator UnpooledByteBufAllocator PooledByteBufAllocator]
            [kafka_clj.util Util]
@@ -251,26 +251,16 @@
   [host port conf]
   (if (not host)
     (throw (RuntimeException. (str "Nill host is not allowed here"))))
-  (try
-    (let [c (client host port (merge conf
-                                     {:reuse-client true
-                                      :retry-limit  0
-                                      ;:channel-options [[ALLOCATOR (KafkaAllocator.)]]
-                                      :handlers     [
-                                                     metadata-response-decoder
-                                                     default-encoder
-                                                     ]}))]
-      (if-not (record? c)
-        (throw (RuntimeException. (str "Could not connect to " host ":" port))))
+  (let [c (client host port (merge conf
+                                   {:reuse-client true
+                                    :retry-limit  0
+                                    ;:channel-options [[ALLOCATOR (KafkaAllocator.)]]
+                                    :handlers     [
+                                                   metadata-response-decoder
+                                                   default-encoder
+                                                   ]}))]
+    (if-not (record? c)
+      (throw (SocketException. (str "Could not connect to " host ":" port))))
 
-      (prn "Creating metadata-request-producers using: " (type c) " " host " " port)
-
-      (if (record? c)
-        (->Producer c host port)
-        nil))
-
-    (catch Exception e (do
-                         (error "Could not create metadata-request-producer " host " " port " due to " e)
-                         (error e e)
-                         (throw e)))))
+    (->Producer c host port)))
       

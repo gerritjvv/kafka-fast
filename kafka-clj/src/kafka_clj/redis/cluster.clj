@@ -4,13 +4,12 @@
             [kafka-clj.redis.protocol :refer [IRedis]]
             [clojure.tools.logging :refer [info error]])
   (:import [kafka_clj.util Util]
-           [org.redisson.core RBucket RList RLock]
+           [org.redisson.core RBucket RLock]
            [org.redisson Redisson Config ClusterServersConfig SingleServerConfig]
            [org.redisson.codec RedissonCodec]
            [java.nio ByteBuffer]
            (java.util Queue List)
-           (java.util.concurrent TimeUnit)
-           (redis.clients.jedis JedisCommands)))
+           (java.util.concurrent TimeUnit)))
 
 
 (defprotocol IToBytes
@@ -50,14 +49,14 @@
     (if (> (count hosts) 1)
       (let [^ClusterServersConfig config (.useClusterServers conf)]
         (.setScanInterval config (int 2000))
-        (.addNodeAddress config (into-array String hosts)))
+        (.addNodeAddress config (into-array String (mapv #(Util/correctURI (str %)) hosts))))
       (-> conf .useSingleServer ^SingleServerConfig (.setAddress (first hosts))))
+
     conf))
 
 (defn connect
   ([host & hosts]
     (Redisson/create (create-config (conj hosts host)))))
-
 
 
 (defn set [^Redisson cmd ^String k v]
@@ -150,6 +149,10 @@
 
 (defn create
   ([hosts]
-    (apply create (clojure.string/split hosts #"[ ;,]")))
+   (let [sp (clojure.string/split hosts #"[ ;,]")]
+     (if (> (count sp) 1)
+       (apply create sp)
+       (->RedissonObj (apply connect sp)))))
   ([host & hosts]
+   (prn "redis-cluster/create host: " host " hosts: " hosts)
     (->RedissonObj (apply connect (conj hosts host)))))

@@ -1,23 +1,23 @@
-(ns kafka-clj.fetch
+(ns
+  ^{:author "gerritjvv"
+    :doc "Raw api for sending and reading kafka fetch offset and fetch messages requests,
+          reading the fetch message is done by the java class  kafka_clj.util.Fetch"}
+  kafka-clj.fetch
   (:require [clojure.tools.logging :refer [error info debug]]
             [clj-tuple :refer [tuple]]
             [clj-tcp.codec :refer [default-encoder]]
-            [clj-tcp.client :refer [client write! read! close-all ALLOCATOR read-print-ch read-print-in]]
+            [kafka-clj.tcp :as tcp]
+            [clj-tcp.client :refer [write! client close-all]]
             [fun-utils.core :refer [fixdelay apply-get-create]]
             [kafka-clj.codec :refer [uncompress crc32-int]]
             [kafka-clj.buff-utils :refer [write-short-string with-size read-short-string read-byte-array codec-from-attributes]]
             [kafka-clj.produce :refer [API_KEY_FETCH_REQUEST API_KEY_OFFSET_REQUEST API_VERSION MAGIC_BYTE]]
             [clojure.core.async :refer [go >! <! chan >!! <!! alts!! put! timeout]])
-  (:import [io.netty.buffer ByteBuf Unpooled]
-           [io.netty.handler.codec LengthFieldBasedFrameDecoder ReplayingDecoder]
-           [io.netty.channel ChannelOption]
+  (:import [io.netty.buffer ByteBuf]
+           [io.netty.handler.codec ReplayingDecoder]
            [java.util.concurrent.atomic AtomicInteger]
-           [java.util List]
-           [kafka_clj.util Util]
-           (io.netty.util ReferenceCountUtil)))
+           [java.util List]))
 
-(defrecord Message [topic partition offset bts])
-(defrecord FetchError [topic partition error-code])
 
 (defn ^ByteBuf write-fecth-request-message [^ByteBuf buff {:keys [max-wait-time min-bytes topics max-bytes]
                                                            :or { max-wait-time 1000 min-bytes 100 max-bytes 104857600}}]
@@ -79,147 +79,6 @@
   (with-size buff write-fetch-request-header state))
 
 
-(declare read-message-set)
-(declare read-messages0)
-(declare read-messages)
-
-(defn read-message [^ByteBuf buff topic-name partition offset state f]
-  "Message => Crc MagicByte Attributes Key Value
-  Crc => int32
-  MagicByte => int8
-  Attributes => int8
-  Key => bytes
-  Value => bytes"
-  (let [crc (Util/unsighedToNumber (.readInt buff))
-        _ (.readerIndex buff) ;start of message + attribytes + magic byte => start-index
-        _ (.readByte buff)                                  ;magic-byte
-        attributes (.readByte buff)
-        codec (codec-from-attributes attributes)
-        _ (read-byte-array buff)                            ;key-arr
-        val-arr (read-byte-array buff)
-        _ (.readerIndex buff)                               ;end-index
-                                        ;crc32-arr (byte-array (- end-index start-index))
-                                        ;crc2 (do (.getBytes buff (int start-index) crc32-arr) (crc32-int crc32-arr))
-        ]
-
-    ;check attributes, if the message is compressed, uncompress and read messages
-    ;else return as is
-    (if (> codec 0)
-      (let [ ^"[B" ubytes (try (uncompress codec val-arr) (catch Exception e (do  (.printStackTrace e))))
-             ]
-        (if ubytes
-          (let [ubuff (Unpooled/wrappedBuffer ubytes)]
-            ;read the messages inside of this compressed message
-            (read-messages0 ubuff (count ubytes) topic-name partition state f)
-
-            )))
-      (f state (Message. topic-name partition offset val-arr))
-      )))
-
-
-(defn read-message-set [^ByteBuf in reader-start bts-left topic-name partition state f]
-  "MessageSet => [Offset MessageSize Message]
-  Offset => int64
-  MessageSize => int32
-  Message => Crc MagicByte Attributes Key Value
-  Crc => int32
-  MagicByte => int8
-  Attributes => int8
-  Key => bytes
-  Value => bytes"
-  (if (and (> (- bts-left 12) 0) (> (.readableBytes in) 12))
-    (let [offset (.readLong in)
-          message-size (.readInt in)
-          bts-left2 (- bts-left 12)]
-      (if (> message-size bts-left2)
-        (do
-
-          (debug "partial message found at " topic-name " " partition " bts-left " bts-left2  " message-size " message-size " readable " (.readableBytes in) " offset " offset)
-
-          (.skipBytes in (if (> bts-left2 (.readableBytes in)) (.readableBytes in) bts-left2)) state)
-
-        (read-message in topic-name partition offset state f)))
-    (do
-      ;;skip any possible extra bytes
-      (if (< (.readableBytes in) 12)
-        (do
-          (.skipBytes in (.readableBytes in))))
-
-      state)))
-
-(defn calc-bytes-read [^ByteBuf buff start-index]
-  (- (.readerIndex buff) start-index))
-
-(defn read-messages0 [^ByteBuf buff message-set-size topic-name partition state f]
-  "Read all the messages till the number of bytes message-set-size have been read"
-  (loop [res state reader-start (.readerIndex buff) bts-left message-set-size]
-
-    (if (and (> bts-left 12) (> (.readableBytes buff) 12))
-      (let [resp (read-message-set buff reader-start bts-left topic-name partition res f)]
-        (recur resp
-               (.readerIndex buff)
-               (- bts-left (calc-bytes-read buff reader-start))))
-      (do
-        ;we need to check for excess bytes
-        (if (> bts-left 0)
-          (.skipBytes buff (int bts-left)))
-        res))))
-
-(defn read-messages [^ByteBuf buff topic-name partition state f]
-  "Read all the messages till the number of bytes message-set-size have been read"
-  (let [message-set-size (.readInt buff)]
-    (if (> message-set-size (.readableBytes buff))
-      (do
-        (info "Message-set-size " message-set-size " is bigger than the readable bytes " (.readableBytes buff))
-        state)
-      (read-messages0 buff message-set-size topic-name partition state f))))
-
-
-(defn read-array [^ByteBuf in state f & args]
-  "Calls f with (apply f res args where res starts out as a map
-   and is subsequently the result of calling the prefivous (apply f res args)"
-  (let [len (.readInt in)]
-    (loop [i 0 res state]
-      (if (< i len)
-        (recur (inc i) (apply f res args))
-        res))))
-
-
-(defn write-to-file [size correlation-id file ^"[B" data]
-  (try (clojure.java.io/delete-file file) (catch Exception e (do )))
-  (with-open [o (java.io.DataOutputStream. (java.io.FileOutputStream. (clojure.java.io/file file)))]
-    (.writeInt o (int size))
-    (.writeInt o (int correlation-id))
-    (.write o data (int 0) (int (count data)))))
-
-(defn read-partition [state topic-name ^ByteBuf in f]
-  (let [partition (.readInt in)
-        error-code (.readShort in)
-        hw-mark-offset (.readLong in)]
-    (if (> error-code 0)
-      (let [resp (f state (FetchError. topic-name partition error-code))]
-        ;;even errors have a message set size.
-        (.readInt in)
-        resp)
-
-      (if (> (.readableBytes in) 0)
-        (read-messages in topic-name partition state f)
-        state))))
-
-(defn read-topic [state ^ByteBuf in f]
-  (let [topic-name (read-short-string in)]
-    (read-array in state read-partition topic-name in f)))
-
-(defn read-fetch [^ByteBuf in state f]
-  "Will return the accumelated result of f"
-  (try
-    (let [i (.readerIndex in)
-          size (.readInt in)
-          correlation-id (.readInt in)]
-      (read-array in state read-topic in f))
-    (finally
-      (ReferenceCountUtil/release in))))
-
 (defn write-offset-request-message [^ByteBuf buff {:keys [topics max-offsets] :or {max-offsets 10}}]
   "
 	OffsetRequest => ReplicaId [TopicName [Partition Time MaxNumberOfOffsets]]
@@ -279,20 +138,20 @@
           {:topic topic
            :partitions (let [partition-count (.readInt in)] ;read partition array count int
                          (doall
-                           (for [q (range partition-count)]
+                           (for [_ (range partition-count)]
                              {:partition (.readInt in)        ;read partition int
                               :error-code (.readShort in)     ;read error code short
                               :offsets
-                               (let [offset-count (.readInt in)]
-                                 (doall
-                                   (for [_ (range offset-count)]
-                                     (.readLong in))))}))  )     ;read offset long
+                              (let [offset-count (.readInt in)]
+                                (doall
+                                  (for [_ (range offset-count)]
+                                    (.readLong in))))}))  )     ;read offset long
            })))))
 
 (defn offset-response-decoder []
   "
    A handler that reads offset request responses
- 
+
    "
   (proxy [ReplayingDecoder]
          ;decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out)
@@ -313,11 +172,6 @@
 
   )
 
-(defn send-fetch [{:keys [client conf]} topics]
-  "topics must have format [[topic [{:partition 0} {:partition 1}...]] ... ]"
-  (write! client (fn [^ByteBuf buff]
-                   (write-fetch-request buff (merge conf {:topics topics})))))
-
 (defn create-offset-producer
   ([{:keys [host port]} conf]
    (create-offset-producer host port conf))
@@ -325,62 +179,28 @@
    (let [c (client host port (merge
                                ;;parameters that can be over written
                                {
-                                 :reuse-client true
-                                 :read-buff 100
-                                 }
+                                :reuse-client true
+                                :read-buff 100
+                                }
                                conf
                                ;parameters tha cannot be overwritten
                                {
-                                 :handlers [
-                                             offset-response-decoder
-                                             default-encoder
-                                             ]}))]
+                                :handlers [
+                                           offset-response-decoder
+                                           default-encoder
+                                           ]}))]
      {:client c :conf conf :broker {:host host :port port}})))
 
+(defn send-fetch [{:keys [client conf]} topics]
+  {:pre [client (coll? topics)]}
+  "Version2: send-fetch requires a kafka-clj.tcp client
+   topics must have format [[topic [{:partition 0} {:partition 1}...]] ... ]
 
-(defn copy-bytebuf [read-ch ^ByteBuf buff]
-  (>!! read-ch (.copy buff)))
+   Sends fetch request"
+  (tcp/write! client
+              (write-fetch-request (tcp/empty-byte-buff) (merge conf {:topics topics}))
+              :flush true))
 
-(defn close-fetch-producer [{:keys [client]}]
-  (if client
-    (close-all client)))
-
-(defn create-fetch-producer
-  ([{:keys [host port]} conf]
-   (create-fetch-producer host port conf))
-  ([host port conf]
-   (if (not (and host port))
-     (throw (RuntimeException. (str "A host and port must be supplied: host " host " port " port))))
-
-   (let [
-          ;read-group (NioEventLoopGroup. )
-          ;write-group read-group
-          c (client host port (merge
-                                ;;parameters that can be over written
-                                {
-                                  ;:read-group read-group
-                                  ;:write-group write-group
-                                  :reuse-client true
-                                  :read-buff 10
-                                  ;setting default options for big data fetch
-                                  ;5mb tcp receive buffer and tcp nodelay off
-                                  :channel-options [
-                                                    [ChannelOption/TCP_NODELAY true]
-                                                    ;[ALLOCATOR PooledByteBufAllocator/DEFAULT]
-                                                    ]
-                                  }
-                                conf
-                                ;parameters tha cannot be overwritten
-                                {
-                                  :decoder copy-bytebuf
-                                  :handlers [
-                                              #(LengthFieldBasedFrameDecoder. (Integer/MAX_VALUE) 0 4)
-                                              #(default-encoder true)
-                                              ]}))]
-     {:client c :conf conf :broker {:host host :port port}})))
-
-
-   
 
 
  

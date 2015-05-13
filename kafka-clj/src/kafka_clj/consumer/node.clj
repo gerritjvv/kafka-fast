@@ -15,12 +15,15 @@
   [f & args]
   (try
     (apply f args)
-    (catch Exception e (error e e))))
+    (catch Exception e (do
+                         (.printStackTrace e)
+                         (error e e)))))
 
 (defn shutdown-node!
   "Closes the consumer node"
   [{:keys [ org consumer msg-ch calc-work-thread] :as node}]
   {:pre [org consumer msg-ch calc-work-thread]}
+  (prn "close consumer: " consumer)
   (stop-fixdelay calc-work-thread)
   (safe-call close-consumer! consumer)
   (safe-call close-organiser! org)
@@ -117,7 +120,8 @@
         group-name (get-in conf [:redis-conf :group-name] "default")
         working-queue-name (str group-name "-kafka-working-queue/" host-name)
         work-queue-name (str group-name "-kafka-work-queue")
-        intermediate-conf (assoc conf :group-name group-name
+        intermediate-conf (assoc conf
+                                      :group-name group-name
                                       :work-queue work-queue-name
                                       :working-queue working-queue-name
                                       :error-queue (str group-name "-kafka-erorr-queue")
