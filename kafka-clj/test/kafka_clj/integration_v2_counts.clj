@@ -16,9 +16,11 @@
 (defn- uniq-name []
   (str (System/currentTimeMillis)))
 
+(defonce test-range (range 100))
+
 (defn- send-test-messages [c topic n]
   (dotimes [i n]
-    (send-msg c topic (.getBytes (str "my-test-message-" i)))))
+    (send-msg c topic (.getBytes (str (take (rand-int 100) test-range) i)))))
 
 (defn- setup-test-data [topic n]
   (send-test-messages @client-ref topic n))
@@ -31,7 +33,7 @@
       msgs)))
 
 (defonce test-topic (uniq-name))
-(defonce msg-count 1000)
+(defonce msg-count 10000)
 
 (with-state-changes
   [ (before :facts (do (reset! state-ref (startup-resources test-topic))

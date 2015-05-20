@@ -7,18 +7,37 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 
 import java.io.UnsupportedEncodingException;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Utility class to create
  */
 public class Fetch {
 
+    private static final AtomicLong counter = new AtomicLong(0);
+
+    /**
+     * Read the kafka fetch response
+     * @param buffer
+     * @param state State passed through to onMessage as onMessage.apply(state, message), note that this state is no pure and expected to be mutated by the onMessage.<br/>
+     *              It is handled in a thread safe manner inside this class.
+     * @param onMessage Function called when a message is found, is called with onMessage.apply(state, new Message(...)), or onMessage.apply(state, new FetchError(...))
+     * @return State is returned
+     * @throws UnsupportedEncodingException
+     */
     public static final Object readFetchResponse(ByteBuf buffer, Object state, IFn onMessage) throws UnsupportedEncodingException{
         int corrId = buffer.readInt();
         readTopicArray(buffer, state, onMessage);
         return state;
     }
 
+    /**
+     * Read [topic topic topic]
+     * @param buffer
+     * @param state
+     * @param onMessage Function called when a message is found
+     * @throws UnsupportedEncodingException
+     */
     public static final void readTopicArray(ByteBuf buffer, Object state, IFn onMessage) throws UnsupportedEncodingException{
         int topicLen = buffer.readInt();
         if(topicLen == 1){
@@ -29,11 +48,25 @@ public class Fetch {
         }
     }
 
+    /**
+     * Read a single topic from the topic array
+     * @param buffer
+     * @param state
+     * @param onMessage
+     * @throws UnsupportedEncodingException
+     */
     private static final void readTopic(ByteBuf buffer, Object state, IFn onMessage) throws UnsupportedEncodingException{
         String topicName = readShortString(buffer);
         readPartitionArray(topicName, buffer, state, onMessage);
     }
 
+    /**
+     * Read a partition array [partition, partition, partition]
+     * @param topicName
+     * @param buffer
+     * @param state
+     * @param onMessage
+     */
     private static final void readPartitionArray(String topicName, ByteBuf buffer, Object state, IFn onMessage){
         int partitionLen = buffer.readInt();
         if(partitionLen == 1){
@@ -44,6 +77,13 @@ public class Fetch {
         }
     }
 
+    /**
+     * Read a single partition partition-number:int, error-code:short, message-set-size:int...
+     * @param topicName
+     * @param buffer
+     * @param state
+     * @param onMessage
+     */
     private static final void readPartition(String topicName, ByteBuf buffer, Object state, IFn onMessage){
         int partition = buffer.readInt();
         int errorCode = buffer.readShort();
@@ -56,19 +96,37 @@ public class Fetch {
             readMessageSet(topicName, partition, buffer.readSlice(messageSetByteSize), state, onMessage);
     }
 
+    /**
+     * Read the contents of a message set, handles half sent messages gracefully
+     * @param topicName
+     * @param partition
+     * @param buffer
+     * @param state
+     * @param onMessage
+     */
     private static final void readMessageSet(String topicName, int partition, ByteBuf buffer, Object state, IFn onMessage) {
         while(buffer.readableBytes() > 12){
             long offset = buffer.readLong();
             int messageByteSize = buffer.readInt();
 
-            if (messageByteSize > 10 && buffer.readableBytes() > messageByteSize)
+            if (messageByteSize > 10 && buffer.readableBytes() >= messageByteSize)
                 readMessage(topicName, partition, offset, buffer.readSlice(messageByteSize), state, onMessage);
             else
                 break;
         }
     }
 
+    /**
+     * Read the message thats inside a message set, and any compressed messages are re-read as message sets by calling readMessageSet.
+     * @param topicName
+     * @param partition
+     * @param offset
+     * @param buffer
+     * @param state
+     * @param onMessage
+     */
     private static void readMessage(String topicName, int partition, long offset, ByteBuf buffer, Object state, IFn onMessage) {
+
         int crc = buffer.readInt();  //crc
         byte magic = buffer.readByte(); //magic byte
         int codec = buffer.readByte() & 0x07;
@@ -81,13 +139,17 @@ public class Fetch {
                 if(codec > 0){
                     byte[] deCompBts = Util.decompress(codec, bts);
                     readMessageSet(topicName, partition, Unpooled.wrappedBuffer(deCompBts), state, onMessage);
-                }else{
+                }else
                     onMessage.invoke(state, Message.create(topicName, partition, offset, bts));
-                }
             }
         }
     }
 
+    /**
+     * Helper method to ready a byte array the format expected is [len:int, bytes[len] ]
+     * @param buffer
+     * @return
+     */
     private static final byte[] readBytes(ByteBuf buffer){
         int len = buffer.readInt();
         if(len > 0 && buffer.readableBytes() >= len){
@@ -98,6 +160,12 @@ public class Fetch {
             return null;
     }
 
+    /**
+     * Read a short string of format [len:short, string[len]]
+     * @param buffer
+     * @return
+     * @throws UnsupportedEncodingException
+     */
     private static final String readShortString(ByteBuf buffer) throws UnsupportedEncodingException {
         int len = buffer.readShort();
         byte[] bts = new byte[len];
@@ -105,7 +173,11 @@ public class Fetch {
         return new String(bts, "UTF-8");
     }
 
-    public static final class Message implements ILookup{
+    /**
+     * This is the message passed into the onMessage calling code.<br/>
+     * It implements ILookup so can be used like (:topic msg), (:partition msg), (:offset msg), (:bts msg)
+     */
+    public static final class Message implements ILookup {
         private static final Keyword KW_TOPIC = Keyword.intern("topic");
         private static final Keyword KW_PARTITION = Keyword.intern("partition");
         private static final Keyword KW_OFFSET = Keyword.intern("offset");
@@ -186,6 +258,10 @@ public class Fetch {
         }
     }
 
+    /**
+     * Represents a fetch errors and implements ILookup so can be used as:<br/>
+     * (:topic error), (:partition error), (:error-code error)
+     */
     public static final class FetchError implements ILookup{
 
         private static final Keyword KW_ERROR_CODE = Keyword.intern("error-code");

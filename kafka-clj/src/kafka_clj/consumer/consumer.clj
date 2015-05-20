@@ -14,12 +14,15 @@
            (kafka_clj.util FetchState Fetch Fetch$Message Fetch$FetchError)
            (clojure.core.async.impl.channels ManyToManyChannel)
            (java.util NoSuchElementException)
-           (java.net SocketException)))
+           (java.net SocketException)
+           (java.util.concurrent.atomic AtomicLong)))
 
 (defprotocol IMsgEvent
   "Simplifies the logic of processing a FetchError and normal Message instance from a broker fetch response"
   (-msg-event [msg state] "Must return FetchState status can be :ok or :error"))
 
+
+(defonce ^AtomicLong counter (AtomicLong. 0))
 
 (defn ^FetchState fetch-state
   "Creates a mutable initial state"

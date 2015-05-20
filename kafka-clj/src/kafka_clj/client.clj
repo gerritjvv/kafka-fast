@@ -207,16 +207,13 @@
             (handle-async-topic-messages (assoc state :blacklisted-producers-ref (blacklist! (:blacklisted-producers-ref state) partition-rc)) topic msgs))))
       (handle-async-topic-messages (assoc state :blacklisted-producers-ref (blacklist! (:blacklisted-producers-ref state) partition-rc)) topic msgs))))
 
+
 (defn- ^ProducerState handle-async-topic-messages
   "Send messages from the same topic to a producer"
   [^ProducerState state topic msgs]
   (if-let [partition-rc (select-partition-rc state topic)]
     (send-data state partition-rc topic (mapv #(assoc % :partition (:id partition-rc)) msgs))
     (error-no-partition state topic msgs)))
-
-(defn- handle-async-messages [^ProducerState producer-state msgs]
-  (reduce (fn [state [topic topic-msgs]]
-            (handle-async-topic-messages state topic topic-msgs)) producer-state (group-by :topic msgs)))
 
 
 (defn- async-handler [^ExecutorService exec-service ^ProducerState producer-state msg-buff]
@@ -226,8 +223,8 @@
   ; send each separate topic to a different thread
   (futils/thread-seq
     (fn [msgs]
-      (doseq [[_ grouped-msgs] (group-by :topic msgs)]
-        (fthreads/submit exec-service #(handle-async-messages producer-state grouped-msgs))))
+      (doseq [[topic grouped-msgs] (group-by :topic msgs)]
+        (fthreads/submit exec-service #(handle-async-topic-messages producer-state topic grouped-msgs))))
     msg-buff))
 
 (defn create-connector
