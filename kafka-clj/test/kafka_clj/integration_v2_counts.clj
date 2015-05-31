@@ -37,7 +37,7 @@
 
 (with-state-changes
   [ (before :facts (do (reset! state-ref (startup-resources test-topic))
-                       (reset! client-ref (create-connector (get-in @state-ref [:kafka :brokers]) {:flush-on-write true}))
+                       (reset! client-ref (create-connector (get-in @state-ref [:kafka :brokers]) {:flush-on-write true :codec 2}))
                        (reset! node-ref (create-node!
                                           {:bootstrap-brokers (get-in @state-ref [:kafka :brokers])
                                            :redis-conf {:host "localhost"
