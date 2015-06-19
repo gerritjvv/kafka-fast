@@ -23,7 +23,6 @@
   "Closes the consumer node"
   [{:keys [ org consumer msg-ch calc-work-thread] :as node}]
   {:pre [org consumer msg-ch calc-work-thread]}
-  (prn "close consumer: " consumer)
   (stop-fixdelay calc-work-thread)
   (safe-call close-consumer! consumer)
   (safe-call close-organiser! org)

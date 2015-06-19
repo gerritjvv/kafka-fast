@@ -106,7 +106,6 @@
 (defn brpoplpush [^Redisson cmd ^String queue1 ^String queue2 ^long timeout]
   (let [q (.getQueue cmd queue1)]
     (when-let [v (pop-retry q timeout)]
-      ;(error "brpoplpush: add to " queue2 " v " v)
       (.add ^Queue (.getQueue cmd queue2) v)
       v)))
 

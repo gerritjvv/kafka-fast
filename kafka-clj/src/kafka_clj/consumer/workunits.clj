@@ -5,7 +5,8 @@
   kafka-clj.consumer.workunits
   (:require [clojure.tools.logging :refer [info debug]]
             [kafka-clj.redis.core :as redis])
-  (:import [java.net SocketTimeoutException]))
+  (:import [java.net SocketTimeoutException]
+           (java.util.concurrent.atomic AtomicBoolean)))
 
 (defn- safe-sleep
   "Util function that does not print an Interrupted exception but handles by setting the current thread to interrupt"
@@ -45,23 +46,24 @@
 
 (defn wait-on-work-unit!
   "Blocks on the redis queue till an item becomes availabe, at the same time the item is pushed to the working queue"
-  [redis-conn queue working-queue]
-  {:pre [redis-conn queue working-queue]}
+  [redis-conn queue working-queue shutdown-flag]
+  {:pre [redis-conn queue working-queue shutdown-flag]}
   (if-let [res (try                                         ;this command throws a SocketTimeoutException if the queue does not exist
                  (redis/wcar redis-conn                       ;we check for this condition and continue to block
                              (redis/brpoplpush redis-conn queue working-queue 1000))
                  (catch SocketTimeoutException e (do (safe-sleep 1000) (debug "Timeout on queue " queue " retry ") nil)))]
     res
-    (recur redis-conn queue working-queue)))
+    (when-not (.get ^AtomicBoolean shutdown-flag)
+      (recur redis-conn queue working-queue shutdown-flag))))
 
 
 (defn get-work-unit!
   "Wait for work to become available in the work queue
    Adds a :seen key to the work unit with the current milliseconds"
-  [{:keys [redis-conn work-queue working-queue]}]
+  [{:keys [redis-conn work-queue working-queue shutdown-flag]}]
   {:pre [redis-conn work-queue working-queue]}
   (let [ts (System/currentTimeMillis)
-        wu (wait-on-work-unit! redis-conn work-queue working-queue)
+        wu (wait-on-work-unit! redis-conn work-queue working-queue shutdown-flag)
         diff (- (System/currentTimeMillis) ts)]
     (if (> diff 1000)
       (info "Slow wait on work unit: took: " diff "ms"))

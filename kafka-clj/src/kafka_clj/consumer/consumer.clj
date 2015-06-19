@@ -15,7 +15,7 @@
            (clojure.core.async.impl.channels ManyToManyChannel)
            (java.util NoSuchElementException)
            (java.net SocketException)
-           (java.util.concurrent.atomic AtomicLong)))
+           (java.util.concurrent.atomic AtomicLong AtomicBoolean)))
 
 (defprotocol IMsgEvent
   "Simplifies the logic of processing a FetchError and normal Message instance from a broker fetch response"
@@ -68,26 +68,27 @@
   (fetch/send-fetch {:client conn :conf conf} [[topic [{:partition partition :offset offset}]]]))
 
 (defn- start-wu-publisher! [state publish-exec-service exec-service handler-f]
-  (threads/submit publish-exec-service
-                  (fn []
-                    (while (not (Thread/interrupted))
-                      (try
-                        (let [wu (wu-api/get-work-unit! state)]
-                          (if wu
-                            (threads/submit exec-service (fn []
-                                                           (handler-f wu)))))
-                        (catch InterruptedException ie (do
-                                                         (.printStackTrace ie)
-                                                         (.interrupt (Thread/currentThread))))
-                        (catch IllegalStateException e
-                          (.printStackTrace e)
-                          (error e e)
-                          (.interrupt (Thread/currentThread)))
-                        (catch InterruptedException ie nil)
-                        (catch Exception e (do
-                                             (.printStackTrace e)
-                                             (error e e)))))
-                    (info "EXIT publisher loop!!"))))
+  (let [^AtomicBoolean shutdown-flag (:shutdown-flag state)]
+    (threads/submit publish-exec-service
+                    (fn []
+                      (while (and (not (Thread/interrupted)) (not (.get shutdown-flag)))
+                        (try
+                          (let [wu (wu-api/get-work-unit! state)]
+                            (if wu
+                              (threads/submit exec-service (fn []
+                                                             (handler-f wu)))))
+                          (catch InterruptedException ie (do
+                                                           (.printStackTrace ie)
+                                                           (.interrupt (Thread/currentThread))))
+                          (catch IllegalStateException e
+                            (.printStackTrace e)
+                            (error e e)
+                            (.interrupt (Thread/currentThread)))
+                          (catch InterruptedException ie nil)
+                          (catch Exception e (do
+                                               (.printStackTrace e)
+                                               (error e e)))))
+                      (info "EXIT publisher loop!!")))))
 
 (defn- handle-msg-event
   "Monoid
@@ -157,6 +158,7 @@
 
   (io!
     (let [publish-exec-service (Executors/newSingleThreadExecutor)
+          shutdown-flag (AtomicBoolean. false)
           conn-pool (tcp/tcp-pool conf)
           consumer-threads (get conf :consumer-threads 2)
           exec-service (threads/create-exec-service consumer-threads)
@@ -166,10 +168,15 @@
           wu-processor (partial process-wu! state conn-pool delegate-f)]
 
 
-      (start-wu-publisher! state publish-exec-service exec-service wu-processor)
-      (assoc state :publish-exec-service publish-exec-service :exec-service exec-service :conn-pool conn-pool))))
+      (start-wu-publisher! (assoc state :shutdown-flag shutdown-flag)  publish-exec-service exec-service wu-processor)
+      (assoc state :publish-exec-service publish-exec-service :exec-service exec-service :conn-pool conn-pool :shutdown-flag shutdown-flag))))
 
-(defn close-consumer! [{:keys [publish-exec-service exec-service conn-pool]}]
+(defn close-consumer! [{:keys [publish-exec-service exec-service conn-pool ^AtomicBoolean shutdown-flag]}]
+  (.set shutdown-flag true)
+  (info "closing publish-exec-serivce")
   (threads/close! {:executor publish-exec-service} :timeout-ms 30000)
+  (info "closing exec-serivce")
   (threads/close! {:executor exec-service} :timeout-ms 30000)
-  (tcp/close-pool! conn-pool))
+  (info "closing conn-pool")
+  (tcp/close-pool! conn-pool)
+  (info "all consumer resources closed"))

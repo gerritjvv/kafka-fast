@@ -57,6 +57,8 @@
 
         ;allows us to wait till the work assignment has started
         (wait-on-work-assigned-flag (:org @node-ref) 30000)
+        (prn ">>>>>>>>>>>>>>>>>>> completed wait-on-work-assignment")
 
         (let [msgs (read-messages @node-ref)]
+          (prn "->>>>>>>>>>>>>> got messages " (count msgs))
           (count msgs) => msg-count)))

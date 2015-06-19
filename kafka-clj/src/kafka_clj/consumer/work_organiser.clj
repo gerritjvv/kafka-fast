@@ -114,7 +114,7 @@
     (try
       (while (and (not (Thread/interrupted)) (not (.get shutdown-flag)))
         (try
-          (when-let [work-units (wait-on-work-unit! redis-conn complete-queue working-queue)]
+          (when-let [work-units (wait-on-work-unit! redis-conn complete-queue working-queue shutdown-flag)]
             (redis/wcar
               redis-conn
               (if (map? work-units)

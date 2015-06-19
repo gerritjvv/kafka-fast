@@ -1,7 +1,8 @@
 (ns kafka-clj.redis.single
   (:import
     (org.apache.commons.pool2 ObjectPool PooledObjectFactory)
-    (org.apache.commons.pool2.impl GenericObjectPool DefaultPooledObject GenericKeyedObjectPool))
+    (org.apache.commons.pool2.impl GenericObjectPool DefaultPooledObject GenericKeyedObjectPool)
+    (java.util.concurrent TimeUnit))
   (:require [taoensso.carmine
              (protocol    :as protocol)
              (connections :as conns)
@@ -186,7 +187,8 @@
   (-lrange [_ q n limit]
     (car/lrange q n limit))
   (-brpoplpush [_ queue queue2 n]
-    (car/brpoplpush queue queue2 n))
+    ;n is milliseconds but redis only handles seconds
+    (car/brpoplpush queue queue2 (.toSeconds (TimeUnit/MILLISECONDS) (long n))))
 
   (-acquire-lock [{:keys [pool]} lock-name timeout-ms wait-ms]
     (_acquire-lock pool lock-name timeout-ms wait-ms))
