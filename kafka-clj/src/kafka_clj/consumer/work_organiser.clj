@@ -306,7 +306,7 @@
 (defn close-organiser!
   "Closes the organiser passed in"
   [{:keys [metadata-producers-ref work-complete-processor-future unblack-list-processor-future
-           redis-conn ^AtomicBoolean shutdown-flag ^CountDownLatch shutdown-confirm]}]
+           redis-conn ^AtomicBoolean shutdown-flag ^CountDownLatch shutdown-confirm]} & {:keys [close-redis] :or {close-redis true}}]
   {:pre [metadata-producers-ref redis-conn
          (instance? ExecutorService work-complete-processor-future)
          (instance? ExecutorService unblack-list-processor-future)]}
@@ -317,4 +317,6 @@
 
   (doseq [[_ producer] @metadata-producers-ref]
     (produce/shutdown @producer))
-  (redis/close! redis-conn))
+
+  (when close-redis
+    (redis/close! redis-conn)))

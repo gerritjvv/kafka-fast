@@ -21,11 +21,12 @@
 
 (defn shutdown-node!
   "Closes the consumer node"
-  [{:keys [ org consumer msg-ch calc-work-thread] :as node}]
-  {:pre [org consumer msg-ch calc-work-thread]}
+  [{:keys [ org consumer msg-ch calc-work-thread redis-conn] :as node}]
+  {:pre [org consumer msg-ch calc-work-thread redis-conn]}
   (stop-fixdelay calc-work-thread)
   (safe-call close-consumer! consumer)
-  (safe-call close-organiser! org)
+  (safe-call close-organiser! org :close-redis false)
+  (safe-call redis/close! redis-conn)
   (safe-call close! msg-ch))
 
 (defn- work-calculate-delegate!
@@ -112,7 +113,7 @@
   Note that unrecouverable work units like error-code 1 are added to the kafka-error-queue. This queue should be monitored.
   Returns a map {:conf intermediate-conf :topics-ref topics-ref :org org :msg-ch msg-ch :consumer consumer :calc-work-thread calc-work-thread :group-conn group-conn :group-name group-name}
   "
-  [conf topics & {:keys [error-handler] :or {error-handler (fn [& args])}}]
+  [conf topics & {:keys [error-handler redis-factory] :or {error-handler (fn [& args]) redis-factory redis/create}}]
   {:pre [conf topics (not-empty (:bootstrap-brokers conf)) (:redis-conf conf)]}
   (let [host-name (.getHostName (InetAddress/getLocalHost))
         topics-ref (ref (into #{} topics))
@@ -128,6 +129,7 @@
 
         work-unit-event-ch (chan (sliding-buffer 100))
         org (assoc (create-organiser! intermediate-conf) :error-handler error-handler)
+        ;;reuse the redis conn to avoid creating yet another
         redis-conn (:redis-conn org)
         msg-ch (chan 100)
         consumer (consume! (assoc intermediate-conf :redis-conn redis-conn :msg-ch msg-ch :work-unit-event-ch work-unit-event-ch))
@@ -139,7 +141,8 @@
     (copy-redis-queue redis-conn working-queue-name work-queue-name)
 
     {:conf intermediate-conf :topics-ref topics-ref :org org :msg-ch msg-ch :consumer consumer :calc-work-thread calc-work-thread
-      :group-name group-name
+     :group-name group-name
+     :redis-conn redis-conn
      :work-unit-event-ch work-unit-event-ch}))
 
 (defn add-topics!
@@ -199,17 +202,3 @@
 
 (defn create-kafka-node-service [conf topics]
   (->KafkaNodeService conf topics))
-
-(comment
-
-  (use 'kafka-clj.consumer.node :reload)
-  (require '[clojure.core.async :as async])
-  (def consumer-conf {:bootstrap-brokers [{:host "localhost" :port 9092}] :redis-conf {:host "localhost" :max-active 5 :timeout 1000 :group-name "test"} :conf {}})
-  (def node (create-node! consumer-conf ["ping"]))
-
-  (read-msg! node)
-  ;;for a single message
-  (def m (msg-seq! node))
-  ;;for a lazy sequence of messages
-
-  )
