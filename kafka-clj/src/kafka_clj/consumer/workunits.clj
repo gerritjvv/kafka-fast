@@ -50,7 +50,7 @@
   {:pre [redis-conn queue working-queue shutdown-flag]}
   (if-let [res (try                                         ;this command throws a SocketTimeoutException if the queue does not exist
                  (redis/wcar redis-conn                       ;we check for this condition and continue to block
-                             (redis/brpoplpush redis-conn queue working-queue 1000))
+                             (redis/brpoplpush redis-conn queue working-queue 5000))
                  (catch SocketTimeoutException e (do (safe-sleep 1000) (debug "Timeout on queue " queue " retry ") nil)))]
     res
     (when-not (.get ^AtomicBoolean shutdown-flag)

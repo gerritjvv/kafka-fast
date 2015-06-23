@@ -225,6 +225,8 @@
     (if (empty? partition-offsets)
       (throw (ex-info "No offset data found" {:topic topic :partition partition :offsets offsets})))
 
+    (debug "get-offset-from-meta: conf: " (keys conf) " use-earliest: " (:use-earliest conf) " partition-offsets " partition-offsets)
+
     (if (= true (:use-earliest conf)) (apply min partition-offsets) (apply max partition-offsets))))
 
 (defn- topic-partition? [m topic partition] (filter (fn [[t partition-data]] (and (= topic t) (not-empty (filter #(= (:partition %) partition) partition-data)) )) m))
