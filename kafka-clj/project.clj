@@ -1,4 +1,4 @@
-(defproject kafka-clj "3.0.7-SNAPSHOT"
+(defproject kafka-clj "3.0.8-SNAPSHOT"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -21,6 +21,8 @@
            ]
   :test-paths ["test" "test-java"]
   :dependencies [
+                 [org.clojars.runa/conjure "2.1.3" :scope "test"]
+
                  [com.taoensso/carmine "2.7.0"]
                  [redis.clients/jedis "2.6.2"]
                  [org.redisson/redisson "1.2.1"]

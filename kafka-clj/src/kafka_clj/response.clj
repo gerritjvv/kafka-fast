@@ -2,11 +2,9 @@
   (:require [clojure.tools.logging :refer [info error]]
             [kafka-clj.buff-utils :refer [read-short-string]])
   (:import
-    [io.netty.handler.codec ByteToMessageDecoder ReplayingDecoder]
+    [io.netty.handler.codec ReplayingDecoder]
     [io.netty.buffer ByteBuf]
     [java.util List]
-    [kafka_clj.util SafeReplayingDecoder ProduceStates]
-    [java.util.concurrent.atomic AtomicInteger AtomicReference]
     (java.io DataInputStream)))
 
 (defrecord ResponseEnd [])
@@ -15,35 +13,36 @@
 (defn error? [error-code]
   (> error-code 0))
 
-(defonce ^:constant error-mapping {
-	                        0 "NoError"
-	                        -1 "Unknown"
-	                        1 "OffsetOutOfRange"
-	                        2 "InvalidMessage"
-	                        3 "UnknownTopicOrPartition"
-	                        4 "InvalidMessageSize"
-	                        5 "LeaderNotAvailable"
-	                        6 "NotLeaderForPartition"
-	                        7 "RequestTimedOut"
-	                        8 "BrokerNotAvailable"
-	                        9 "ReplicaNotAvailable"
-	                        10 "MessageSizeTooLarge"
-	                        11 "StaleControllerEpochCode"
-	                        12 "OffsetMetadataTooLargeCode"
-	                        })
+(comment
+  (defonce ^:constant error-mapping {
+                                     0 "NoError"
+                                     -1 "Unknown"
+                                     1 "OffsetOutOfRange"
+                                     2 "InvalidMessage"
+                                     3 "UnknownTopicOrPartition"
+                                     4 "InvalidMessageSize"
+                                     5 "LeaderNotAvailable"
+                                     6 "NotLeaderForPartition"
+                                     7 "RequestTimedOut"
+                                     8 "BrokerNotAvailable"
+                                     9 "ReplicaNotAvailable"
+                                     10 "MessageSizeTooLarge"
+                                     11 "StaleControllerEpochCode"
+                                     12 "OffsetMetadataTooLargeCode"
+                                     }))
 
 (defn read-metadata-response [^ByteBuf in]
-  (let [size (.readInt in)                     ;request size
+  (let [_ (.readInt in)                        ;request size
         correlation-id (.readInt in)           ;correlation id
         broker-count (.readInt in)             ;broker array len
         brokers   (doall 
-	                  (for [i (range broker-count)]
+	                  (for [_ (range broker-count)]
 	                    {:node-id (.readInt in)
 	                     :host (read-short-string in)
 	                     :port (.readInt in)}))
         topic-metadata-count (.readInt in)
         topics (doall
-                 (for [i (range topic-metadata-count)]
+                 (for [_ (range topic-metadata-count)]
                    (let [error-code (.readShort in) 
                          topic (read-short-string in)]
 	                   (if topic
@@ -52,13 +51,13 @@
 		                    :partitions
 		                                (let [partition-metadata-count (.readInt in)]
 		                                 (doall 
-		                                   (for [i (range partition-metadata-count)]
+		                                   (for [_ (range partition-metadata-count)]
 		                                    {:partition-error-code (.readShort in)
 		                                     :partition-id (.readInt in)
 		                                     :leader (.readInt in)
 		                                     :replicas  
-		                                               (doall (for [i (range (.readInt in))] (.readInt in)))
-		                                     :isr      (doall (for [i (range (.readInt in))] (.readInt in)))})))
+		                                               (doall (for [_ (range (.readInt in))] (.readInt in)))
+		                                     :isr      (doall (for [_ (range (.readInt in))] (.readInt in)))})))
 		                               }
                          {:error-code error-code}))))]
            {:correlation-id correlation-id :brokers brokers :topics topics}))
@@ -69,13 +68,12 @@
   []
   (proxy [ReplayingDecoder]
     []
-    (decode [ctx ^ByteBuf in ^List out] 
+    (decode [_ ^ByteBuf in ^List out]
             ;(info "read metadata response")
             (try
              (let [resp (read-metadata-response in)]
 			         (.add out resp))
-             (catch Exception e (error e e)))
-        )))
+             (catch Exception e (error e e))))))
 			        
 			        
 
@@ -99,10 +97,11 @@
 (defn lazy-array-read [len f] (repeatedly len f))
 
 (defn inpartition->kafkarespseq [in corrid topic-name]
-  (->ProduceResponse corrid topic-name
-                     (read-int in)                          ;partition
-                     (read-short2 in)                        ;error-code
-                     (read-long in)))                       ;offset
+  (->ProduceResponse corrid
+                     topic-name
+                     (long (read-int in))                          ;partition
+                     (long (read-short2 in))                       ;error-code
+                     (long (read-long in))))                       ;offset
 
 (defn intopic->kafkarespseq [in corrid]
   (let [topic-name (read-short-string2 in)

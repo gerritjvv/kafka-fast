@@ -129,18 +129,24 @@
 
 (defn- null-safe-deref [d] (when d @d))
 
-(defn- kafka-response
+(defn kafka-response
   "Handles the response input stream for each producer.
    Takes the state and resp:ProduceResponse.
    If the error-code > 0 and a send-cache is in state, the messages are retrieved from the persist and if still in persist,
    the messages are sent using handle-async-topic-messages."
   [^ProducerState state resp]
-  (let [{:keys [error-code topic partition correlation-id]} resp]
-    (if (> error-code 0)
-      (if (:send-cache state)
-        (when-let [msg (persist/get-sent-message state topic partition correlation-id)]
-          (handle-async-topic-messages state topic (if (coll? msg) msg [msg])))
-        (error "Message received event though acks < 1 msg " resp)))))
+  (let [error-code (:error-code resp)                       ;;dont use {:keys []} here some weirdness was seend that caused
+        topic (:topic resp)                                 ;;java.lang.IllegalArgumentException: No value supplied for key: kafka_clj.response.ProduceResponse
+        partition (:partition resp)                         ;;unrolling creates a hashmap and for some reason doesn't get the supplied keys
+        correlation-id (:correlation-id resp)]
+
+    (if (and (number? error-code) topic partition)
+      (when (> (long error-code) 0)
+        (if (:send-cache state)
+          (when-let [msg (persist/get-sent-message state topic partition correlation-id)]
+            (handle-async-topic-messages state topic (if (coll? msg) msg [msg])))
+          (error (str "Message received event though acks < 1 msg " resp))))
+      (error (str "Message cannot contain nil values topic " topic " partition " partition " error-code " error-code)))))
 
 (defn- create-producer
   "Create a producer instance and add a read-async-loop instance that will listen
@@ -154,7 +160,8 @@
                               (let [^DataInputStream in (DataInputStream. (ByteArrayInputStream. bts))]
                                 (try
                                   (doseq [resp (kafka-resp/in->kafkarespseq in)]
-                                    (kafka-response state resp))
+                                    (when resp
+                                      (kafka-response state resp)))
                                   (finally
                                     (.close in)))))))
     producer))
@@ -208,7 +215,7 @@
       (handle-async-topic-messages (assoc state :blacklisted-producers-ref (blacklist! (:blacklisted-producers-ref state) partition-rc)) topic msgs))))
 
 
-(defn- ^ProducerState handle-async-topic-messages
+(defn handle-async-topic-messages
   "Send messages from the same topic to a producer"
   [^ProducerState state topic msgs]
   (if-let [partition-rc (select-partition-rc state topic)]
