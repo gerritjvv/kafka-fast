@@ -13,7 +13,7 @@
             [clj-tuple :refer [tuple]]
             [clojure.core.async :as async])
   (:import [java.util.concurrent.atomic AtomicLong]
-           (java.util.concurrent Executors ScheduledExecutorService TimeUnit ThreadFactory ExecutorService)
+           (java.util.concurrent Executors ScheduledExecutorService TimeUnit ThreadFactory ExecutorService CountDownLatch)
            (java.io IOException ByteArrayInputStream DataInputStream)))
 
 (defonce ^Long PRODUCER_ERROR_BACKOFF_DEFAULT 2000)
@@ -59,7 +59,9 @@
       (throw (RuntimeException. (str "No healthy brokers available for topic " topic " " connector))))))
 
 (defn close [{{:keys [^AtomicLong activity-counter metadata-producers-ref producers-cache-ref scheduled-service retry-cache]} :state
-              msg-ch :msg-ch}]
+              msg-ch :msg-ch
+              persist-delay-thread :persist-delay-thread
+              async-latch :async-latch}]
   "Close all producers and channels created for the connected"
   ;only close when all activity has ceased
   ;close
@@ -77,10 +79,15 @@
 
   (.shutdownNow ^ScheduledExecutorService scheduled-service)
 
-  (doseq [[k producer] @metadata-producers-ref]
+  (doseq [[_ producer] @metadata-producers-ref]
     (try
       (produce/shutdown @producer)
       (catch Exception e (error e e))))
+
+  ;;before we close the retry-cache we need to close
+  ;; persist-delay-thread and wait for async-latch
+  (async/close! persist-delay-thread)
+  (.await ^CountDownLatch async-latch 5000 TimeUnit/MILLISECONDS)
 
   (persist/close-retry-cache retry-cache))
 
@@ -224,15 +231,18 @@
     (error-no-partition state topic msgs)))
 
 
-(defn- async-handler [^ExecutorService exec-service ^ProducerState producer-state msg-buff]
+(defn- async-handler
+  "Return a thread-seq, call countdown on the latch when the async thread closes"
+  [^ExecutorService exec-service ^ProducerState producer-state msg-buff ^CountDownLatch latch]
 
   ;Instead of async-ctx do
   ; loop on msg-buff, for each group of mssages do group-by
   ; send each separate topic to a different thread
-  (futils/thread-seq
+  (futils/thread-seq2
     (fn [msgs]
       (doseq [[topic grouped-msgs] (group-by :topic msgs)]
         (fthreads/submit exec-service #(handle-async-topic-messages producer-state topic grouped-msgs))))
+    (fn [] (.countDown latch))
     msg-buff))
 
 (defn create-connector
@@ -269,6 +279,8 @@
         retry-cache (persist/create-retry-cache conf)
 
         activity-counter (AtomicLong. 0)
+        async-latch (CountDownLatch. 1)
+
         state {
                :activity-counter activity-counter
                :retry-cache retry-cache
@@ -298,20 +310,22 @@
 
                   ;;every 5 seconds check for any data in the retry cache and resend the messages
         connector2 (assoc connector :msg-ch msg-ch :metadata-error-ch metadata-error-ch :update-metadata update-metadata)
+
+        persist-delay-thread (futils/fixdelay-thread 1000
+                                                     (try
+                                                       (do
+                                                         (doseq [retry-msg (persist/retry-cache-seq connector)]
+                                                           (do (warn "Retry messages for " (:topic retry-msg) " " (:key-val retry-msg))
+                                                               (if (coll? (:v retry-msg))
+                                                                 (doseq [bts (retry-msg-bts-seq retry-msg)]
+                                                                   (send-msg connector2 (:topic retry-msg) bts))
+                                                                 (warn "Invalid retry value " retry-msg))
+
+                                                               (persist/delete-from-retry-cache connector (:key-val retry-msg)))))
+                                                       (catch Exception e (error e e))))
+
         ]
-
-    (futils/fixdelay-thread 1000
-                            (try
-                              (do
-                                (doseq [retry-msg (persist/retry-cache-seq connector)]
-                                  (do (warn "Retry messages for " (:topic retry-msg) " " (:key-val retry-msg))
-                                      (if (coll? (:v retry-msg))
-                                        (doseq [bts (retry-msg-bts-seq retry-msg)]
-                                          (send-msg connector2 (:topic retry-msg) bts))
-                                        (warn "Invalid retry value " retry-msg))
-
-                                      (persist/delete-from-retry-cache connector (:key-val retry-msg)))))
-                              (catch Exception e (error e e))))
+    ;;important close needs to call close! on msg-buff
     (async-handler async-ctx
                    (->ProducerState conf
                                     activity-counter
@@ -322,11 +336,17 @@
                                     blacklisted-producers-ref
                                     brokers-metadata-ref
                                     producer-error-ch)
-                   msg-buff)
+                   msg-buff
+                   async-latch)
+
+
     (.scheduleWithFixedDelay scheduled-service ^Runnable (fn [] (try (update-metadata) (catch Exception e (do (error e e)
                                                                                                               (async/>!! metadata-error-ch e))))) 0 10000 TimeUnit/MILLISECONDS)
 
-    connector2))
+    (->
+      connector2
+      (assoc :persist-delay-thread persist-delay-thread)
+      (assoc :async-latch async-latch))))
  
 (defrecord KafkaClientService [brokers conf client]
   component/Lifecycle
