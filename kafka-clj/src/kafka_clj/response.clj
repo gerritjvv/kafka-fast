@@ -97,19 +97,28 @@
 (defn lazy-array-read [len f] (repeatedly len f))
 
 (defn inpartition->kafkarespseq [in corrid topic-name]
-  (->ProduceResponse corrid
-                     topic-name
-                     (long (read-int in))                          ;partition
-                     (long (read-short2 in))                       ;error-code
-                     (long (read-long in))))                       ;offset
+  (let [resp (->ProduceResponse corrid
+                                topic-name
+                                (long (read-int in))        ;partition
+                                (long (read-short2 in))     ;error-code
+                                (long (read-long in)))      ;offset
+        ]
+    resp))
 
 (defn intopic->kafkarespseq [in corrid]
   (let [topic-name (read-short-string2 in)
         partition-len (read-int in)]
-    (lazy-array-read partition-len #(inpartition->kafkarespseq in corrid topic-name))))
+    ;;need to run doall to force strinct reading of the stream
+    ;;otherwise flatten can cause out of order reads
+    (doall (lazy-array-read partition-len #(inpartition->kafkarespseq in corrid topic-name)))))
 
-(defn in->kafkarespseq [^DataInputStream in]
+(defn in->kafkarespseq
+  "Return kafka responses with format e.g
+   '(kafka_clj.response.ProduceResponse{:correlation-id 1, :topic test1, :partition 0, :error-code 0, :offset 28147497671196680} ..)
+  "
+  [^DataInputStream in]
   (let [corrid (read-int in)
         topic-len (read-int in)]
-    (lazy-array-read topic-len #(intopic->kafkarespseq in corrid))))
+    ;;need to use doall here otherwise flatten can cause out of order reads
+    (flatten (doall (lazy-array-read topic-len #(intopic->kafkarespseq in corrid))))))
 

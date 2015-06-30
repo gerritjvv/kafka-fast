@@ -90,11 +90,13 @@
       [(:bts msg)]
       (map :bts msg))))
 
-(defn producer-error-ch [connector]
-  (get-in connector [:state :producer-error-ch]))
+(comment
 
-(defn get-metadata-error-ch [connector]
-  (:metadata-error-ch connector))
+  (defn producer-error-ch [connector]
+    (get-in connector [:state :producer-error-ch]))
+
+  (defn get-metadata-error-ch [connector]
+    (:metadata-error-ch connector)))
 
 (defn- blacklist!
   "Add the host+port to the blacklisted-producers-ref and returns the ref"
@@ -146,7 +148,7 @@
           (when-let [msg (persist/get-sent-message state topic partition correlation-id)]
             (handle-async-topic-messages state topic (if (coll? msg) msg [msg])))
           (error (str "Message received event though acks < 1 msg " resp))))
-      (error (str "Message cannot contain nil values topic " topic " partition " partition " error-code " error-code)))))
+      (error (str "Message cannot contain nil values topic " topic " partition " partition " error-code " error-code " resp: " resp " keys " (keys resp))))))
 
 (defn- create-producer
   "Create a producer instance and add a read-async-loop instance that will listen
@@ -160,8 +162,7 @@
                               (let [^DataInputStream in (DataInputStream. (ByteArrayInputStream. bts))]
                                 (try
                                   (doseq [resp (kafka-resp/in->kafkarespseq in)]
-                                    (when resp
-                                      (kafka-response state resp)))
+                                    (kafka-response state resp))
                                   (finally
                                     (.close in)))))))
     producer))

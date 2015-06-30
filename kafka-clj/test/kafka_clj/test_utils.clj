@@ -53,3 +53,4 @@
 (defn shutdown-resources [{:keys [kafka redis]}]
   (shutdown-kafka kafka)
   (shutdown-redis redis))
+
