@@ -97,13 +97,12 @@
       [(:bts msg)]
       (map :bts msg))))
 
-(comment
 
-  (defn producer-error-ch [connector]
-    (get-in connector [:state :producer-error-ch]))
+(defn producer-error-ch [connector]
+  (get-in connector [:state :producer-error-ch]))
 
-  (defn get-metadata-error-ch [connector]
-    (:metadata-error-ch connector)))
+(defn get-metadata-error-ch [connector]
+  (:metadata-error-ch connector))
 
 (defn- blacklist!
   "Add the host+port to the blacklisted-producers-ref and returns the ref"
