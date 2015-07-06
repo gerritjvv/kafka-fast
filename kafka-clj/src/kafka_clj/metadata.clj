@@ -129,6 +129,7 @@
   (when r
     (instance? IDeref r)))
 
+;1
 (defn get-metadata! [{:keys [metadata-producers-ref blacklisted-metadata-producers-ref]} conf]
   {:pre [(ref? metadata-producers-ref) (ref? blacklisted-metadata-producers-ref)]}
   (iterate-metadata-producers! metadata-producers-ref blacklisted-metadata-producers-ref conf))

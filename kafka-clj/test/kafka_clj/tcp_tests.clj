@@ -23,23 +23,27 @@
   [(before :facts (start-test-facts!))
    (after  :facts (stop-test-facts!))]
 
-  (fact "Send byte array data"
-        (let [data (promise)
-              client (tcp/tcp-client "localhost" 7009)
-              f (tcp/read-async-loop! client (fn [v] (deliver data (String. ^"[B" v))))]
+  (comment
+    (fact "Send byte array data"
+          (let [data (promise)
+                client (tcp/tcp-client "localhost" 7009)
+                f (tcp/read-async-loop! client (fn [v] (deliver data (String. ^"[B" v))))]
 
-          (tcp/write! client (.getBytes "hi") :flush true)
-          @data => "hi"
+            (tcp/write! client (.getBytes "hi") :flush true)
+            @data => "hi"
 
-          (tcp/close! client)))
+            (tcp/close! client)))
 
-  (fact "Test Pool Send byte array data"
-        (let [data (promise)
-              pool (tcp/tcp-pool {:max-total 2})
-              client (tcp/borrow pool "localhost" 7009)
-              f (tcp/read-async-loop! client (fn [v] (deliver data (String. ^"[B" v))))]
+    (fact "Test Pool Send byte array data"
+          (let [data (promise)
+                pool (tcp/tcp-pool {:max-total 2})
+                client (tcp/borrow pool "localhost" 7009)
+                f (tcp/read-async-loop! client (fn [v] (deliver data (String. ^"[B" v))))]
 
-          (tcp/write! client (.getBytes "hi") :flush true)
-          @data => "hi"
-          (tcp/release pool "localhost" 7009 client)
-          (tcp/close-pool! client))))
+            (tcp/write! client (.getBytes "hi") :flush true)
+            @data => "hi"
+            (tcp/release pool "localhost" 7009 client)
+            (tcp/close-pool! client)))
+
+    )
+  )

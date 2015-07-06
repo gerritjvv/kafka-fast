@@ -1,4 +1,4 @@
-(defproject kafka-clj "3.1.2-SNAPSHOT"
+(defproject kafka-clj "3.1.3-SNAPSHOT"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -15,7 +15,7 @@
   :java-source-paths ["java"]
   :jvm-opts ["-Xmx3g"]
   :plugins [
-         [lein-rpm "0.0.5"] [lein-midje "3.0.1"] [lein-marginalia "0.7.1"]
+         [lein-rpm "0.0.5"] [lein-midje "3.1.1"] [lein-marginalia "0.7.1"]
 	       [lein-cloverage "1.0.2"]
          [lein-kibit "0.0.8"] [no-man-is-an-island/lein-eclipse "2.0.0"]
            ]
@@ -23,7 +23,7 @@
   :dependencies [
                  [org.clojars.runa/conjure "2.1.3" :scope "test"]
 
-                 [com.taoensso/carmine "2.7.0"]
+                 [com.taoensso/carmine "2.7.0" :exclusions [org.clojure/clojure]]
                  [redis.clients/jedis "2.6.2"]
                  [org.redisson/redisson "1.2.1"]
                  [org.apache.commons/commons-pool2 "2.2"]

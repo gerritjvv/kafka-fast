@@ -326,6 +326,14 @@ The consumer will print a warning log entry when ever the wasted messages is mor
 
 For configuration options with the Java API see the ```kakfa_clj.core.KafkaConf``` class
 
+# Bootstrap errors
+
+If when a node or connector is created no metadata can be retreived from the kafka brokers, and exception  
+is thrown, this generally signals an error with the bootstrap metadata brokers.  
+
+Note: on clean clusters where there are no topics created yet, this might throw a false exception for consumers.
+
+
 # Produce Error handling and persistence
 
 When sending messages the broker(s) may respond with and error or the broker itself may be down.

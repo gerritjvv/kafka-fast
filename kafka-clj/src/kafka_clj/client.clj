@@ -97,10 +97,11 @@
       [(:bts msg)]
       (map :bts msg))))
 
-
+;;public function do not remove
 (defn producer-error-ch [connector]
   (get-in connector [:state :producer-error-ch]))
 
+;;public function do not remove
 (defn get-metadata-error-ch [connector]
   (:metadata-error-ch connector))
 
@@ -244,6 +245,15 @@
     (fn [] (.countDown latch))
     msg-buff))
 
+
+(defn- exception-if-nil!
+  "Helper function that throws an exception if the metadata passed in is nil"
+  [bootstrap-brokers metadata]
+  (if metadata
+    metadata
+    (throw (ex-info (str "No metadata could be found from any of the bootstrap brokers provided " bootstrap-brokers) {:type :metadata-exception
+                                                                                                                      :bootstrap-brokers bootstrap-brokers}))))
+
 (defn create-connector
   "Creates a connector for sending to kafka
    All sends are asynchronous, unrecoverable errors are saved to a local retry cache and
@@ -291,7 +301,7 @@
                :scheduled-service scheduled-service
                :conf (assoc conf :batch-fail-message-over-limit batch-fail-message-over-limit :batch-byte-limit batch-byte-limit :topic-auto-create topic-auto-create)}
 
-        brokers-metadata-ref (ref (meta/get-metadata! state conf))
+        brokers-metadata-ref (ref (exception-if-nil! bootstrap-brokers (meta/get-metadata! state conf)))
 
         update-metadata (fn []
                           (if-let [metadata (meta/get-metadata! state conf)]
@@ -324,6 +334,7 @@
                                                        (catch Exception e (error e e))))
 
         ]
+
     ;;important close needs to call close! on msg-buff
     (async-handler async-ctx
                    (->ProducerState conf

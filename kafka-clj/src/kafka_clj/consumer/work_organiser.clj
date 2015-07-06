@@ -30,6 +30,7 @@
 
 (declare get-offset-from-meta)
 (declare get-broker-from-meta)
+(declare close-organiser!)
 
 (defn- ^Long _to-int [s]
   (try
@@ -65,8 +66,8 @@
       (redis/lpush redis-conn work-queue (assoc sorted-wu :producer broker))
       state)
     (catch Exception e (do
-                        (error e e)
-                        (redis/lpush redis-conn work-queue (into (sorted-map) w-unit))))))
+                         (error e e)
+                         (redis/lpush redis-conn work-queue (into (sorted-map) w-unit))))))
 
 (defn- ensure-unique-id [w-unit]
   ;function for debug purposes
@@ -83,8 +84,8 @@
         offset-read (to-int (:offset-read resp-data))]
     (if (< offset-read (to-int offset))
       (do
-          (info "Pushing zero read work-unit  " w-unit " sending to recalc")
-          (work-complete-fail! state sorted-wu))
+        (info "Pushing zero read work-unit  " w-unit " sending to recalc")
+        (work-complete-fail! state sorted-wu))
       (let [new-offset (inc offset-read)
             diff (- (+ (to-int offset) (to-int len)) new-offset)]
         (if (> diff 0)                                      ;if any offsets left, send work to work-queue with :offset = :offset-read :len diff
@@ -213,8 +214,8 @@
               ts (System/currentTimeMillis)]
           (redis/wcar redis-conn
                       ;we must use sorted-map here otherwise removing the wu will not be possible due to serialization with arbritary order of keys
-                    (redis/lpush* redis-conn work-queue (map #(assoc (into (sorted-map) %) :producer broker :ts ts) work-units))
-                    (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) max-offset))
+                      (redis/lpush* redis-conn work-queue (map #(assoc (into (sorted-map) %) :producer broker :ts ts) work-units))
+                      (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) max-offset))
           )))))
 
 (defn get-offset-from-meta [{:keys [conf] :as state} topic partition]
@@ -229,7 +230,7 @@
 
     (if (= true (:use-earliest conf)) (apply min partition-offsets) (apply max partition-offsets))))
 
-(defn- topic-partition? [m topic partition] (filter (fn [[t partition-data]] (and (= topic t) (not-empty (filter #(= (:partition %) partition) partition-data)) )) m))
+(defn- topic-partition? [m topic partition] (filter (fn [[t partition-data]] (and (= topic t) (not-empty (filter #(= (:partition %) partition) partition-data)))) m))
 
 (defn get-broker-from-meta [{:keys [conf] :as state} topic partition & {:keys [retry-count] :or {retry-count 0}}]
   (let [meta (meta/get-metadata! state conf)
@@ -272,7 +273,7 @@
 
 (defn create-organiser!
   "Create a organiser state that should be passed to all the functions were state is required in this namespace"
-  [{:keys [bootstrap-brokers work-queue working-queue complete-queue redis-conf redis-factory conf] :or {redis-factory redis/create}  :as state}]
+  [{:keys [bootstrap-brokers work-queue working-queue complete-queue redis-conf redis-factory conf] :or {redis-factory redis/create} :as state}]
   {:pre [work-queue working-queue complete-queue
          bootstrap-brokers (> (count bootstrap-brokers) 0) (-> bootstrap-brokers first :host) (-> bootstrap-brokers first :port)]}
 
@@ -286,11 +287,19 @@
                                         :redis-conn redis-conn :offset-producers (ref {}) :shutdown-flag shutdown-flag :shutdown-confirm shutdown-confirm)
         work-complete-processor-future (start-work-complete-processor! intermediate-state)
         unblack-list-processor-future (start-metadata-unblacklist-processor! metadata-producers-ref blacklisted-metadata-producers-ref conf)
-        ]
-    (assoc intermediate-state
-      :unblack-list-processor-future unblack-list-processor-future
-      :work-assigned-flag (atom 0)
-      :work-complete-processor-future work-complete-processor-future)))
+        state (assoc intermediate-state
+                :unblack-list-processor-future unblack-list-processor-future
+                :work-assigned-flag (atom 0)
+                :work-complete-processor-future work-complete-processor-future)]
+
+    ;;if no metadata throw an exception and close the organiser
+    (when (nil? (meta/get-metadata! state conf))
+      (try
+        (close-organiser! state)
+        (catch Exception e (error e e)))
+      (throw (ex-info (str "No metadata could be found from any of the bootstrap brokers provided " bootstrap-brokers) {:type              :metadata-exception
+                                                                                                                        :bootstrap-brokers bootstrap-brokers})))
+    state))
 
 
 (defn wait-on-work-assigned-flag [{:keys [work-assigned-flag]} timeout-ms]
@@ -301,9 +310,9 @@
         -1
         (do
           ;(prn "waiting on work-assigned-flag: " @work-assigned-flag)
-           (Thread/sleep 1000)
+          (Thread/sleep 1000)
 
-            (recur (System/currentTimeMillis)))))))
+          (recur (System/currentTimeMillis)))))))
 
 (defn close-organiser!
   "Closes the organiser passed in"
@@ -318,7 +327,8 @@
   (.shutdown ^ExecutorService work-complete-processor-future)
 
   (doseq [[_ producer] @metadata-producers-ref]
-    (produce/shutdown @producer))
+    (when (realized? producer)                              ;only close a producer if it was realised
+      (produce/shutdown @producer)))
 
   (when close-redis
     (redis/close! redis-conn)))

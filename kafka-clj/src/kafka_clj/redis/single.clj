@@ -12,10 +12,15 @@
             [clojure.tools.logging :refer [info]]))
 
 
+(defn nil-safe [v default]
+  (if (nil? v) default v))
 
-(defn- make-connection-factory [{:keys [host port timeout] :or {host "localhost" port 6379 timeout 300}}]
+(defn- make-connection-factory [{:keys [host port timeout]}]
   (reify PooledObjectFactory
-    (makeObject      [_ ] (DefaultPooledObject. (conns/make-new-connection {:host host :port port :timeout timeout})))
+    (makeObject      [_ ]
+      (DefaultPooledObject. (conns/make-new-connection {:host (nil-safe host "localhost")
+                                                        :port (nil-safe port 6379)
+                                                        :timeout (nil-safe timeout 300)})))
     (activateObject  [_ pooled-obj])
     (validateObject  [_ pooled-obj] (let [conn (.getObject pooled-obj)]
                                       (conns/conn-alive? conn)))
