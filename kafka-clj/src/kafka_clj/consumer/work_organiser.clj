@@ -254,7 +254,6 @@
           offsets (cutil/get-broker-offsets state meta topics conf)]
 
       (doseq [[broker topic-data] offsets]
-
         (doseq [[topic offset-data] topic-data]
           (try
             ;we map :offset to max of :offset and :all-offets

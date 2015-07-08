@@ -1,6 +1,7 @@
 /target
 /classes
 /checkouts
+**/.DS_Store
 pom.xml
 pom.xml.asc
 *.jar

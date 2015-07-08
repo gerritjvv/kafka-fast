@@ -58,7 +58,11 @@
                    (for [[broker v] by-broker]
                      ;here we have data {{:host "localhost", :port 1} [[0 {:host "localhost", :port 1}] [1 {:host "localhost", :port 1}]], {:host "abc", :port 1} [[2 {:host "abc", :port 1}]]}
                      ;doing map first v gives the partitions for a broker
-                     (let [offset-producer (get-create-offset-producer offset-producers broker conf)
-                           offsets-response (get-offsets offset-producer topic (map first v))]
-                       ;(info "offsets: " v)
-                       [broker (transform-offsets topic offsets-response conf)])))))))
+                     (try
+                       (let [offset-producer (get-create-offset-producer offset-producers broker conf)
+                             offsets-response (get-offsets offset-producer topic (map first v))]
+                         ;(info "offsets: " v)
+                         [broker (transform-offsets topic offsets-response conf)])
+                       (catch Exception e (do
+                                            (error e e)
+                                            [broker nil])))))))))
