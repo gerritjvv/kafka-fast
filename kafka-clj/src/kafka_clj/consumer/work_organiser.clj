@@ -201,7 +201,6 @@
                 (map (partial add-offsets! state topic) offset-data))
 
         consume-step2 (if consume-step consume-step (get conf :consume-step 100000))]
-
     (doseq [{:keys [offset partition saved-offset]} offset-data2]
       (swap! work-assigned-flag inc)
       ;w-units
@@ -212,6 +211,7 @@
       (when-let [work-units (calculate-work-units broker topic partition offset saved-offset consume-step2)]
         (let [max-offset (apply max (map #(+ ^Long (:offset %) ^Long (:len %)) work-units))
               ts (System/currentTimeMillis)]
+          (info "123: add-workunits: " work-units)
           (redis/wcar redis-conn
                       ;we must use sorted-map here otherwise removing the wu will not be possible due to serialization with arbritary order of keys
                       (redis/lpush* redis-conn work-queue (map #(assoc (into (sorted-map) %) :producer broker :ts ts) work-units))
@@ -252,6 +252,9 @@
   (try
     (let [meta (meta/get-metadata! state conf)
           offsets (cutil/get-broker-offsets state meta topics conf)]
+
+      (prn ">>>>>>>>>>>>>>>>>>>>>>> " offsets)
+      (error ">>>>>>>>>>>>>>>>>>>>>> " offsets)
 
       (doseq [[broker topic-data] offsets]
         (doseq [[topic offset-data] topic-data]
