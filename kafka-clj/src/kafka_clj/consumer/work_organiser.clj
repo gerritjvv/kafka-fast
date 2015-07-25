@@ -1,32 +1,50 @@
-(ns kafka-clj.consumer.work-organiser
+(ns
+  ^{:doc
+    "
+    Kafka divides topics into partitions and each partition starts at offset 0 till N.
+    Standard clients take one partition to one client, but this creates coordination and scalalbility issues.
+    E.g if a client died and did not remove its lock for a partition, a certian timeout needs to happen, but
+    lets say the client is just slow and will recover eventually still thinking that it has a lock on the partition, when
+    it might have timedout and start reading from this partition.
+
+    Kafka-clj takes a different approach, it divides the partitions into work units each of length N.
+    Then adds each work unit to a redis list.
+    Each client will poll this redis list and take a work unit, then read the data for that work unit from kafka.
+    If a work unit fails and put on the complete queue with a fail status, the work organiser will see this work unit
+    and try to recalculate the metadata for it.
+
+    This namespace requires a running redis and kafka cluster
+     USAGE
+    (use 'kafka-clj.consumer.work-organiser :reload)
+    (def org (create-organiser!
+    {:bootstrap-brokers [{:host \"localhost\" :port 9092}]
+     :redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue \"working\" :complete-queue \"complete\" :work-queue \"work\" :conf {}}))
+      (calculate-new-work org [\"ping\"])
+
+
+    (use 'kafka-clj.consumer.consumer :reload)
+    (def consumer (consumer-start {:redis-conf {:host \"localhost\" :max-active 5 :timeout 1000} :working-queue \"working\" :complete-queue \"complete\" :work-queue \"work\" :conf {}}))
+
+    (def res (do-work-unit! consumer (fn [state status resp-data] state)))
+
+     Basic data type is the work-unit
+     structure is {:topic topic :partition partition :offset start-offset :len l :max-offset (+ start-offset l) :producer {:host host :port port}}
+
+    "}
+  kafka-clj.consumer.work-organiser
   (:require
     [kafka-clj.consumer.util :as cutil]
     [clojure.tools.logging :refer [info debug error]]
     [kafka-clj.redis.core :as redis]
     [kafka-clj.metadata :as meta]
     [fun-utils.cache :as cache]
+    [kafka-clj.debug :as write-debug]
     [kafka-clj.produce :refer [metadata-request-producer] :as produce]
     [kafka-clj.consumer.workunits :refer [wait-on-work-unit!]])
   (:import [java.util.concurrent Executors ExecutorService CountDownLatch TimeUnit]
-           (java.util.concurrent.atomic AtomicBoolean)))
+           (java.util.concurrent.atomic AtomicBoolean)
+           (java.util UUID)))
 
-;;; This namespace requires a running redis and kafka cluster
-;;;;;;;;;;;;;;;;;; USAGE ;;;;;;;;;;;;;;;
-;(use 'kafka-clj.consumer.work-organiser :reload)
-;(def org (create-organiser!   
-;{:bootstrap-brokers [{:host "localhost" :port 9092}]
-; :redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}))
-; (calculate-new-work org ["ping"])
-;
-;
-;(use 'kafka-clj.consumer.consumer :reload)
-;(def consumer (consumer-start {:redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue "working" :complete-queue "complete" :work-queue "work" :conf {}}))
-;
-;(def res (do-work-unit! consumer (fn [state status resp-data] state)))
-;
-;; Basic data type is the work-unit
-;; structure is {:topic topic :partition partition :offset start-offset :len l :max-offset (+ start-offset l) :producer {:host host :port port}}
-;;
 
 (declare get-offset-from-meta)
 (declare get-broker-from-meta)
@@ -51,6 +69,7 @@
    Deletes the work unit by doing nothing i.e the work unit will not get pushed to the work queue again"
   [{:keys [redis-conn error-queue]} wu]
   (error "delete workunit error-code:1 " + wu)
+  (write-debug/write-trace wu :work-complete-fail-delete-72)
   (redis/lpush redis-conn error-queue (into (sorted-map) wu)))
 
 (defn- work-complete-fail!
@@ -60,9 +79,9 @@
   [{:keys [work-queue redis-conn] :as state} w-unit]
   (try
     ;we try to recalculate the broker, if any exception we reput the w-unit on the queue
+    (write-debug/write-trace w-unit :work-complete-fail-82)
     (let [sorted-wu (into (sorted-map) w-unit)
           broker (get-broker-from-meta state (:topic w-unit) (:partition w-unit))]
-      (debug "Rebuilding failed work unit " w-unit)
       (redis/lpush redis-conn work-queue (assoc sorted-wu :producer broker))
       state)
     (catch Exception e (do
@@ -80,6 +99,7 @@
    Side effects: Send data to redis work-queue"
   [{:keys [work-queue redis-conn] :as state} {:keys [resp-data offset len] :as w-unit}]
   {:pre [work-queue resp-data offset len]}
+  (write-debug/write-trace w-unit :work-complete-ok-102)
   (let [sorted-wu (into (sorted-map) w-unit)
         offset-read (to-int (:offset-read resp-data))]
     (if (< offset-read (to-int offset))
@@ -101,6 +121,8 @@
   "If the status of the w-unit is :ok the work-unit is checked for remaining work, otherwise its completed, if :fail the work-unit is sent to the work-queue.
    Must be run inside a redis connection e.g car/wcar redis-conn"
   [state {:keys [status] :as w-unit}]
+  (write-debug/write-debug 3 w-unit)
+  (write-debug/write-trace w-unit :work-complete-handler-122)
   (condp = status
     :fail (work-complete-fail! state w-unit)
     :fail-delete (work-complete-fail-delete! state w-unit)
@@ -162,7 +184,7 @@
     (let [^Long t (+ start-offset step)
           ^Long l (if (> t max-offset) (- max-offset start-offset) step)]
       (cons
-        {:topic topic :partition partition :offset start-offset :len l :max-offset (+ start-offset l)}
+        {:topic topic :partition partition :offset start-offset :len l :max-offset (+ start-offset l) :uuid (UUID/randomUUID)}
         (lazy-seq
           (calculate-work-units producer topic partition max-offset (+ start-offset l) step))))))
 
@@ -211,7 +233,7 @@
       (when-let [work-units (calculate-work-units broker topic partition offset saved-offset consume-step2)]
         (let [max-offset (apply max (map #(+ ^Long (:offset %) ^Long (:len %)) work-units))
               ts (System/currentTimeMillis)]
-          (info "123: add-workunits: " work-units)
+
           (redis/wcar redis-conn
                       ;we must use sorted-map here otherwise removing the wu will not be possible due to serialization with arbritary order of keys
                       (redis/lpush* redis-conn work-queue (map #(assoc (into (sorted-map) %) :producer broker :ts ts) work-units))
@@ -232,7 +254,7 @@
 
 (defn- topic-partition? [m topic partition] (filter (fn [[t partition-data]] (and (= topic t) (not-empty (filter #(= (:partition %) partition) partition-data)))) m))
 
-(defn get-broker-from-meta [{:keys [conf] :as state} topic partition & {:keys [retry-count] :or {retry-count 0}}]
+(defn get-broker-from-meta [{:keys [conf blacklisted-metadata-producers-ref blacklisted-offsets-producers-ref] :as state} topic partition & {:keys [retry-count] :or {retry-count 0}}]
   (let [meta (meta/get-metadata! state conf)
         offsets (cutil/get-broker-offsets state meta [topic] conf)
         ;;all this to get the broker ;;{{:host "gvanvuuren-compile", :port 9092} {"test" ({:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 0} {:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 1})}}
@@ -242,7 +264,9 @@
       (if (> retry-count 2)
         (throw (ex-info "No broker data found" {:topic topic :partition partition :offsets offsets}))
         (get-broker-from-meta state topic partition :retry-count (inc retry-count)))
-      (first brokers))))
+      ;; no blacklisting methods work here, rember to remove blacklisted-offsets-producers-ref
+      ;; we can only try rand-nth and hope for the best.
+      (rand-nth brokers))))
 
 (defn calculate-new-work
   "Accepts the state and returns the state as is.
@@ -253,11 +277,9 @@
     (let [meta (meta/get-metadata! state conf)
           offsets (cutil/get-broker-offsets state meta topics conf)]
 
-      (prn ">>>>>>>>>>>>>>>>>>>>>>> " offsets)
-      (error ">>>>>>>>>>>>>>>>>>>>>> " offsets)
-
       (doseq [[broker topic-data] offsets]
         (doseq [[topic offset-data] topic-data]
+
           (try
             ;we map :offset to max of :offset and :all-offets
             (send-offsets-if-any! state broker topic (map #(assoc % :offset (apply max (:offset %) (:all-offsets %))) offset-data))
@@ -283,9 +305,11 @@
         shutdown-confirm (CountDownLatch. 1)
         metadata-producers-ref (ref (create-meta-producers! bootstrap-brokers conf))
         blacklisted-metadata-producers-ref (ref (cache/create-cache :expire-after-write (get conf :blacklisted-expire 10000)))
+        blacklisted-offsets-producers-ref (ref (cache/create-cache :expire-after-write (get conf :blacklisted-expire 10000)))
         redis-conn (redis-factory redis-conf)
         intermediate-state (assoc state :metadata-producers-ref metadata-producers-ref
                                         :blacklisted-metadata-producers-ref blacklisted-metadata-producers-ref
+                                        :blacklisted-offsets-producers-ref blacklisted-offsets-producers-ref
                                         :redis-conn redis-conn :offset-producers (ref {}) :shutdown-flag shutdown-flag :shutdown-confirm shutdown-confirm)
         work-complete-processor-future (start-work-complete-processor! intermediate-state)
         unblack-list-processor-future (start-metadata-unblacklist-processor! metadata-producers-ref blacklisted-metadata-producers-ref conf)

@@ -9,6 +9,11 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.util.*;
 
+/**
+ * Used for unit testing against kafka.<br/>
+ * Starts N kafka nodes, creates topics.<br/>
+ * Use startup and shutdown to manage the cluster.<br/>
+ */
 public class EmbeddedKafkaCluster {
     private final List<Integer> ports;
     private final String zkConnection;
@@ -19,14 +24,29 @@ public class EmbeddedKafkaCluster {
     private final List<KafkaServer> brokers;
     private final List<File> logDirs;
 
+    /**
+     * Creates an embedded cluster with a single node
+     * @param zkConnection
+     */
     public EmbeddedKafkaCluster(String zkConnection) {
         this(zkConnection, new Properties());
     }
 
+    /**
+     * Creates an embedded cluster with a single node
+     * @param zkConnection
+     * @param baseProperties
+     */
     public EmbeddedKafkaCluster(String zkConnection, Properties baseProperties) {
         this(zkConnection, baseProperties, Collections.singletonList(-1));
     }
 
+    /**
+     *Creates an embedded cluster with ports.size() nodes
+     * @param zkConnection
+     * @param baseProperties
+     * @param ports if a port value is -1 a randomly available port is selected
+     */
     public EmbeddedKafkaCluster(String zkConnection, Properties baseProperties, List<Integer> ports) {
         this.zkConnection = zkConnection;
         this.ports = resolvePorts(ports);
@@ -44,12 +64,30 @@ public class EmbeddedKafkaCluster {
         return null;
     }
 
+    /**
+     * Create the topics in the cluster with replication==1, and partition == 2
+     * @param topics
+     */
     public void createTopics(Collection<String> topics){
+        createTopics(topics, 2, 1);
+    }
+
+    /**
+     * Create topics with partitions=partition and replication-factory=replication.<br/>
+     * Note that replication 1 in kafka means no replication at all.
+     * @param topics
+     */
+    public void createTopics(Collection<String> topics, int partition, int replication){
         for(String topic : topics){
-            AdminUtils.createTopic(getZkClient(), topic, 2, 1, new Properties());
+            AdminUtils.createTopic(getZkClient(), topic, partition, replication, new Properties());
         }
     }
 
+    /**
+     * For each port if -1 a randomly available port is selected.
+     * @param ports
+     * @return
+     */
     private List<Integer> resolvePorts(List<Integer> ports) {
         List<Integer> resolvedPorts = new ArrayList<Integer>();
         for (Integer port : ports) {
@@ -58,6 +96,11 @@ public class EmbeddedKafkaCluster {
         return resolvedPorts;
     }
 
+    /**
+     * If port == -1 get the next available port
+     * @param port
+     * @return
+     */
     private int resolvePort(int port) {
         if (port == -1) {
             return TestUtils.getAvailablePort();
@@ -76,6 +119,9 @@ public class EmbeddedKafkaCluster {
         return sb.toString();
     }
 
+    /**
+     * Startup N KafkaServer(s) to form a single cluster
+     */
     public void startup() {
         for (int i = 0; i < ports.size(); i++) {
             Integer port = ports.get(i);
@@ -105,6 +151,10 @@ public class EmbeddedKafkaCluster {
         return server;
     }
 
+    /**
+     * Get the properties "metadata.broker.list" and "zookeeper.connect"
+     * @return
+     */
     public Properties getProps() {
         Properties props = new Properties();
         props.putAll(baseProperties);
@@ -113,25 +163,55 @@ public class EmbeddedKafkaCluster {
         return props;
     }
 
+    /**
+     * Get the comma separated brokers connection string
+     * @return
+     */
     public String getBrokerList() {
         return brokerList;
     }
 
+    /**
+     * Return all the ports for the kafka cluster
+     * @return
+     */
     public List<Integer> getPorts() {
         return ports;
     }
 
+    /**
+     * Returns the zookeeper connection string
+     * @return
+     */
     public String getZkConnection() {
         return zkConnection;
     }
 
+    /**
+     * Shutdown a random broker, used for testing
+     */
+    public void shutdownRandom(){
+        int i = new Random().nextInt(brokers.size());
+        KafkaServer broker = brokers.get(i);
+        shutdownBroker(broker);
+        broker.awaitShutdown();
+    }
+
+    private void shutdownBroker(KafkaServer broker){
+        try {
+            System.out.println("Shutdown broker " + broker);
+            broker.shutdown();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Shutdown all of the kafka brokers for this cluster
+     */
     public void shutdown() {
         for (KafkaServer broker : brokers) {
-            try {
-                broker.shutdown();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+            shutdownBroker(broker);
         }
         for (File logDir : logDirs) {
             try {

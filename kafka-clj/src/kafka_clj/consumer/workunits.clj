@@ -8,6 +8,7 @@
   (:import [java.net SocketTimeoutException]
            (java.util.concurrent.atomic AtomicBoolean)))
 
+
 (defn- safe-sleep
   "Util function that does not print an Interrupted exception but handles by setting the current thread to interrupt"
   [ms]

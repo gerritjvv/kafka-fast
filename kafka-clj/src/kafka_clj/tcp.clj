@@ -18,11 +18,12 @@
   kafka-clj.tcp
   (:require [clojure.tools.logging :refer [error info]]
             [kafka-clj.pool :as pool]
+            [kafka-clj.debug :as write-debug]
             [clj-tuple :refer [tuple]])
   (:import (java.net Socket SocketException)
            (java.io InputStream OutputStream BufferedInputStream BufferedOutputStream DataInputStream)
            (io.netty.buffer ByteBuf Unpooled)
-           (kafka_clj.util Util)))
+           (kafka_clj.util Util IOUtil)))
 
 
 (defrecord TCPClient [host port conf socket ^BufferedInputStream input ^BufferedOutputStream output])
@@ -51,15 +52,25 @@
   [^"[B" bts]
   (Unpooled/wrappedBuffer bts))
 
+(defn read-int ^long [^DataInputStream input ^long timeout]
+  (long (IOUtil/readInt input timeout)))
+
+(defn read-bts ^"[B" [^DataInputStream input ^long timeout ^long cnt]
+  (IOUtil/readBytes input (int cnt) timeout))
+
 (defn ^"[B" read-response
   "Read a single response from the DataInputStream of type [int length][message bytes]
    The message bytes are returned as a byte array
    Throws SocketException, Exception"
-  [{:keys [^DataInputStream input]}]
-  (let [len (.readInt input)
-        bts (byte-array len)
-        _ (.readFully input bts)]
-    bts))
+  ([k]
+    (read-response {} k 30000))
+  ([wu {:keys [^DataInputStream input]} ^long timeout]
+   (write-debug/write-trace wu :read-response)
+   (let [len (read-int input timeout)
+         _ (do (write-debug/write-trace wu :read-int))
+         bts (read-bts input timeout len)]
+     (write-debug/write-trace wu :read-byte-array-return)
+     bts)))
 
 (defn read-async-loop!
   "Only call this once on the tcp-client, it will create a background thread that exits when the socket is closed.
