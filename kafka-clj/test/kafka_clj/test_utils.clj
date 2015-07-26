@@ -68,7 +68,7 @@
         res {:kafka kafka
              :redis (startup-redis)}]
     (when (not-empty topics)
-      (create-topics kafka topics 1 1))
+      (create-topics res topics 1 1))
     res))
 
 (defn shutdown-resources
