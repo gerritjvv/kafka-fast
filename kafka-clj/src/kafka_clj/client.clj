@@ -44,6 +44,7 @@
 
 (defn- healthy-partition-rc? [^ProducerState state {:keys [host port error-code]}]
   (try
+    ;we can have host and port nil here if the connection failed via an exception condition
     (and
       host
       port
