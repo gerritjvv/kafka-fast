@@ -43,12 +43,16 @@
     (assoc m k (dissoc-in (m k) ks))))
 
 (defn- healthy-partition-rc? [^ProducerState state {:keys [host port error-code]}]
-  (and
-    host
-    port
-    (not (-> @(:blacklisted-producers-ref state) (get host) (get port)))
-    (not= error-code 5)
-    (not= error-code -1)))
+  (try
+    (and
+      host
+      port
+      (not (-> @(:blacklisted-producers-ref state) (get host) (get port)))
+      (not= error-code 5)
+      (not= error-code -1))
+    (catch Exception e (do
+                         (error "NPE while querying " (:blacklisted-producers-ref state) " keys " (keys state) " host " host " port " port)
+                         false))))
 
 (defn send-msg
   "Sends a message async and returns false if the connection is closed
