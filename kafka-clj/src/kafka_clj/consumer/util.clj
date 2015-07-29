@@ -55,16 +55,17 @@
            (let [topic-data (get metadata topic)
                  by-broker (group-by second (map-indexed vector topic-data))]
              (into {}
-                   (for [[broker v] by-broker]
+                   (for [[broker v] by-broker :when (:host broker)]
                      ;here we have data {{:host "localhost", :port 1} [[0 {:host "localhost", :port 1}] [1 {:host "localhost", :port 1}]], {:host "abc", :port 1} [[2 {:host "abc", :port 1}]]}
                      ;doing map first v gives the partitions for a broker
-                     (try
-                       (let [offset-producer (get-create-offset-producer offset-producers broker conf)
-                             offsets-response (get-offsets offset-producer topic (map first v))]
-                         ;(info "offsets: " v)
-                         [broker (transform-offsets topic offsets-response conf)])
-                       (catch Exception e (do
-                                            (error e e)
-                                            (meta/black-list-producer! blacklisted-offsets-producers-ref {:host (:host broker) :port (:port broker)} e)
-                                            (spit "/tmp/blacklistoffsets" (str blacklisted-offsets-producers-ref " --- " {:host (:host broker) :port (:port broker)} "\n") :append true)
-                                            [broker nil])))))))))
+                     (do
+                       (try
+                         (let [offset-producer (get-create-offset-producer offset-producers broker conf)
+                               offsets-response (get-offsets offset-producer topic (map first v))]
+                           ;(info "offsets: " v)
+                           [broker (transform-offsets topic offsets-response conf)])
+                         (catch Exception e (do
+                                              (error e e)
+                                              (meta/black-list-producer! blacklisted-offsets-producers-ref {:host (:host broker) :port (:port broker)} e)
+                                              (spit "/tmp/blacklistoffsets" (str blacklisted-offsets-producers-ref " --- " {:host (:host broker) :port (:port broker)} "\n") :append true)
+                                              [broker nil]))))))))))
