@@ -44,6 +44,8 @@
 
 (defn- healthy-partition-rc? [^ProducerState state {:keys [host port error-code]}]
   (and
+    host
+    port
     (not (-> @(:blacklisted-producers-ref state) (get host) (get port)))
     (not= error-code 5)
     (not= error-code -1)))
