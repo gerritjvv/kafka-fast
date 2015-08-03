@@ -9,21 +9,17 @@
             [clj-tuple :refer [tuple]]
             [kafka-clj.consumer.workunits :as wu-api]
             [clojure.core.async :as async]
-            [kafka-clj.debug :as write-debug]
             [clojure.tools.logging :refer [info]])
   (:import (java.util.concurrent Executors)
            (kafka_clj.util FetchState Fetch Fetch$Message Fetch$FetchError)
            (clojure.core.async.impl.channels ManyToManyChannel)
-           (java.util NoSuchElementException)
            (java.net SocketException)
-           (java.util.concurrent.atomic AtomicLong AtomicBoolean)))
+           (java.util.concurrent.atomic AtomicBoolean)))
 
 (defprotocol IMsgEvent
   "Simplifies the logic of processing a FetchError and normal Message instance from a broker fetch response"
   (-msg-event [msg state] "Must return FetchState status can be :ok or :error"))
 
-
-(defonce ^AtomicLong counter (AtomicLong. 0))
 
 (defn ^FetchState fetch-state
   "Creates a mutable initial state"
@@ -66,7 +62,6 @@
 (defn- write-fetch-req!
   "Write a fetch request to the connection based on wu"
   [{:keys [conf]} conn {:keys [topic partition offset] :as wu}]
-  (write-debug/write-trace wu :write-fetch-req-69)
   (fetch/send-fetch {:client conn :conf conf} [[topic [{:partition partition :offset offset}]]]))
 
 (defn- start-wu-publisher! [state publish-exec-service exec-service handler-f]
@@ -104,15 +99,12 @@
    Throws: Exception, may block"
   [delegate-f wu ^"[B" bts]
   {:pre [(fn? delegate-f)]}
-  (write-debug/write-trace wu :read-process-resp-107)
-  (try
-    (io!
-      (fetchstate->state-tuple                                ;convert FetchState to [status offset]
-        (Fetch/readFetchResponse
-          (tcp/wrap-bts bts)
-          (fetch-state delegate-f wu)         ;mutable FetchState
-          handle-msg-event)))
-    (finally (write-debug/write-trace wu :read-process-resp-115))))
+  (io!
+    (fetchstate->state-tuple                                ;convert FetchState to [status offset]
+      (Fetch/readFetchResponse
+        (tcp/wrap-bts bts)
+        (fetch-state delegate-f wu)         ;mutable FetchState
+        handle-msg-event))))
 
 (defn- process-wu!
   " Borrow a connection
@@ -126,22 +118,17 @@
     (let [{:keys [host port]} (:producer wu)
           conn (tcp/borrow conn-pool host port)]
 
-      (write-debug/write-debug 1 wu)
-      (write-debug/write-trace wu :process-wu-126)
       (try
         (do
           (try
             (do
-              (write-fetch-req! state conn wu)
-              (write-debug/write-trace wu :written-fetch-req-136))
+              (write-fetch-req! state conn wu))
             (catch Throwable e (do
                                    (error e e)
                                    (wu-api/publish-error-consumed-wu! state wu))))
           (let [bts (tcp/read-response wu conn 60000)
                 _ (tcp/release conn-pool host port conn)     ;release the connection early
                 [status offset] (read-process-resp! delegate-f wu bts)]
-            (write-debug/write-trace wu :process-wu-139)
-            (write-debug/write-debug 2 (assoc wu :status status))
             (if (= :ok status)
               (wu-api/publish-consumed-wu! state wu (if (pos? offset) offset (:offset wu)))
               (wu-api/publish-error-wu! state wu status offset))))
@@ -153,7 +140,6 @@
                                     (tcp/release conn-pool host port conn)))
         (catch Throwable e (do (.printStackTrace e)
                                (error e e)
-                               (spit "/tmp/errors2" (str wu "\n" e "\n" (clojure.string/join "\n" (.getStackTrace e)) "\n") :append true)
                                (tcp/release conn-pool host port conn)
 
                                (wu-api/publish-error-consumed-wu! state wu)))))

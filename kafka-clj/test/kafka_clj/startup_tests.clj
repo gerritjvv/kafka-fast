@@ -87,7 +87,7 @@
            ;dummy check, if no exception is thrown its ok
            1 => 1)))
 
-(let [resources (startup-resources "test")]
+(let [resources (startup-resources 1 "test")]
   (try
     (test-facts resources)
     (finally

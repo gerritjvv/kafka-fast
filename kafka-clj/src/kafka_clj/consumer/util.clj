@@ -67,5 +67,4 @@
                          (catch Exception e (do
                                               (error e e)
                                               (meta/black-list-producer! blacklisted-offsets-producers-ref {:host (:host broker) :port (:port broker)} e)
-                                              (spit "/tmp/blacklistoffsets" (str blacklisted-offsets-producers-ref " --- " {:host (:host broker) :port (:port broker)} "\n") :append true)
                                               [broker nil]))))))))))

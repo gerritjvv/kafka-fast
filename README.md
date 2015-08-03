@@ -310,7 +310,8 @@ See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for wr
 |:send-cache-expire-after-access | 5 | seconds to expire an entry after read |
 |:consume-step | 100000 | The max number of messages to consume in a single work unit |
 |:redis-conf | ```:redis-conf {:host "localhost" :max-active 10 :timeout 500}``` | The redis configuration for the consumer |
-
+|:reset-ahead-offsets | ```:reset-ahead-offsets true``` default is false | If the brokers during restarts report a lower offset than is saved, we reset the read offset to that of the max reported broker offset for a topic/partition see https://github.com/gerritjvv/kafka-fast/issues/10 |
+ 
 ### Performance configuration for consuming
 
 Due to the way the work unit allocation works, if you read more bytes in a single request than the messages in a work unit there will be waste  

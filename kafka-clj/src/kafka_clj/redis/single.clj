@@ -2,7 +2,8 @@
   (:import
     (org.apache.commons.pool2 ObjectPool PooledObjectFactory)
     (org.apache.commons.pool2.impl GenericObjectPool DefaultPooledObject GenericKeyedObjectPool)
-    (java.util.concurrent TimeUnit))
+    (java.util.concurrent TimeUnit)
+    (java.util UUID))
   (:require [taoensso.carmine
              (protocol    :as protocol)
              (connections :as conns)
@@ -132,7 +133,7 @@
   ;; TODO Waiting on http://goo.gl/YemR7 for simpler (non-Lua) solution
   [pool lock-name timeout-ms wait-ms]
   (let [max-udt (+ wait-ms (System/currentTimeMillis))
-        uuid    (str (java.util.UUID/randomUUID))]
+        uuid    (str (UUID/randomUUID))]
     (_wcar pool ; Hold one connection for all attempts
            (loop []
              (when (> max-udt (System/currentTimeMillis))

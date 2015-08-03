@@ -38,17 +38,18 @@
     [kafka-clj.redis.core :as redis]
     [kafka-clj.metadata :as meta]
     [fun-utils.cache :as cache]
-    [kafka-clj.debug :as write-debug]
     [kafka-clj.produce :refer [metadata-request-producer] :as produce]
     [kafka-clj.consumer.workunits :refer [wait-on-work-unit!]])
   (:import [java.util.concurrent Executors ExecutorService CountDownLatch TimeUnit]
            (java.util.concurrent.atomic AtomicBoolean)
-           (java.util UUID)))
+           (java.util HashMap Map)))
 
 
 (declare get-offset-from-meta)
 (declare get-broker-from-meta)
 (declare close-organiser!)
+(declare add-offsets!)
+(declare calculate-work-units)
 
 (defn- ^Long _to-int [s]
   (try
@@ -69,7 +70,6 @@
    Deletes the work unit by doing nothing i.e the work unit will not get pushed to the work queue again"
   [{:keys [redis-conn error-queue]} wu]
   (error "delete workunit error-code:1 " + wu)
-  (write-debug/write-trace wu :work-complete-fail-delete-72)
   (redis/lpush redis-conn error-queue (into (sorted-map) wu)))
 
 (defn- work-complete-fail!
@@ -79,7 +79,6 @@
   [{:keys [work-queue redis-conn] :as state} w-unit]
   (try
     ;we try to recalculate the broker, if any exception we reput the w-unit on the queue
-    (write-debug/write-trace w-unit :work-complete-fail-82)
     (let [sorted-wu (into (sorted-map) w-unit)
           broker (get-broker-from-meta state (:topic w-unit) (:partition w-unit))]
       (redis/lpush redis-conn work-queue (assoc sorted-wu :producer broker))
@@ -99,7 +98,6 @@
    Side effects: Send data to redis work-queue"
   [{:keys [work-queue redis-conn] :as state} {:keys [resp-data offset len] :as w-unit}]
   {:pre [work-queue resp-data offset len]}
-  (write-debug/write-trace w-unit :work-complete-ok-102)
   (let [sorted-wu (into (sorted-map) w-unit)
         offset-read (to-int (:offset-read resp-data))]
     (if (< offset-read (to-int offset))
@@ -121,8 +119,6 @@
   "If the status of the w-unit is :ok the work-unit is checked for remaining work, otherwise its completed, if :fail the work-unit is sent to the work-queue.
    Must be run inside a redis connection e.g car/wcar redis-conn"
   [state {:keys [status] :as w-unit}]
-  (write-debug/write-debug 3 w-unit)
-  (write-debug/write-trace w-unit :work-complete-handler-122)
   (condp = status
     :fail (work-complete-fail! state w-unit)
     :fail-delete (work-complete-fail-delete! state w-unit)
@@ -184,7 +180,7 @@
     (let [^Long t (+ start-offset step)
           ^Long l (if (> t max-offset) (- max-offset start-offset) step)]
       (cons
-        {:topic topic :partition partition :offset start-offset :len l :max-offset (+ start-offset l) :uuid (UUID/randomUUID)}
+        {:topic topic :partition partition :offset start-offset :len l :max-offset (+ start-offset l)}
         (lazy-seq
           (calculate-work-units producer topic partition max-offset (+ start-offset l) step))))))
 
@@ -194,19 +190,28 @@
    this value is saved to redis and then returned"
   [{:keys [group-name redis-conn] :as state} topic partition]
   {:pre [group-name redis-conn topic partition]}
-  (io!
-    (let [saved-offset (redis/wcar redis-conn (redis/get redis-conn (str "/" group-name "/offsets/" topic "/" partition)))]
-      (cond
-        (not (nil? saved-offset)) (to-int saved-offset)
-        :else (let [meta-offset (get-offset-from-meta state topic partition)]
-                (info "Set initial offsets [" topic "/" partition "]: " meta-offset)
-                (redis/wcar redis-conn (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) meta-offset))
-                meta-offset)))))
+  (let [offset (io!
+                 (let [saved-offset (redis/wcar redis-conn (redis/get redis-conn (str "/" group-name "/offsets/" topic "/" partition)))]
+                   (cond
+                     (not (nil? saved-offset)) (to-int saved-offset)
+                     :else (let [meta-offset (get-offset-from-meta state topic partition)]
+                             (info "Set initial offsets [" topic "/" partition "]: " meta-offset)
+                             (redis/wcar redis-conn (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) meta-offset))
+                             meta-offset))))]
+    offset))
 
 (defn add-offsets! [state topic offset-datum]
   (try
     (assoc offset-datum :saved-offset (get-saved-offset state topic (:partition offset-datum)))
     (catch Throwable t (do (.printStackTrace t) (error t t) nil))))
+
+(defn max-value
+  "Nil safe max function"
+  [& vals]
+  (let [vals2 (filter #(not (nil? %)) vals)]
+    (if (empty? vals2)
+      0
+      (apply max vals2))))
 
 (defn send-offsets-if-any!
   "
@@ -223,13 +228,10 @@
                 (map (partial add-offsets! state topic) offset-data))
 
         consume-step2 (if consume-step consume-step (get conf :consume-step 100000))]
-    (doseq [{:keys [offset partition saved-offset]} offset-data2]
+
+    (doseq [{:keys [offset partition saved-offset all-offsets]} offset-data2]
       (swap! work-assigned-flag inc)
-      ;w-units
-      ;max offset
-      ;push w-units
-      ;save max-offset
-      ;producer topic partition max-offset start-offset step
+
       (when-let [work-units (calculate-work-units broker topic partition offset saved-offset consume-step2)]
         (let [max-offset (apply max (map #(+ ^Long (:offset %) ^Long (:len %)) work-units))
               ts (System/currentTimeMillis)]
@@ -268,6 +270,45 @@
       ;; we can only try rand-nth and hope for the best.
       (rand-nth brokers))))
 
+(defn _max-offset
+  "
+  Return the max save-offsetN and max of max-offsetN
+  [saved-offset max-offset]
+  [saved-offset2 max-offset2]
+
+  returns [saved-offsetN max-offsetN]"
+  [[saved-offset max-offset] [saved-offset2 max-offset2 :as v]]
+  (if max-offset
+    [(max saved-offset saved-offset2) (max max-offset max-offset2)]
+    v))
+
+(defn redis-offset-save [redis-conn group-name topic partition offset]
+   (redis/wcar redis-conn
+               (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) offset)))
+
+(defn check-invalid-offsets!
+  "Check for https://github.com/gerritjvv/kafka-fast/issues/10
+   if a saved-offset > max-offset the redis offset is reset
+   optional args
+      redis-f (fn [redis-conn group-name topic partition offset] ) used to save the offset, the default impl is used to save to redis
+      get-saved-offset (fn [state topic partition] ) get the last saved offset, default impl is get-saved-offset"
+  [{:keys [group-name redis-conn] :as state} offsets & {:keys [redis-f saved-offset-f] :or {redis-f redis-offset-save
+                                                                                            saved-offset-f get-saved-offset}}]
+  (let [^Map m (HashMap.)]
+
+    ;;local mutable code to simplify getting max offsets for a topic partition that may be given
+    ;;conflicting data by multiple brokers
+    (doseq [[_ topic-data] offsets]
+      (doseq [[topic offset-data] topic-data]
+        (doseq [{:keys [partition all-offsets]} offset-data]
+          (let [k {:topic topic :partition partition}]
+            (.put m k (_max-offset (.get m k) [(saved-offset-f state topic partition)
+                                               (apply max all-offsets)]))))))
+
+    (doseq [[{:keys [topic partition]} [saved-offset max-offset]] m]
+      (when (> saved-offset max-offset)
+        (redis-f redis-conn group-name topic partition max-offset)))))
+
 (defn calculate-new-work
   "Accepts the state and returns the state as is.
    For topics new work is calculated depending on the metadata returned from the producers"
@@ -277,9 +318,12 @@
     (let [meta (meta/get-metadata! state conf)
           offsets (cutil/get-broker-offsets state meta topics conf)]
 
+      ;;check for inconsistent offsets https://github.com/gerritjvv/kafka-fast/issues/10
+      (when (get conf :reset-ahead-offsets false)
+        (check-invalid-offsets! state offsets))
+
       (doseq [[broker topic-data] offsets]
         (doseq [[topic offset-data] topic-data]
-
           (try
             ;we map :offset to max of :offset and :all-offets
             (send-offsets-if-any! state broker topic (map #(assoc % :offset (apply max (:offset %) (:all-offsets %))) offset-data))

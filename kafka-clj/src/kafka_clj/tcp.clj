@@ -18,7 +18,6 @@
   kafka-clj.tcp
   (:require [clojure.tools.logging :refer [error info]]
             [kafka-clj.pool :as pool]
-            [kafka-clj.debug :as write-debug]
             [clj-tuple :refer [tuple]])
   (:import (java.net Socket SocketException)
            (java.io InputStream OutputStream BufferedInputStream BufferedOutputStream DataInputStream)
@@ -65,11 +64,8 @@
   ([k]
     (read-response {} k 30000))
   ([wu {:keys [^DataInputStream input]} ^long timeout]
-   (write-debug/write-trace wu :read-response)
    (let [len (read-int input timeout)
-         _ (do (write-debug/write-trace wu :read-int))
          bts (read-bts input timeout len)]
-     (write-debug/write-trace wu :read-byte-array-return)
      bts)))
 
 (defn read-async-loop!
