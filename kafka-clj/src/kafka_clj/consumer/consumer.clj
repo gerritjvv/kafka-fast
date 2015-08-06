@@ -17,19 +17,15 @@
            (java.util.concurrent.atomic AtomicBoolean)
            (com.codahale.metrics MetricRegistry Meter ConsoleReporter)))
 
+(def ^AtomicBoolean METRICS-REPORTING-STARTED (AtomicBoolean. false))
 (def ^MetricRegistry metrics-registry (MetricRegistry.))
 (def messages-read (.meter metrics-registry "messages-read"))
 
-(defn mark! [^Meter meter]
+(defn mark!
+  "Mark messages read meter"
+  [^Meter meter]
   (.mark meter))
 
-(def reporter (delay
-                (do
-                  (-> (ConsoleReporter/forRegistry metrics-registry)
-                      (.convertRatesTo TimeUnit/SECONDS)
-                      (.convertDurationsTo TimeUnit/MILLISECONDS)
-                      .build
-                      (.start 10 TimeUnit/SECONDS)))))
 
 (defprotocol IMsgEvent
   "Simplifies the logic of processing a FetchError and normal Message instance from a broker fetch response"
@@ -162,26 +158,45 @@
                                        (.printStackTrace ne)
                                        (wu-api/publish-zero-consumed-wu! state wu)))))
 
+
+(defn start-metrics-reporting!
+  "Start the metrics reporting, writing to STDOUT every 10 seconds"
+  []
+  (when (not (.getAndSet METRICS-REPORTING-STARTED true))
+    (-> (ConsoleReporter/forRegistry metrics-registry)
+        (.convertRatesTo TimeUnit/SECONDS)
+        (.convertDurationsTo TimeUnit/MILLISECONDS)
+        .build
+        (.start 10 TimeUnit/SECONDS))))
+
 (defn consume!
   "Starts the consumer consumption process, by initiating 1+consumer-threads threads, one thread is used to wait for work-units
    from redis, and the other threads are used to process the work-unit, the resp data from each work-unit's processing result is
    sent to the msg-ch, note that the send to msg-ch is a blocking send, meaning that the whole process will block if msg-ch is full
    The actual consume! function returns inmediately
 
+    reporting: if (get :consumer-reporting conf) is true then messages consumed metrics will be written every 10 seconds to stdout
   "
   [{:keys [conf msg-ch work-unit-event-ch] :as state}]
   {:pre [conf work-unit-event-ch msg-ch
          (instance? ManyToManyChannel msg-ch)
          (instance? ManyToManyChannel work-unit-event-ch)]}
+
+  (when (get conf :consumer-reporting)
+    (start-metrics-reporting!))
+
   (io!
     (let [publish-exec-service (Executors/newSingleThreadExecutor)
           shutdown-flag (AtomicBoolean. false)
           conn-pool (tcp/tcp-pool conf)
           consumer-threads (get conf :consumer-threads 2)
           exec-service (threads/create-exec-service consumer-threads)
-          delegate-f (fn [msg]
-                       (async/>!! msg-ch msg)
-                       (mark! messages-read))
+          delegate-f (if (get conf :consumer-reporting)
+                       (fn [msg]
+                         (async/>!! msg-ch msg)
+                         (mark! messages-read))
+                       (fn [msg]
+                         (async/>!! msg-ch msg)))
 
           wu-processor (partial process-wu! state conn-pool delegate-f)]
 

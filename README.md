@@ -312,7 +312,8 @@ See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for wr
 |:redis-conf | ```:redis-conf {:host "localhost" :max-active 10 :timeout 500}``` | The redis configuration for the consumer |
 |:reset-ahead-offsets | ```:reset-ahead-offsets true``` default is false | If the brokers during restarts report a lower offset than is saved, we reset the read offset to that of the max reported broker offset for a topic/partition see https://github.com/gerritjvv/kafka-fast/issues/10 |
 |:consumer-threads | 2 | number of background threads doing fetching from kafka |
-  
+|:consumer-reporting | false | if true the kafka consumer will print out metrics for the number of messages sent the the msg-ch every 10 seconds |
+
 ### Performance configuration for consuming
 
 Due to the way the work unit allocation works, if you read more bytes in a single request than the messages in a work unit there will be waste  
