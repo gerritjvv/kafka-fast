@@ -311,7 +311,8 @@ See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for wr
 |:consume-step | 100000 | The max number of messages to consume in a single work unit |
 |:redis-conf | ```:redis-conf {:host "localhost" :max-active 10 :timeout 500}``` | The redis configuration for the consumer |
 |:reset-ahead-offsets | ```:reset-ahead-offsets true``` default is false | If the brokers during restarts report a lower offset than is saved, we reset the read offset to that of the max reported broker offset for a topic/partition see https://github.com/gerritjvv/kafka-fast/issues/10 |
- 
+|:consumer-threads | 2 | number of background threads doing fetching from kafka |
+  
 ### Performance configuration for consuming
 
 Due to the way the work unit allocation works, if you read more bytes in a single request than the messages in a work unit there will be waste  
@@ -322,6 +323,13 @@ some examples values are 100mb 200mb etc, the batch-num-messages should be equal
 This ensures that on each request you get a reasonable amount of messages in bytes and also a little as possible messages are wasted due to the work unit size.  
 
 The consumer will print a warning log entry when ever the wasted messages is more than half of the work-units size.
+
+*Background Fetch Threads*
+
+Sometimes if might be as simple as increasing the number of ```:consumer-threads```, try 4, 6 threads.  
+Normally if you see that you can keepup with processing kafka messages from the connector even if the queue contains allot of messages still  
+this is a sign that you are not fetching fast enough.  
+
 
 ## Java 
 

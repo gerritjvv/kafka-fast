@@ -10,11 +10,26 @@
             [kafka-clj.consumer.workunits :as wu-api]
             [clojure.core.async :as async]
             [clojure.tools.logging :refer [info]])
-  (:import (java.util.concurrent Executors)
+  (:import (java.util.concurrent Executors TimeUnit)
            (kafka_clj.util FetchState Fetch Fetch$Message Fetch$FetchError)
            (clojure.core.async.impl.channels ManyToManyChannel)
            (java.net SocketException)
-           (java.util.concurrent.atomic AtomicBoolean)))
+           (java.util.concurrent.atomic AtomicBoolean)
+           (com.codahale.metrics MetricRegistry Meter ConsoleReporter)))
+
+(def ^MetricRegistry metrics-registry (MetricRegistry.))
+(def messages-read (.meter metrics-registry "messages-read"))
+
+(defn mark! [^Meter meter]
+  (.mark meter))
+
+(def reporter (delay
+                (do
+                  (-> (ConsoleReporter/forRegistry metrics-registry)
+                      (.convertRatesTo TimeUnit/SECONDS)
+                      (.convertDurationsTo TimeUnit/MILLISECONDS)
+                      .build
+                      (.start 10 TimeUnit/SECONDS)))))
 
 (defprotocol IMsgEvent
   "Simplifies the logic of processing a FetchError and normal Message instance from a broker fetch response"
@@ -81,7 +96,7 @@
                             (.printStackTrace e)
                             (error e e)
                             (.interrupt (Thread/currentThread)))
-                          (catch InterruptedException ie nil)
+                          (catch InterruptedException _ nil)
                           (catch Exception e (do
                                                (.printStackTrace e)
                                                (error e e)))))
@@ -158,7 +173,6 @@
   {:pre [conf work-unit-event-ch msg-ch
          (instance? ManyToManyChannel msg-ch)
          (instance? ManyToManyChannel work-unit-event-ch)]}
-
   (io!
     (let [publish-exec-service (Executors/newSingleThreadExecutor)
           shutdown-flag (AtomicBoolean. false)
@@ -166,10 +180,12 @@
           consumer-threads (get conf :consumer-threads 2)
           exec-service (threads/create-exec-service consumer-threads)
           delegate-f (fn [msg]
-                       (async/>!! msg-ch msg))
+                       (async/>!! msg-ch msg)
+                       (mark! messages-read))
 
           wu-processor (partial process-wu! state conn-pool delegate-f)]
 
+      @reporter
 
       (start-wu-publisher! (assoc state :shutdown-flag shutdown-flag)  publish-exec-service exec-service wu-processor)
       (assoc state :publish-exec-service publish-exec-service :exec-service exec-service :conn-pool conn-pool :shutdown-flag shutdown-flag))))
