@@ -200,8 +200,6 @@
 
           wu-processor (partial process-wu! state conn-pool delegate-f)]
 
-      @reporter
-
       (start-wu-publisher! (assoc state :shutdown-flag shutdown-flag)  publish-exec-service exec-service wu-processor)
       (assoc state :publish-exec-service publish-exec-service :exec-service exec-service :conn-pool conn-pool :shutdown-flag shutdown-flag))))
 
