@@ -324,11 +324,16 @@ This ensures that on each request you get a reasonable amount of messages in byt
 
 The consumer will print a warning log entry when ever the wasted messages is more than half of the work-units size.
 
-*Background Fetch Threads*
+**Background Fetch Threads**
 
 Sometimes if might be as simple as increasing the number of ```:consumer-threads```, try 4, 6 threads.  
 Normally if you see that you can keepup with processing kafka messages from the connector even if the queue contains allot of messages still  
 this is a sign that you are not fetching fast enough.  
+
+**Not consuming enough megabytes**
+
+If you see allot of ```kafka-clj.consumer.work-organiser - Recalculating work for processed work-unit``` in your log output  
+this is a good indication that you need to increase the ```max-bytes``` parameter.  
 
 
 ## Java 
