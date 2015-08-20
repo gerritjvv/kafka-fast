@@ -1,4 +1,7 @@
-(ns kafka-clj.metadata
+(ns
+  ^{:doc "All functions are concerned with retreiving metadata and offsets from kafka brokers
+          part of this task requires blacklisting of brokers that do not response and retrying on connection errors"}
+  kafka-clj.metadata
   (:require
     [clj-tuple :refer [tuple]]
     [kafka-clj.produce :refer [metadata-request-producer send-metadata-request shutdown]]
@@ -65,11 +68,28 @@
                    (shutdown producer)
                    (throw (Exception. (str "timeout reading from producer " (vals metadata-producer)))))))))
 
+(defn blacklisted?
+  "
+  blacklisted-metadata-producers a map of {{:host <host> :port <port>} <bool>}} here bool doesn't really matter, if listed an item is black listed
+  host the host name
+  port the port number
+  Returns nil if the host port is not found in the blacklisted-metadata-producers"
+  [blacklisted-metadata-producers host port]
+  {:pre [(associative? blacklisted-metadata-producers) host port]}
+  (get blacklisted-metadata-producers {:host host :port port}))
+
 (defn- is-blacklisted?
   [blacklisted-producers [k _]]
   (get blacklisted-producers k))
 
-(defn- black-list-producer! [blacklisted-metadata-producers-ref {:keys [host port]} e]
+(defn black-list-producer!
+  "
+  Runs commute to add the host and port to the blacklisted-metadata-producers-ref
+  blacklisted-metadata-producers-ref a ref that contains the map {{:host <host> :port <port>} ... }
+  {:keys [host port]} host the host name, port the port number
+  e the exception that produced the error, may be nil
+  "
+  [blacklisted-metadata-producers-ref {:keys [host port]} e]
   {:pre [blacklisted-metadata-producers-ref host (number? port)]}
   (error e (str "Blacklisting metadata-producer: " host ":" port))
   (dosync (commute blacklisted-metadata-producers-ref assoc {:host host :port port} true))
@@ -128,6 +148,9 @@
 (defn- ref? [r]
   (when r
     (instance? IDeref r)))
+
+(defn get-offsets! [{:keys [metadata-producers-ref blacklisted-metadata-producers-ref]} conf]
+  )
 
 (defn get-metadata! [{:keys [metadata-producers-ref blacklisted-metadata-producers-ref]} conf]
   {:pre [(ref? metadata-producers-ref) (ref? blacklisted-metadata-producers-ref)]}

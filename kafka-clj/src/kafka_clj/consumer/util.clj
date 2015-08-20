@@ -3,7 +3,7 @@
     [kafka-clj.fetch :refer [create-offset-producer send-offset-request]]
     [clojure.core.async :refer [timeout alts!!]]
     [clojure.tools.logging :refer [info error]]
-    ))
+    [kafka-clj.metadata :as meta]))
 
 
 (defn get-create-offset-producer [offset-producers-ref broker conf]
@@ -48,17 +48,23 @@
                 :locked false
                 :partition partition}))}))
 
-(defn get-broker-offsets [{:keys [offset-producers]} metadata topics conf]
+(defn get-broker-offsets [{:keys [offset-producers blacklisted-offsets-producers-ref]} metadata topics conf]
   "Builds the datastructure {broker {topic [{:offset o :partition p} ...] }}"
   (apply merge-with merge
          (for [topic topics]
            (let [topic-data (get metadata topic)
                  by-broker (group-by second (map-indexed vector topic-data))]
              (into {}
-                   (for [[broker v] by-broker]
+                   (for [[broker v] by-broker :when (:host broker)]
                      ;here we have data {{:host "localhost", :port 1} [[0 {:host "localhost", :port 1}] [1 {:host "localhost", :port 1}]], {:host "abc", :port 1} [[2 {:host "abc", :port 1}]]}
                      ;doing map first v gives the partitions for a broker
-                     (let [offset-producer (get-create-offset-producer offset-producers broker conf)
-                           offsets-response (get-offsets offset-producer topic (map first v))]
-                       ;(info "offsets: " v)
-                       [broker (transform-offsets topic offsets-response conf)])))))))
+                     (do
+                       (try
+                         (let [offset-producer (get-create-offset-producer offset-producers broker conf)
+                               offsets-response (get-offsets offset-producer topic (map first v))]
+                           ;(info "offsets: " v)
+                           [broker (transform-offsets topic offsets-response conf)])
+                         (catch Exception e (do
+                                              (error e e)
+                                              (meta/black-list-producer! blacklisted-offsets-producers-ref {:host (:host broker) :port (:port broker)} e)
+                                              [broker nil]))))))))))

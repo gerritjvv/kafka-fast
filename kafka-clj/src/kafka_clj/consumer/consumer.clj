@@ -10,19 +10,27 @@
             [kafka-clj.consumer.workunits :as wu-api]
             [clojure.core.async :as async]
             [clojure.tools.logging :refer [info]])
-  (:import (java.util.concurrent Executors)
+  (:import (java.util.concurrent Executors TimeUnit)
            (kafka_clj.util FetchState Fetch Fetch$Message Fetch$FetchError)
            (clojure.core.async.impl.channels ManyToManyChannel)
-           (java.util NoSuchElementException)
            (java.net SocketException)
-           (java.util.concurrent.atomic AtomicLong)))
+           (java.util.concurrent.atomic AtomicBoolean)
+           (com.codahale.metrics MetricRegistry Meter ConsoleReporter)))
+
+(def ^AtomicBoolean METRICS-REPORTING-STARTED (AtomicBoolean. false))
+(def ^MetricRegistry metrics-registry (MetricRegistry.))
+(def messages-read (.meter metrics-registry "messages-read"))
+
+(defn mark!
+  "Mark messages read meter"
+  [^Meter meter]
+  (.mark meter))
+
 
 (defprotocol IMsgEvent
   "Simplifies the logic of processing a FetchError and normal Message instance from a broker fetch response"
   (-msg-event [msg state] "Must return FetchState status can be :ok or :error"))
 
-
-(defonce ^AtomicLong counter (AtomicLong. 0))
 
 (defn ^FetchState fetch-state
   "Creates a mutable initial state"
@@ -59,35 +67,36 @@
 
   Fetch$FetchError
   (-msg-event [{:keys [error-code] :as msg} ^FetchState state]
-    (error msg)
+    (error (.toString ^Fetch$FetchError msg))
     (doto state (.setStatus (if (#{1 3} error-code) :fail-delete :fail)))))
 
 (defn- write-fetch-req!
   "Write a fetch request to the connection based on wu"
-  [{:keys [conf]} conn {:keys [topic partition offset]}]
+  [{:keys [conf]} conn {:keys [topic partition offset] :as wu}]
   (fetch/send-fetch {:client conn :conf conf} [[topic [{:partition partition :offset offset}]]]))
 
 (defn- start-wu-publisher! [state publish-exec-service exec-service handler-f]
-  (threads/submit publish-exec-service
-                  (fn []
-                    (while (not (Thread/interrupted))
-                      (try
-                        (let [wu (wu-api/get-work-unit! state)]
-                          (if wu
-                            (threads/submit exec-service (fn []
-                                                           (handler-f wu)))))
-                        (catch InterruptedException ie (do
-                                                         (.printStackTrace ie)
-                                                         (.interrupt (Thread/currentThread))))
-                        (catch IllegalStateException e
-                          (.printStackTrace e)
-                          (error e e)
-                          (.interrupt (Thread/currentThread)))
-                        (catch InterruptedException ie nil)
-                        (catch Exception e (do
-                                             (.printStackTrace e)
-                                             (error e e)))))
-                    (info "EXIT publisher loop!!"))))
+  (let [^AtomicBoolean shutdown-flag (:shutdown-flag state)]
+    (threads/submit publish-exec-service
+                    (fn []
+                      (while (and (not (Thread/interrupted)) (not (.get shutdown-flag)))
+                        (try
+                          (let [wu (wu-api/get-work-unit! state)]
+                            (if wu
+                              (threads/submit exec-service (fn []
+                                                             (handler-f wu)))))
+                          (catch InterruptedException ie (do
+                                                           (.printStackTrace ie)
+                                                           (.interrupt (Thread/currentThread))))
+                          (catch IllegalStateException e
+                            (.printStackTrace e)
+                            (error e e)
+                            (.interrupt (Thread/currentThread)))
+                          (catch InterruptedException _ nil)
+                          (catch Exception e (do
+                                               (.printStackTrace e)
+                                               (error e e)))))
+                      (info "EXIT publisher loop!!")))))
 
 (defn- handle-msg-event
   "Monoid
@@ -104,9 +113,9 @@
   (io!
     (fetchstate->state-tuple                                ;convert FetchState to [status offset]
       (Fetch/readFetchResponse
-                        (tcp/wrap-bts bts)
-                        (fetch-state delegate-f wu)         ;mutable FetchState
-                        handle-msg-event))))
+        (tcp/wrap-bts bts)
+        (fetch-state delegate-f wu)         ;mutable FetchState
+        handle-msg-event))))
 
 (defn- process-wu!
   " Borrow a connection
@@ -116,16 +125,21 @@
   [state conn-pool delegate-f wu]
   {:pre [conn-pool (get-in wu [:producer :host]) [get-in wu [:producer :port]]]}
   (try
+
     (let [{:keys [host port]} (:producer wu)
           conn (tcp/borrow conn-pool host port)]
 
       (try
         (do
-          (write-fetch-req! state conn wu)
-          (let [bts (tcp/read-response conn)
+          (try
+            (do
+              (write-fetch-req! state conn wu))
+            (catch Throwable e (do
+                                   (error e e)
+                                   (wu-api/publish-error-consumed-wu! state wu))))
+          (let [bts (tcp/read-response wu conn 60000)
                 _ (tcp/release conn-pool host port conn)     ;release the connection early
                 [status offset] (read-process-resp! delegate-f wu bts)]
-
             (if (= :ok status)
               (wu-api/publish-consumed-wu! state wu (if (pos? offset) offset (:offset wu)))
               (wu-api/publish-error-wu! state wu status offset))))
@@ -135,13 +149,25 @@
                                     (warn "Work unit " wu " refers to a broker " host port " that is down, pushing back for reconfiguration")
                                     (wu-api/publish-error-consumed-wu! state wu)
                                     (tcp/release conn-pool host port conn)))
-        (catch Exception e (do (.printStackTrace e)
+        (catch Throwable e (do (.printStackTrace e)
                                (error e e)
                                (tcp/release conn-pool host port conn)
+
                                (wu-api/publish-error-consumed-wu! state wu)))))
-    (catch NoSuchElementException ne (do
+    (catch Throwable ne (do
                                        (.printStackTrace ne)
                                        (wu-api/publish-zero-consumed-wu! state wu)))))
+
+
+(defn start-metrics-reporting!
+  "Start the metrics reporting, writing to STDOUT every 10 seconds"
+  []
+  (when (not (.getAndSet METRICS-REPORTING-STARTED true))
+    (-> (ConsoleReporter/forRegistry metrics-registry)
+        (.convertRatesTo TimeUnit/SECONDS)
+        (.convertDurationsTo TimeUnit/MILLISECONDS)
+        .build
+        (.start 10 TimeUnit/SECONDS))))
 
 (defn consume!
   "Starts the consumer consumption process, by initiating 1+consumer-threads threads, one thread is used to wait for work-units
@@ -149,27 +175,40 @@
    sent to the msg-ch, note that the send to msg-ch is a blocking send, meaning that the whole process will block if msg-ch is full
    The actual consume! function returns inmediately
 
+    reporting: if (get :consumer-reporting conf) is true then messages consumed metrics will be written every 10 seconds to stdout
   "
   [{:keys [conf msg-ch work-unit-event-ch] :as state}]
   {:pre [conf work-unit-event-ch msg-ch
          (instance? ManyToManyChannel msg-ch)
          (instance? ManyToManyChannel work-unit-event-ch)]}
 
+  (when (get conf :consumer-reporting)
+    (start-metrics-reporting!))
+
   (io!
     (let [publish-exec-service (Executors/newSingleThreadExecutor)
+          shutdown-flag (AtomicBoolean. false)
           conn-pool (tcp/tcp-pool conf)
           consumer-threads (get conf :consumer-threads 2)
           exec-service (threads/create-exec-service consumer-threads)
-          delegate-f (fn [msg]
-                       (async/>!! msg-ch msg))
+          delegate-f (if (get conf :consumer-reporting)
+                       (fn [msg]
+                         (async/>!! msg-ch msg)
+                         (mark! messages-read))
+                       (fn [msg]
+                         (async/>!! msg-ch msg)))
 
           wu-processor (partial process-wu! state conn-pool delegate-f)]
 
+      (start-wu-publisher! (assoc state :shutdown-flag shutdown-flag)  publish-exec-service exec-service wu-processor)
+      (assoc state :publish-exec-service publish-exec-service :exec-service exec-service :conn-pool conn-pool :shutdown-flag shutdown-flag))))
 
-      (start-wu-publisher! state publish-exec-service exec-service wu-processor)
-      (assoc state :publish-exec-service publish-exec-service :exec-service exec-service :conn-pool conn-pool))))
-
-(defn close-consumer! [{:keys [publish-exec-service exec-service conn-pool]}]
+(defn close-consumer! [{:keys [publish-exec-service exec-service conn-pool ^AtomicBoolean shutdown-flag]}]
+  (.set shutdown-flag true)
+  (info "closing publish-exec-serivce")
   (threads/close! {:executor publish-exec-service} :timeout-ms 30000)
+  (info "closing exec-serivce")
   (threads/close! {:executor exec-service} :timeout-ms 30000)
-  (tcp/close-pool! conn-pool))
+  (info "closing conn-pool")
+  (tcp/close-pool! conn-pool)
+  (info "all consumer resources closed"))

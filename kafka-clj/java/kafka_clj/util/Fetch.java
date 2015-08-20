@@ -7,14 +7,11 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 
 import java.io.UnsupportedEncodingException;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Utility class to create
  */
 public class Fetch {
-
-    private static final AtomicLong counter = new AtomicLong(0);
 
     /**
      * Read the kafka fetch response
@@ -27,6 +24,7 @@ public class Fetch {
      */
     public static final Object readFetchResponse(ByteBuf buffer, Object state, IFn onMessage) throws UnsupportedEncodingException{
         int corrId = buffer.readInt();
+
         readTopicArray(buffer, state, onMessage);
         return state;
     }
@@ -319,7 +317,11 @@ public class Fetch {
         }
 
         public String toString(){
-            return "FetchError[" + topic + "," + partition + "," + errorCode + "]";
+            String topic2 = topic;
+            if(topic != null && topic.length() > 100)
+                topic2 = topic.substring(0, 100);
+
+            return "FetchError[topic:" + topic2 + ",partition:" + partition + ",error-code:" + errorCode + "]";
         }
 
         public static final FetchError create(String topic, int partition, int errorCode){

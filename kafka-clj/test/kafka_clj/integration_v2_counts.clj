@@ -1,5 +1,5 @@
 (ns kafka-clj.integration-v2-counts
-  (:require [kafka-clj.test-utils :refer [startup-resources shutdown-resources create-topics]]
+  (:require [kafka-clj.test-utils :refer [startup-resources shutdown-resources]]
             [kafka-clj.consumer.work-organiser :refer [wait-on-work-assigned-flag]]
             [kafka-clj.client :refer [create-connector send-msg close]]
             [kafka-clj.consumer.node :refer [create-node! read-msg! shutdown-node!]]
@@ -36,7 +36,7 @@
 (defonce msg-count 10000)
 
 (with-state-changes
-  [ (before :facts (do (reset! state-ref (startup-resources test-topic))
+  [ (before :facts (do (reset! state-ref (startup-resources 1 test-topic))
                        (reset! client-ref (create-connector (get-in @state-ref [:kafka :brokers]) {:flush-on-write true :codec 2}))
                        (reset! node-ref (create-node!
                                           {:bootstrap-brokers (get-in @state-ref [:kafka :brokers])
@@ -57,6 +57,8 @@
 
         ;allows us to wait till the work assignment has started
         (wait-on-work-assigned-flag (:org @node-ref) 30000)
+        (prn ">>>>>>>>>>>>>>>>>>> completed wait-on-work-assignment")
 
         (let [msgs (read-messages @node-ref)]
+          (prn "->>>>>>>>>>>>>> got messages " (count msgs))
           (count msgs) => msg-count)))

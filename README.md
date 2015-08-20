@@ -208,6 +208,14 @@ This can be changed by setting the :use-earliest property to true. It is normall
 (remove-topics! node ["test1"])
 ;;remove topics
 
+;;when the consumer node is closed m will return nil after the last message,
+;;this allows for reading till closed blocking if waiting for messages and not shutdown
+;(doseq [msg (take-while (complement nil?) m)]
+; (prn (:topic msg) " " (:partition msg) " " (:offset msg) " " (:bts msg)))
+
+(shutdown-node! node)
+;;closes the consumer node
+
 ```
 
 ### Java
@@ -310,6 +318,9 @@ See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for wr
 |:send-cache-expire-after-access | 5 | seconds to expire an entry after read |
 |:consume-step | 100000 | The max number of messages to consume in a single work unit |
 |:redis-conf | ```:redis-conf {:host "localhost" :max-active 10 :timeout 500}``` | The redis configuration for the consumer |
+|:reset-ahead-offsets | ```:reset-ahead-offsets true``` default is false | If the brokers during restarts report a lower offset than is saved, we reset the read offset to that of the max reported broker offset for a topic/partition see https://github.com/gerritjvv/kafka-fast/issues/10 |
+|:consumer-threads | 2 | number of background threads doing fetching from kafka |
+|:consumer-reporting | false | if true the kafka consumer will print out metrics for the number of messages sent the the msg-ch every 10 seconds |
 
 ### Performance configuration for consuming
 
@@ -322,9 +333,29 @@ This ensures that on each request you get a reasonable amount of messages in byt
 
 The consumer will print a warning log entry when ever the wasted messages is more than half of the work-units size.
 
+**Background Fetch Threads**
+
+Sometimes if might be as simple as increasing the number of ```:consumer-threads```, try 4, 6 threads.  
+Normally if you see that you can keepup with processing kafka messages from the connector even if the queue contains allot of messages still  
+this is a sign that you are not fetching fast enough.  
+
+**Not consuming enough megabytes**
+
+If you see allot of ```kafka-clj.consumer.work-organiser - Recalculating work for processed work-unit``` in your log output  
+this is a good indication that you need to increase the ```max-bytes``` parameter.  
+
+
 ## Java 
 
 For configuration options with the Java API see the ```kakfa_clj.core.KafkaConf``` class
+
+# Bootstrap errors
+
+If when a node or connector is created no metadata can be retreived from the kafka brokers, and exception  
+is thrown, this generally signals an error with the bootstrap metadata brokers.  
+
+Note: on clean clusters where there are no topics created yet, this might throw a false exception for consumers.
+
 
 # Produce Error handling and persistence
 

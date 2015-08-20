@@ -13,7 +13,7 @@
             [clj-tuple :refer [tuple]]
             [clojure.core.async :as async])
   (:import [java.util.concurrent.atomic AtomicLong]
-           (java.util.concurrent Executors ScheduledExecutorService TimeUnit ThreadFactory ExecutorService)
+           (java.util.concurrent Executors ScheduledExecutorService TimeUnit ThreadFactory ExecutorService CountDownLatch)
            (java.io IOException ByteArrayInputStream DataInputStream)))
 
 (defonce ^Long PRODUCER_ERROR_BACKOFF_DEFAULT 2000)
@@ -43,10 +43,17 @@
     (assoc m k (dissoc-in (m k) ks))))
 
 (defn- healthy-partition-rc? [^ProducerState state {:keys [host port error-code]}]
-  (and
-    (not (-> @(:blacklisted-producers-ref state) (get host) (get port)))
-    (not= error-code 5)
-    (not= error-code -1)))
+  (try
+    ;we can have host and port nil here if the connection failed via an exception condition
+    (and
+      host
+      port
+      (not (-> @(:blacklisted-producers-ref state) (get host) (get port)))
+      (not= error-code 5)
+      (not= error-code -1))
+    (catch Exception e (do
+                         (error "NPE while querying " (:blacklisted-producers-ref state) " keys " (keys state) " host " host " port " port)
+                         false))))
 
 (defn send-msg
   "Sends a message async and returns false if the connection is closed
@@ -59,7 +66,9 @@
       (throw (RuntimeException. (str "No healthy brokers available for topic " topic " " connector))))))
 
 (defn close [{{:keys [^AtomicLong activity-counter metadata-producers-ref producers-cache-ref scheduled-service retry-cache]} :state
-              msg-ch :msg-ch}]
+              msg-ch :msg-ch
+              persist-delay-thread :persist-delay-thread
+              async-latch :async-latch}]
   "Close all producers and channels created for the connected"
   ;only close when all activity has ceased
   ;close
@@ -77,10 +86,15 @@
 
   (.shutdownNow ^ScheduledExecutorService scheduled-service)
 
-  (doseq [[k producer] @metadata-producers-ref]
+  (doseq [[_ producer] @metadata-producers-ref]
     (try
       (produce/shutdown @producer)
       (catch Exception e (error e e))))
+
+  ;;before we close the retry-cache we need to close
+  ;; persist-delay-thread and wait for async-latch
+  (async/close! persist-delay-thread)
+  (.await ^CountDownLatch async-latch 5000 TimeUnit/MILLISECONDS)
 
   (persist/close-retry-cache retry-cache))
 
@@ -90,9 +104,11 @@
       [(:bts msg)]
       (map :bts msg))))
 
+;;public function do not remove
 (defn producer-error-ch [connector]
   (get-in connector [:state :producer-error-ch]))
 
+;;public function do not remove
 (defn get-metadata-error-ch [connector]
   (:metadata-error-ch connector))
 
@@ -129,18 +145,24 @@
 
 (defn- null-safe-deref [d] (when d @d))
 
-(defn- kafka-response
+(defn kafka-response
   "Handles the response input stream for each producer.
    Takes the state and resp:ProduceResponse.
    If the error-code > 0 and a send-cache is in state, the messages are retrieved from the persist and if still in persist,
    the messages are sent using handle-async-topic-messages."
   [^ProducerState state resp]
-  (let [{:keys [error-code topic partition correlation-id]} resp]
-    (if (> error-code 0)
-      (if (:send-cache state)
-        (when-let [msg (persist/get-sent-message state topic partition correlation-id)]
-          (handle-async-topic-messages state topic (if (coll? msg) msg [msg])))
-        (error "Message received event though acks < 1 msg " resp)))))
+  (let [error-code (:error-code resp)                       ;;dont use {:keys []} here some weirdness was seend that caused
+        topic (:topic resp)                                 ;;java.lang.IllegalArgumentException: No value supplied for key: kafka_clj.response.ProduceResponse
+        partition (:partition resp)                         ;;unrolling creates a hashmap and for some reason doesn't get the supplied keys
+        correlation-id (:correlation-id resp)]
+
+    (if (and (number? error-code) topic partition)
+      (when (> (long error-code) 0)
+        (if (:send-cache state)
+          (when-let [msg (persist/get-sent-message state topic partition correlation-id)]
+            (handle-async-topic-messages state topic (if (coll? msg) msg [msg])))
+          (error (str "Message received event though acks < 1 msg " resp))))
+      (error (str "Message cannot contain nil values topic " topic " partition " partition " error-code " error-code " resp: " resp " keys " (keys resp))))))
 
 (defn- create-producer
   "Create a producer instance and add a read-async-loop instance that will listen
@@ -208,7 +230,7 @@
       (handle-async-topic-messages (assoc state :blacklisted-producers-ref (blacklist! (:blacklisted-producers-ref state) partition-rc)) topic msgs))))
 
 
-(defn- ^ProducerState handle-async-topic-messages
+(defn handle-async-topic-messages
   "Send messages from the same topic to a producer"
   [^ProducerState state topic msgs]
   (if-let [partition-rc (select-partition-rc state topic)]
@@ -216,16 +238,28 @@
     (error-no-partition state topic msgs)))
 
 
-(defn- async-handler [^ExecutorService exec-service ^ProducerState producer-state msg-buff]
+(defn- async-handler
+  "Return a thread-seq, call countdown on the latch when the async thread closes"
+  [^ExecutorService exec-service ^ProducerState producer-state msg-buff ^CountDownLatch latch]
 
   ;Instead of async-ctx do
   ; loop on msg-buff, for each group of mssages do group-by
   ; send each separate topic to a different thread
-  (futils/thread-seq
+  (futils/thread-seq2
     (fn [msgs]
       (doseq [[topic grouped-msgs] (group-by :topic msgs)]
         (fthreads/submit exec-service #(handle-async-topic-messages producer-state topic grouped-msgs))))
+    (fn [] (.countDown latch))
     msg-buff))
+
+
+(defn- exception-if-nil!
+  "Helper function that throws an exception if the metadata passed in is nil"
+  [bootstrap-brokers metadata]
+  (if metadata
+    metadata
+    (throw (ex-info (str "No metadata could be found from any of the bootstrap brokers provided " bootstrap-brokers) {:type :metadata-exception
+                                                                                                                      :bootstrap-brokers bootstrap-brokers}))))
 
 (defn create-connector
   "Creates a connector for sending to kafka
@@ -261,6 +295,8 @@
         retry-cache (persist/create-retry-cache conf)
 
         activity-counter (AtomicLong. 0)
+        async-latch (CountDownLatch. 1)
+
         state {
                :activity-counter activity-counter
                :retry-cache retry-cache
@@ -272,7 +308,7 @@
                :scheduled-service scheduled-service
                :conf (assoc conf :batch-fail-message-over-limit batch-fail-message-over-limit :batch-byte-limit batch-byte-limit :topic-auto-create topic-auto-create)}
 
-        brokers-metadata-ref (ref (meta/get-metadata! state conf))
+        brokers-metadata-ref (ref (exception-if-nil! bootstrap-brokers (meta/get-metadata! state conf)))
 
         update-metadata (fn []
                           (if-let [metadata (meta/get-metadata! state conf)]
@@ -290,20 +326,23 @@
 
                   ;;every 5 seconds check for any data in the retry cache and resend the messages
         connector2 (assoc connector :msg-ch msg-ch :metadata-error-ch metadata-error-ch :update-metadata update-metadata)
+
+        persist-delay-thread (futils/fixdelay-thread 1000
+                                                     (try
+                                                       (do
+                                                         (doseq [retry-msg (persist/retry-cache-seq connector)]
+                                                           (do (warn "Retry messages for " (:topic retry-msg) " " (:key-val retry-msg))
+                                                               (if (coll? (:v retry-msg))
+                                                                 (doseq [bts (retry-msg-bts-seq retry-msg)]
+                                                                   (send-msg connector2 (:topic retry-msg) bts))
+                                                                 (warn "Invalid retry value " retry-msg))
+
+                                                               (persist/delete-from-retry-cache connector (:key-val retry-msg)))))
+                                                       (catch Exception e (error e e))))
+
         ]
 
-    (futils/fixdelay-thread 1000
-                            (try
-                              (do
-                                (doseq [retry-msg (persist/retry-cache-seq connector)]
-                                  (do (warn "Retry messages for " (:topic retry-msg) " " (:key-val retry-msg))
-                                      (if (coll? (:v retry-msg))
-                                        (doseq [bts (retry-msg-bts-seq retry-msg)]
-                                          (send-msg connector2 (:topic retry-msg) bts))
-                                        (warn "Invalid retry value " retry-msg))
-
-                                      (persist/delete-from-retry-cache connector (:key-val retry-msg)))))
-                              (catch Exception e (error e e))))
+    ;;important close needs to call close! on msg-buff
     (async-handler async-ctx
                    (->ProducerState conf
                                     activity-counter
@@ -314,11 +353,17 @@
                                     blacklisted-producers-ref
                                     brokers-metadata-ref
                                     producer-error-ch)
-                   msg-buff)
+                   msg-buff
+                   async-latch)
+
+
     (.scheduleWithFixedDelay scheduled-service ^Runnable (fn [] (try (update-metadata) (catch Exception e (do (error e e)
                                                                                                               (async/>!! metadata-error-ch e))))) 0 10000 TimeUnit/MILLISECONDS)
 
-    connector2))
+    (->
+      connector2
+      (assoc :persist-delay-thread persist-delay-thread)
+      (assoc :async-latch async-latch))))
  
 (defrecord KafkaClientService [brokers conf client]
   component/Lifecycle

@@ -1,4 +1,4 @@
-(defproject kafka-clj "3.0.5"
+(defproject kafka-clj "3.5.1"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -15,13 +15,15 @@
   :java-source-paths ["java"]
   :jvm-opts ["-Xmx3g"]
   :plugins [
-         [lein-rpm "0.0.5"] [lein-midje "3.0.1"] [lein-marginalia "0.7.1"]
+         [lein-rpm "0.0.5"] [lein-midje "3.1.1"] [lein-marginalia "0.7.1"]
 	       [lein-cloverage "1.0.2"]
          [lein-kibit "0.0.8"] [no-man-is-an-island/lein-eclipse "2.0.0"]
            ]
   :test-paths ["test" "test-java"]
   :dependencies [
-                 [com.taoensso/carmine "2.7.0"]
+                 [org.clojars.runa/conjure "2.1.3" :scope "test"]
+
+                 [com.taoensso/carmine "2.7.0" :exclusions [org.clojure/clojure]]
                  [redis.clients/jedis "2.6.2"]
                  [org.redisson/redisson "1.2.1"]
                  [org.apache.commons/commons-pool2 "2.2"]
@@ -32,14 +34,16 @@
                  [org.clojure/tools.trace "0.7.6"]
                  [org.xerial.snappy/snappy-java "1.1.1.6"]
 
+                 [pjson "0.2.7"]
                  [net.jpountz.lz4/lz4 "1.3.0"]
-                 [org.clojure/tools.logging "0.3.0"]
+                 [org.clojure/tools.logging "0.3.1"]
                  [clj-tcp "0.4.9-SNAPSHOT"]
                  [fmap-clojure "LATEST" :exclusions [org.clojure/tools.logging]]
                  [fun-utils "0.5.8-SNAPSHOT" :exclusions [org.clojure/tools.logging]]
                  [clj-tuple "0.1.7"]
                  [thread-load "0.2.0-SNAPSHOT" :exclusions [org.clojure/clojure]]
                  [com.codahale.metrics/metrics-core "3.0.1"]
+                 [metrics-clojure "2.5.1"]
                  [org.clojure/core.async "0.1.303.0-886421-alpha"]
                  [com.stuartsierra/component "0.2.2"]
                  [org.clojure/clojure "1.6.0" :scope "provided"]

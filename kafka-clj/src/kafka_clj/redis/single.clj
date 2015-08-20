@@ -1,7 +1,9 @@
 (ns kafka-clj.redis.single
   (:import
     (org.apache.commons.pool2 ObjectPool PooledObjectFactory)
-    (org.apache.commons.pool2.impl GenericObjectPool DefaultPooledObject GenericKeyedObjectPool))
+    (org.apache.commons.pool2.impl GenericObjectPool DefaultPooledObject GenericKeyedObjectPool)
+    (java.util.concurrent TimeUnit)
+    (java.util UUID))
   (:require [taoensso.carmine
              (protocol    :as protocol)
              (connections :as conns)
@@ -11,10 +13,15 @@
             [clojure.tools.logging :refer [info]]))
 
 
+(defn nil-safe [v default]
+  (if (nil? v) default v))
 
-(defn- make-connection-factory [{:keys [host port timeout] :or {host "localhost" port 6379 timeout 300}}]
+(defn- make-connection-factory [{:keys [host port timeout]}]
   (reify PooledObjectFactory
-    (makeObject      [_ ] (DefaultPooledObject. (conns/make-new-connection {:host host :port port :timeout timeout})))
+    (makeObject      [_ ]
+      (DefaultPooledObject. (conns/make-new-connection {:host (nil-safe host "localhost")
+                                                        :port (nil-safe port 6379)
+                                                        :timeout (nil-safe timeout 300)})))
     (activateObject  [_ pooled-obj])
     (validateObject  [_ pooled-obj] (let [conn (.getObject pooled-obj)]
                                       (conns/conn-alive? conn)))
@@ -126,7 +133,7 @@
   ;; TODO Waiting on http://goo.gl/YemR7 for simpler (non-Lua) solution
   [pool lock-name timeout-ms wait-ms]
   (let [max-udt (+ wait-ms (System/currentTimeMillis))
-        uuid    (str (java.util.UUID/randomUUID))]
+        uuid    (str (UUID/randomUUID))]
     (_wcar pool ; Hold one connection for all attempts
            (loop []
              (when (> max-udt (System/currentTimeMillis))
@@ -186,7 +193,8 @@
   (-lrange [_ q n limit]
     (car/lrange q n limit))
   (-brpoplpush [_ queue queue2 n]
-    (car/brpoplpush queue queue2 n))
+    ;n is milliseconds but redis only handles seconds
+    (car/brpoplpush queue queue2 (.toSeconds (TimeUnit/MILLISECONDS) (long n))))
 
   (-acquire-lock [{:keys [pool]} lock-name timeout-ms wait-ms]
     (_acquire-lock pool lock-name timeout-ms wait-ms))

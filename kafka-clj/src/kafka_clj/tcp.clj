@@ -22,7 +22,7 @@
   (:import (java.net Socket SocketException)
            (java.io InputStream OutputStream BufferedInputStream BufferedOutputStream DataInputStream)
            (io.netty.buffer ByteBuf Unpooled)
-           (kafka_clj.util Util)))
+           (kafka_clj.util Util IOUtil)))
 
 
 (defrecord TCPClient [host port conf socket ^BufferedInputStream input ^BufferedOutputStream output])
@@ -51,15 +51,22 @@
   [^"[B" bts]
   (Unpooled/wrappedBuffer bts))
 
+(defn read-int ^long [^DataInputStream input ^long timeout]
+  (long (IOUtil/readInt input timeout)))
+
+(defn read-bts ^"[B" [^DataInputStream input ^long timeout ^long cnt]
+  (IOUtil/readBytes input (int cnt) timeout))
+
 (defn ^"[B" read-response
   "Read a single response from the DataInputStream of type [int length][message bytes]
    The message bytes are returned as a byte array
    Throws SocketException, Exception"
-  [{:keys [^DataInputStream input]}]
-  (let [len (.readInt input)
-        bts (byte-array len)
-        _ (.readFully input bts)]
-    bts))
+  ([k]
+    (read-response {} k 30000))
+  ([wu {:keys [^DataInputStream input]} ^long timeout]
+   (let [len (read-int input timeout)
+         bts (read-bts input timeout len)]
+     bts)))
 
 (defn read-async-loop!
   "Only call this once on the tcp-client, it will create a background thread that exits when the socket is closed.
