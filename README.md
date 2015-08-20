@@ -301,28 +301,31 @@ See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for wr
 |:bootstrap-brokers | nil | An array of bootstrap brokers from which the consumer and producer will read the initial broker cluster state, e.g. ```[{:host "localhost" :port 9092} {:host "host2" :port 9092}]``` |
 |:batch-num-messages | 100000  | Number of messages to batch before sending. If should be high enough for performance but not too high so that the total message-set size is too big. |
 |:queue-buffering-max-ms | 1000 | Number of milliseconds to wait before sending, if the :batch-num-message has no been reached yet but this timeout happens, then the currently held data will be sent.| 
-|:batch-byte-limit | 10485760 (10 MB) | If the number of bytes in a batch is bigger than this limit the batch will be sent to kafka |
-|:batch-fail-message-over-limit | true | If a single message is over this limit it will not be sent, and error message printed and the message is discarded |
-|:max-wait-time | 1000 | The number of milliseconds the server should wait to gather data (up to at least :min-bytes) for a fetch request. |
-|:min-bytes  | 1 | The minimum bytes a server should have before returning a fetch request. |
-|:max-bytes  | 104857600 (100mb) | The maximum number of bytes a fetch request should return. |
-|:client-id  | "1" | Used for identifying client requests. |
-|:codec      | 0   | The compression that should be used for sending messages, 0 = None, 1 = Gzip, 2 = Snappy. |
-|:acks       | 1   | The number of replicas that should be written and a response message returned for a produce send. | 
-|:offset-commit-freq | 5000 | Offsets consumed will be committed every :offset-commit-freq milliseconds. |
-|:fetch-timeout | 30000 | Milliseconds to wait for a broker to response to a fetch request. |
-|:use-earliest  | false  | Only applies if no offset is held for a particular topic + partition in redis. If true will use the earliest available offset from the broker, otherwise the latest offset is used. |
-|:metadata-timeout  | 10000 | Milliseconds to wait for a broker to respond to a metadata request. |
-|:send-cache-max-entries | 1000000 | number of entries to keep in cache for server ack checks |
-|:send-cache-expire-after-write | 5 | seconds to expire an entry after write |
-|:send-cache-expire-after-access | 5 | seconds to expire an entry after read |
-|:consume-step | 100000 | The max number of messages to consume in a single work unit |
-|:redis-conf | ```:redis-conf {:host "localhost" :max-active 10 :timeout 500}``` | The redis configuration for the consumer |
-|:reset-ahead-offsets | ```:reset-ahead-offsets true``` default is false | If the brokers during restarts report a lower offset than is saved, we reset the read offset to that of the max reported broker offset for a topic/partition see https://github.com/gerritjvv/kafka-fast/issues/10 |
-|:consumer-threads | 2 | number of background threads doing fetching from kafka |
-|:consumer-reporting | false | if true the kafka consumer will print out metrics for the number of messages sent the the msg-ch every 10 seconds |
+|:conf :batch-byte-limit | 10485760 (10 MB) | If the number of bytes in a batch is bigger than this limit the batch will be sent to kafka |
+|:conf :batch-fail-message-over-limit | true | If a single message is over this limit it will not be sent, and error message printed and the message is discarded |
+|:conf :max-wait-time | 1000 | The number of milliseconds the server should wait to gather data (up to at least :min-bytes) for a fetch request. |
+|:conf :min-bytes  | 1 | The minimum bytes a server should have before returning a fetch request. |
+|:conf :max-bytes  | 104857600 (100mb) | The maximum number of bytes a fetch request should return. |
+|:conf :client-id  | "1" | Used for identifying client requests. |
+|:conf :codec      | 0   | The compression that should be used for sending messages, 0 = None, 1 = Gzip, 2 = Snappy. |
+|:conf :acks       | 1   | The number of replicas that should be written and a response message returned for a produce send. | 
+|:conf :offset-commit-freq | 5000 | Offsets consumed will be committed every :offset-commit-freq milliseconds. |
+|:conf :fetch-timeout | 30000 | Milliseconds to wait for a broker to response to a fetch request. |
+|:conf :use-earliest  | false  | Only applies if no offset is held for a particular topic + partition in redis. If true will use the earliest available offset from the broker, otherwise the latest offset is used. |
+|:conf :metadata-timeout  | 10000 | Milliseconds to wait for a broker to respond to a metadata request. |
+|:conf :send-cache-max-entries | 1000000 | number of entries to keep in cache for server ack checks |
+|:conf :send-cache-expire-after-write | 5 | seconds to expire an entry after write |
+|:conf :send-cache-expire-after-access | 5 | seconds to expire an entry after read |
+|:conf :consume-step | 100000 | The max number of messages to consume in a single work unit |
+|:conf:redis-conf | ```:redis-conf {:host "localhost" :max-active 10 :timeout 500}``` | The redis configuration for the consumer |
+|:conf :reset-ahead-offsets | ```:reset-ahead-offsets true``` default is false | If the brokers during restarts report a lower offset than is saved, we reset the read offset to that of the max reported broker offset for a topic/partition see https://github.com/gerritjvv/kafka-fast/issues/10 |
+|:conf :consumer-threads | 2 | number of background threads doing fetching from kafka |
+|:conf :consumer-reporting | false | if true the kafka consumer will print out metrics for the number of messages sent the the msg-ch every 10 seconds |
 
 ### Performance configuration for consuming
+
+An easy way to see how fast you are consuming via Kafka is by enabling ```:consumer-reporting```, this will print out message consumption metrics
+every 10 seconds.  
 
 Due to the way the work unit allocation works, if you read more bytes in a single request than the messages in a work unit there will be waste  
 and performance will not be optimum. The same happens if your message size is big so that only a small amount of messages falls into a single work unit  
