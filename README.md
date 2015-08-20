@@ -208,6 +208,14 @@ This can be changed by setting the :use-earliest property to true. It is normall
 (remove-topics! node ["test1"])
 ;;remove topics
 
+;;when the consumer node is closed m will return nil after the last message,
+;;this allows for reading till closed blocking if waiting for messages and not shutdown
+;(doseq [msg (take-while (complement nil?) m)]
+; (prn (:topic msg) " " (:partition msg) " " (:offset msg) " " (:bts msg)))
+
+(shutdown-node! node)
+;;closes the consumer node
+
 ```
 
 ### Java
