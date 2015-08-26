@@ -154,6 +154,7 @@
 
 (defn get-metadata! [{:keys [metadata-producers-ref blacklisted-metadata-producers-ref]} conf]
   {:pre [(ref? metadata-producers-ref) (ref? blacklisted-metadata-producers-ref)]}
+  (error "trying to get metadata:")
   (iterate-metadata-producers! metadata-producers-ref blacklisted-metadata-producers-ref conf))
 
 

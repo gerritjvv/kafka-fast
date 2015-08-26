@@ -229,6 +229,8 @@
 
         consume-step2 (if consume-step consume-step (get conf :consume-step 100000))]
 
+    (info "send-offsets-if-any!: group-name " group-name " offset-data2: " offset-data2)
+
     (doseq [{:keys [offset partition saved-offset all-offsets]} offset-data2]
       (swap! work-assigned-flag inc)
 
@@ -314,15 +316,19 @@
    For topics new work is calculated depending on the metadata returned from the producers"
   [{:keys [metadata-producers-ref conf error-handler] :as state} topics]
   {:pre [metadata-producers-ref conf]}
+  (error "calculate-new-work>>>>>>>> " topics)
   (try
+
     (let [meta (meta/get-metadata! state conf)
           offsets (cutil/get-broker-offsets state meta topics conf)]
 
+      (error "metadata: " offsets)
       ;;check for inconsistent offsets https://github.com/gerritjvv/kafka-fast/issues/10
       (when (get conf :reset-ahead-offsets false)
         (check-invalid-offsets! state offsets))
 
       (doseq [[broker topic-data] offsets]
+
         (doseq [[topic offset-data] topic-data]
           (try
             ;we map :offset to max of :offset and :all-offets

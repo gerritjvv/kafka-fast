@@ -68,6 +68,11 @@
          bts (read-bts input timeout len)]
      bts)))
 
+(defn closed-exception?
+  "Return true if the exception contains the word closed, otherwise nil"
+  [^Exception e]
+  (.contains (.toString e) "closed"))
+
 (defn read-async-loop!
   "Only call this once on the tcp-client, it will create a background thread that exits when the socket is closed.
    The message must always be [4 bytes size N][N bytes]"
@@ -78,6 +83,7 @@
       (while (not (closed? conn))
         (try
           (handler (read-response conn))
+          (catch IOException e (when-not (closed-exception? e) (error e)))
           (catch SocketException e nil)
           (catch Exception e (error e e))))
       (catch SocketException e nil))))

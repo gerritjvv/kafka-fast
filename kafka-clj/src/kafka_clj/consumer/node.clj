@@ -36,12 +36,15 @@
   {:pre [redis-conn topics group-name]}
   ;timeout-ms wait-ms
   (let [lock-timeout (* 10 60000)]
-    (redis/with-lock
-      redis-conn
-      (str group-name "/kafka-nodes-master-lock")
-      lock-timeout
-      1000
-      (calculate-new-work node topics))))
+    (error "Work-calculate-delegate!!!: lock")
+    (try
+      (redis/with-lock
+        redis-conn
+        (str group-name "/kafka-nodes-master-lock")
+        lock-timeout
+        1000
+        (calculate-new-work node topics))
+      (catch Exception e (error e e)))))
 
 (defn- start-work-calculate
   "Returns a channel that will run in a fixed delay of 1000ms
@@ -115,6 +118,7 @@
   "
   [conf topics & {:keys [error-handler redis-factory] :or {error-handler (fn [& args]) redis-factory redis/create}}]
   {:pre [conf topics (not-empty (:bootstrap-brokers conf)) (:redis-conf conf)]}
+  (error ">>>>>>> TEST")
   (let [host-name (.getHostName (InetAddress/getLocalHost))
         topics-ref (ref (into #{} topics))
         group-name (get-in conf [:redis-conf :group-name] "default")
@@ -137,6 +141,7 @@
         ]
 
 
+    (error "Create NODE !!!!!!!!!!!!!!!! " group-name)
     ;check for left work-units in working queue
     (copy-redis-queue redis-conn working-queue-name work-queue-name)
 
