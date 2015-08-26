@@ -229,8 +229,6 @@
 
         consume-step2 (if consume-step consume-step (get conf :consume-step 100000))]
 
-    (info "send-offsets-if-any!: group-name " group-name " offset-data2: " offset-data2)
-
     (doseq [{:keys [offset partition saved-offset all-offsets]} offset-data2]
       (swap! work-assigned-flag inc)
 
