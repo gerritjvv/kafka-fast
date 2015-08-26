@@ -20,7 +20,7 @@
             [kafka-clj.pool :as pool]
             [clj-tuple :refer [tuple]])
   (:import (java.net Socket SocketException)
-           (java.io InputStream OutputStream BufferedInputStream BufferedOutputStream DataInputStream)
+           (java.io IOException InputStream OutputStream BufferedInputStream BufferedOutputStream DataInputStream)
            (io.netty.buffer ByteBuf Unpooled)
            (kafka_clj.util Util IOUtil)))
 
@@ -96,7 +96,6 @@
 
 (defn close! [{:keys [^Socket socket ^InputStream input ^OutputStream output]}]
   {:pre [socket]}
-  (info "tcp/close!: socket: " (.isClosed socket))
   (when (not (.isClosed socket))
     (.flush output)
     (.close output)
