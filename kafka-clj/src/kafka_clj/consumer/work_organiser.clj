@@ -314,13 +314,11 @@
    For topics new work is calculated depending on the metadata returned from the producers"
   [{:keys [metadata-producers-ref conf error-handler] :as state} topics]
   {:pre [metadata-producers-ref conf]}
-  (error "calculate-new-work>>>>>>>> " topics)
   (try
 
     (let [meta (meta/get-metadata! state conf)
           offsets (cutil/get-broker-offsets state meta topics conf)]
 
-      (error "metadata: " offsets)
       ;;check for inconsistent offsets https://github.com/gerritjvv/kafka-fast/issues/10
       (when (get conf :reset-ahead-offsets false)
         (check-invalid-offsets! state offsets))

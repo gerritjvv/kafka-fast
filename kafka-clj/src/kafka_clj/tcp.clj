@@ -22,7 +22,8 @@
   (:import (java.net Socket SocketException)
            (java.io IOException InputStream OutputStream BufferedInputStream BufferedOutputStream DataInputStream)
            (io.netty.buffer ByteBuf Unpooled)
-           (kafka_clj.util Util IOUtil)))
+           (kafka_clj.util Util IOUtil)
+           (java.util.concurrent TimeoutException)))
 
 
 (defrecord TCPClient [host port conf socket ^BufferedInputStream input ^BufferedOutputStream output])
@@ -83,6 +84,7 @@
       (while (not (closed? conn))
         (try
           (handler (read-response conn))
+          (catch TimeoutException e nil)
           (catch IOException e (when-not (closed-exception? e) (error e)))
           (catch SocketException e nil)
           (catch Exception e (error e e))))

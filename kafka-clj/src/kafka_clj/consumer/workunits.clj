@@ -3,7 +3,7 @@
     :doc "Internal consumer helper api for receiving and publishing work units to redis
          The public functions are get-work-unit!, publish-consumed-wu!, publish-error-wu! and publisher-zero-consumed-wu!"}
   kafka-clj.consumer.workunits
-  (:require [clojure.tools.logging :refer [info debug]]
+  (:require [clojure.tools.logging :refer [error info debug]]
             [kafka-clj.redis.core :as redis])
   (:import [java.net SocketTimeoutException]
            (java.util.concurrent.atomic AtomicBoolean)))
@@ -32,17 +32,21 @@
 (defn publish-consumed-wu!
   "sends the wu as ok and the offset read"
   [state wu offset-read]
+  (error "publish-consumed-consumed! " wu)
   (publish-work-response! state wu wu :ok {:offset-read offset-read}))
 
 (defn publish-error-wu!
   "sends the wu as error status"
   [state wu status offset-read]
+  (error "publish-error! " wu)
   (publish-work-response! state wu wu status {:offset-read offset-read}))
 
 (defn publish-zero-consumed-wu! [state wu]
+  (error "publish-zero-consumed! " wu)
   (publish-work-response! state wu wu :ok {:offset-read 0}))
 
 (defn publish-error-consumed-wu! [state wu]
+  (error "publish-error-consumed! " wu)
   (publish-work-response! state wu wu :fail {:offset-read 0}))
 
 (defn wait-on-work-unit!

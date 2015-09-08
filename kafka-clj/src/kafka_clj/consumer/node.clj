@@ -118,7 +118,6 @@
   "
   [conf topics & {:keys [error-handler redis-factory] :or {error-handler (fn [& args]) redis-factory redis/create}}]
   {:pre [conf topics (not-empty (:bootstrap-brokers conf)) (:redis-conf conf)]}
-  (error ">>>>>>> TEST")
   (let [host-name (.getHostName (InetAddress/getLocalHost))
         topics-ref (ref (into #{} topics))
         group-name (get-in conf [:redis-conf :group-name] "default")
@@ -140,8 +139,6 @@
         calc-work-thread (start-work-calculate (assoc org :redis-conn redis-conn) topics-ref :freq (get conf :work-calculate-freq 10000))
         ]
 
-
-    (error "Create NODE !!!!!!!!!!!!!!!! " group-name)
     ;check for left work-units in working queue
     (copy-redis-queue redis-conn working-queue-name work-queue-name)
 
