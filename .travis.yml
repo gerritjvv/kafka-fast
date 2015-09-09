@@ -1,1 +1,1 @@
-script: travis-build.sh
+script: ./travis-build.sh
