@@ -36,7 +36,7 @@
 
                  [pjson "0.2.7"]
                  [net.jpountz.lz4/lz4 "1.3.0"]
-                 [org.clojure/tools.logging "0.3.1"]
+                 [org.clojure/tools.logging "0.3.1"]vim
                  [clj-tcp "0.4.9-SNAPSHOT"]
                  [fmap-clojure "LATEST" :exclusions [org.clojure/tools.logging]]
                  [fun-utils "0.5.8-SNAPSHOT" :exclusions [org.clojure/tools.logging]]

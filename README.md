@@ -13,6 +13,7 @@ albeit you can still access them from Java using the clojure.lang.RT object.
 This project contains a Vagrant template that allows you to tryout a full kafka cluster deploy on your local machine,  
 See https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/vagrant.md
 
+[![Build Status](https://travis-ci.org/gerritjvv/kafka-fast.svg)](https://travis-ci.org/gerritjvv/kafka-fast)
 
 #Usage
 
