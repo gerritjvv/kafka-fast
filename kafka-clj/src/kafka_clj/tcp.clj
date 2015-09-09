@@ -20,9 +20,10 @@
             [kafka-clj.pool :as pool]
             [clj-tuple :refer [tuple]])
   (:import (java.net Socket SocketException)
-           (java.io InputStream OutputStream BufferedInputStream BufferedOutputStream DataInputStream)
+           (java.io IOException InputStream OutputStream BufferedInputStream BufferedOutputStream DataInputStream)
            (io.netty.buffer ByteBuf Unpooled)
-           (kafka_clj.util Util IOUtil)))
+           (kafka_clj.util Util IOUtil)
+           (java.util.concurrent TimeoutException)))
 
 
 (defrecord TCPClient [host port conf socket ^BufferedInputStream input ^BufferedOutputStream output])
@@ -68,6 +69,11 @@
          bts (read-bts input timeout len)]
      bts)))
 
+(defn closed-exception?
+  "Return true if the exception contains the word closed, otherwise nil"
+  [^Exception e]
+  (.contains (.toString e) "closed"))
+
 (defn read-async-loop!
   "Only call this once on the tcp-client, it will create a background thread that exits when the socket is closed.
    The message must always be [4 bytes size N][N bytes]"
@@ -78,6 +84,8 @@
       (while (not (closed? conn))
         (try
           (handler (read-response conn))
+          (catch TimeoutException e nil)
+          (catch IOException e (when-not (closed-exception? e) (error e)))
           (catch SocketException e nil)
           (catch Exception e (error e e))))
       (catch SocketException e nil))))
@@ -90,7 +98,6 @@
 
 (defn close! [{:keys [^Socket socket ^InputStream input ^OutputStream output]}]
   {:pre [socket]}
-  (info "tcp/close!: socket: " (.isClosed socket))
   (when (not (.isClosed socket))
     (.flush output)
     (.close output)

@@ -315,6 +315,7 @@
   [{:keys [metadata-producers-ref conf error-handler] :as state} topics]
   {:pre [metadata-producers-ref conf]}
   (try
+
     (let [meta (meta/get-metadata! state conf)
           offsets (cutil/get-broker-offsets state meta topics conf)]
 
@@ -323,6 +324,7 @@
         (check-invalid-offsets! state offsets))
 
       (doseq [[broker topic-data] offsets]
+
         (doseq [[topic offset-data] topic-data]
           (try
             ;we map :offset to max of :offset and :all-offets

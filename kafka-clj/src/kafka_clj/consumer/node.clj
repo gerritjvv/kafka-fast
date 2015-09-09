@@ -36,12 +36,15 @@
   {:pre [redis-conn topics group-name]}
   ;timeout-ms wait-ms
   (let [lock-timeout (* 10 60000)]
-    (redis/with-lock
-      redis-conn
-      (str group-name "/kafka-nodes-master-lock")
-      lock-timeout
-      1000
-      (calculate-new-work node topics))))
+    (error "Work-calculate-delegate!!!: lock")
+    (try
+      (redis/with-lock
+        redis-conn
+        (str group-name "/kafka-nodes-master-lock")
+        lock-timeout
+        1000
+        (calculate-new-work node topics))
+      (catch Exception e (error e e)))))
 
 (defn- start-work-calculate
   "Returns a channel that will run in a fixed delay of 1000ms
@@ -135,7 +138,6 @@
         consumer (consume! (assoc intermediate-conf :redis-conn redis-conn :msg-ch msg-ch :work-unit-event-ch work-unit-event-ch))
         calc-work-thread (start-work-calculate (assoc org :redis-conn redis-conn) topics-ref :freq (get conf :work-calculate-freq 10000))
         ]
-
 
     ;check for left work-units in working queue
     (copy-redis-queue redis-conn working-queue-name work-queue-name)

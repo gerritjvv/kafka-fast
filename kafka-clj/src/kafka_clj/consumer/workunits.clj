@@ -3,7 +3,7 @@
     :doc "Internal consumer helper api for receiving and publishing work units to redis
          The public functions are get-work-unit!, publish-consumed-wu!, publish-error-wu! and publisher-zero-consumed-wu!"}
   kafka-clj.consumer.workunits
-  (:require [clojure.tools.logging :refer [info debug]]
+  (:require [clojure.tools.logging :refer [error info debug]]
             [kafka-clj.redis.core :as redis])
   (:import [java.net SocketTimeoutException]
            (java.util.concurrent.atomic AtomicBoolean)))

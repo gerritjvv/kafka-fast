@@ -22,6 +22,9 @@ public class FetchState {
 
     long discarded = 0;
 
+    int minByteSize = 512;
+    int maxByteSize = 512;
+
     public FetchState(IFn delegate, String topic, Object status, long partition, long offset, long maxOffset) {
         this.delegate = delegate;
         this.topic = topic;
@@ -30,6 +33,27 @@ public class FetchState {
         this.initOffset = offset;
         this.offset = offset;
         this.maxOffset = maxOffset;
+    }
+
+    public void updateMinMax(byte[] bts){
+        setMinByteSize(bts.length);
+        setMaxByteSize(bts.length);
+    }
+
+    public void setMinByteSize(int size) {
+        minByteSize = Math.min(minByteSize, size);
+    }
+
+    public void setMaxByteSize(int size) {
+        maxByteSize = Math.max(maxByteSize, size);
+    }
+
+    public int getMinByteSize(){
+        return minByteSize;
+    }
+
+    public int getMaxByteSize(){
+        return maxByteSize;
     }
 
     public long getInitOffset(){

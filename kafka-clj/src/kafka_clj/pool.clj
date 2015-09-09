@@ -47,12 +47,13 @@
 (defn- lift [^PooledObject obj] (.getObject obj))
 
 (defn config-obj [conf]
+  ;;reason to believe that the eviction thread is causing a deadlock
   (let [conf-obj (reduce set-prop (GenericKeyedObjectPoolConfig.) {:block-when-exhausted true
-                                                                   :time-between-eviction-runs-millis 30000
+                                                                   ;:time-between-eviction-runs-millis 30000
                                                                    :test-while-idle true
                                                                    :test-on-return true
                                                                    :test-on-borrow true
-                                                                   :min-evictable-idle-time-millis 30000
+                                                                   ;:min-evictable-idle-time-millis 30000
                                                                    :max-total 20
                                                                    })]
     (reduce set-prop conf-obj conf)))
