@@ -306,7 +306,7 @@ See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for wr
 |:conf :batch-fail-message-over-limit | true | If a single message is over this limit it will not be sent, and error message printed and the message is discarded |
 |:conf :max-wait-time | 1000 | The number of milliseconds the server should wait to gather data (up to at least :min-bytes) for a fetch request. |
 |:conf :min-bytes  | 1 | The minimum bytes a server should have before returning a fetch request. |
-|:conf :max-bytes  | 104857600 (100mb) | The maximum number of bytes a fetch request should return. |
+|:conf :max-bytes  | 5000000 (~5mb) | The maximum number of bytes a fetch request should return, as of version 3.5.5 this value is auto tuned i.e it starts at the defined value in the configuration and then adds if not all messages could be consumed in a single fetch and removes if too many bytes were read for non work unit messages. |
 |:conf :client-id  | "1" | Used for identifying client requests. |
 |:conf :codec      | 0   | The compression that should be used for sending messages, 0 = None, 1 = Gzip, 2 = Snappy. |
 |:conf :acks       | 1   | The number of replicas that should be written and a response message returned for a produce send. | 
@@ -328,26 +328,11 @@ See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for wr
 An easy way to see how fast you are consuming via Kafka is by enabling ```:consumer-reporting```, this will print out message consumption metrics
 every 10 seconds.  
 
-Due to the way the work unit allocation works, if you read more bytes in a single request than the messages in a work unit there will be waste  
-and performance will not be optimum. The same happens if your message size is big so that only a small amount of messages falls into a single work unit  
-withing the max bytes requested. As a rule of thumb max-bytes should be big enough to fit e.g 100 000 messages in a single response (without blowing the memory)  
-some examples values are 100mb 200mb etc, the batch-num-messages should be equal to or just over that size, it could even be double.  
-
-This ensures that on each request you get a reasonable amount of messages in bytes and also a little as possible messages are wasted due to the work unit size.  
-
-The consumer will print a warning log entry when ever the wasted messages is more than half of the work-units size.
-
 **Background Fetch Threads**
 
 Sometimes if might be as simple as increasing the number of ```:consumer-threads```, try 4, 6 threads.  
 Normally if you see that you can keepup with processing kafka messages from the connector even if the queue contains allot of messages still  
 this is a sign that you are not fetching fast enough.  
-
-**Not consuming enough megabytes**
-
-If you see allot of ```kafka-clj.consumer.work-organiser - Recalculating work for processed work-unit``` in your log output  
-this is a good indication that you need to increase the ```max-bytes``` parameter.  
-
 
 ## Java 
 
@@ -483,7 +468,6 @@ Its common for kafka to send partial messages, not so common to send a whole par
 getting allot of these errors it might point to that your fetch size max bytes is too small and the actual message sets are larger than that value,
 for some reason kafka will still send it but partially.
 
-To fix experiment with increasing the value of the property ```kafka.max-bytes``` slowly, one megabyte at a time. If the value is too big  you'll start getting timeouts.
 
 Also check if the messages being sent can be reduced in size.
 
