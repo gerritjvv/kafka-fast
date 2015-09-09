@@ -1,3 +1,4 @@
 language: clojure
-before_script: scripts/travis-before.sh
+
+install: scripts/travis-install.sh
 script: scripts/travis-build.sh
