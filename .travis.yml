@@ -1,4 +1,6 @@
 language: clojure
 
+
 install: scripts/travis-install.sh
+
 script: scripts/travis-build.sh
