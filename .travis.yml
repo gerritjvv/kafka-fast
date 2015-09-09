@@ -1,0 +1,2 @@
+language: clojure
+script: cd ./kafka-clj; lein midje
