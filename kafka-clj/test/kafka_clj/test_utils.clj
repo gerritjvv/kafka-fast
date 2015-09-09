@@ -64,7 +64,7 @@
    :redis EmbeddedRedis
    }"
   [nodes & topics]
-  {:pre [(coll? nodes) (not-empty nodes) (number? (first nodes))]}
+  {:pre [(number? nodes)]}
   (let [^EmbeddedKafkaCluster kafka (startup-kafka nodes)
         res {:kafka kafka
              :redis (startup-redis)}]

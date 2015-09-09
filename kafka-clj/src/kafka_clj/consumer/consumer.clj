@@ -4,7 +4,7 @@
   kafka-clj.consumer.consumer
   (:require [kafka-clj.tcp :as tcp]
             [fun-utils.threads :as threads]
-            [clojure.tools.logging :refer [error info warn]]
+            [clojure.tools.logging :refer [error info warn debug]]
             [kafka-clj.fetch :as fetch]
             [clj-tuple :refer [tuple]]
             [kafka-clj.consumer.workunits :as wu-api]
@@ -57,13 +57,17 @@
       "Converts a FetchState into (tuple status offset maxoffset discarded min max processed-count)"
       [^FetchState state]
       (when (print-discarded state)
-        (tuple (.getStatus state) (.getOffset state) (.getMaxOffset state) (.getDiscarded state) (.getMinByteSize state) (.getMaxByteSize state) (.getProcessed state))))
+        (tuple (.getStatus state)
+               (.getOffset state)
+               (.getMaxOffset state)
+               (.getDiscarded state)
+               (.getMinByteSize state)
+               (.getMaxByteSize state)
+               (- (.getOffset state) (.getInitOffset state)))))
 
 (extend-protocol IMsgEvent
   Fetch$Message                                           ;topic partition offset bts
   (-msg-event [{:keys [^long offset ^"[B" bts] :as msg} ^FetchState state]
-
-    (.incProcessed state)
 
     (if (and (< offset (.getMaxOffset state)) (> offset (.getOffset state)))
       (do
@@ -137,8 +141,6 @@
   {:pre [conn-pool (get-in wu [:producer :host]) [get-in wu [:producer :port]]]}
   (try
 
-    (info "Processing wu! " wu)
-
     (let [{:keys [host port]} (:producer wu)
           conn (tcp/borrow conn-pool host port)]
 
@@ -149,38 +151,49 @@
               (write-fetch-req! state conn wu))
             (catch Throwable e (do
                                    (error e e)
-                                   (wu-api/publish-error-consumed-wu! state wu))))
+                                   (wu-api/publish-error-consumed-wu! state wu)
+                                   (throw e))))
           (let [bts (tcp/read-response wu conn 60000)
                 _ (tcp/release conn-pool host port conn)     ;release the connection early
                 [status offset maxoffset discarded minbts maxbts :as v] (read-process-resp! delegate-f wu bts)]
-            (info ">>>> [OMG] v " v)
             (if (= :ok status)
               (do
                 (wu-api/publish-consumed-wu! state wu (if (pos? offset) offset (:offset wu)))
                 v)
-              (wu-api/publish-error-wu! state wu status offset))))
+              (do
+                (wu-api/publish-error-wu! state wu status offset)
+                nil))))
         (catch SocketException _ (do
                                    ;socket exceptions are common when brokers fall down, the best we can do is repush the work unit so that a new broker is found for it depending
                                    ;on the metadata
                                     (warn "Work unit " wu " refers to a broker " host port " that is down, pushing back for reconfiguration")
                                     (wu-api/publish-error-consumed-wu! state wu)
-                                    (tcp/release conn-pool host port conn)))
+                                    (tcp/release conn-pool host port conn)
+                                   nil))
         (catch Throwable e (do (.printStackTrace e)
                                (error e e)
                                (tcp/release conn-pool host port conn)
 
-                               (wu-api/publish-error-consumed-wu! state wu)))))
+                               (wu-api/publish-error-consumed-wu! state wu)
+                               nil))))
     (catch Throwable ne (do
                                        (.printStackTrace ne)
                                        (error ne ne)
-                                       (wu-api/publish-zero-consumed-wu! state wu)))))
+                                       (wu-api/publish-zero-consumed-wu! state wu)
+                                       nil))))
 
 
 (defonce ^Long TWENTY-MEGS 20971520)
 
-(defn calc-adjustment [total-processed discarded minbts maxbts]
-  (long (* (Math/ceil (/ (if (pos? discarded) (long discarded) 1) 2))
-           (Math/ceil (/ (+ (long maxbts) (long minbts)) 2 total-processed)))))
+(defn ^Long avg
+  ([a]
+    (long (Math/ceil (double (/ a 2)))))
+  ([a b]
+   (long (Math/ceil (double (/ (+ (long a) (long b)) 2))))))
+
+(defn calc-adjustment [discarded minbts maxbts]
+  (long (* (avg (if (pos? discarded) discarded 1))
+           (avg maxbts minbts))))
 
 (defn update-state-max-bytes [state max-bytes]
   (if (and max-bytes (pos? max-bytes))
@@ -204,32 +217,37 @@
    "
   [max-bytes-at state conn-pool delegate-f wu]
   (try
-    (let [[_ offset maxoffset discarded minbts maxbts total-processed] (process-wu! (update-state-max-bytes state (get @max-bytes-at (:topic wu))) conn-pool delegate-f wu)]
-      (mark-min-bytes! (:topic wu) minbts)
-      (mark-max-bytes! (:topic wu) maxbts)
+    (let [[_ offset maxoffset discarded minbts maxbts total-processed] (process-wu!
+                                                                         (update-state-max-bytes state
+                                                                                                 (get-in @max-bytes-at [(:topic wu) (:partition wu)] 7340032))
+                                                                         conn-pool
+                                                                         delegate-f
+                                                                         wu)]
+      (when discarded                                       ;test that any of the items exist and that nil wasn't returned from process-wu!
+        (mark-min-bytes! (:topic wu) minbts)
+        (mark-max-bytes! (:topic wu) maxbts)
 
-      (info ">>> maxoffset - offset " (- maxoffset offset))
-      (let [update-f  (when discarded
-                        (cond
+        (let [update-f  (cond
                           (> (long discarded) 5)
                           (do
-                            (info "Adjusting inc " (:topic wu) "  max-bytes discarded " discarded " minbts " minbts " maxbts " maxbts)
-                            #(let [x (nil-safe-add % (calc-adjustment total-processed discarded minbts maxbts))]
-                              (info ">>>>> inc calculated " x)
-                              (if (> x TWENTY-MEGS)
-                                TWENTY-MEGS
-                                x)))
+                            (debug "Adjusting dec " (:topic wu) " " (:partition wu) "  max-bytes discarded " discarded " minbts " minbts " maxbts " maxbts " maxoffset " maxoffset " offset " offset)
+                            #(let [x (nil-safe-sub % (calc-adjustment discarded minbts maxbts))
+                                   x2 (if (< x 512) 512 x)]
+                              (debug (str ">>>>> dec calculated " x2))
+                              (if (pos? x2)
+                                x2
+                                %)))
                           (> (- maxoffset offset) 5)
                           (do
-                            (info "Adjusting dec " (:topic wu) "  max-bytes discarded " discarded " minbts " minbts " maxbts " maxbts " maxoffset " maxoffset " offset " offset)
-                            #(let [x (nil-safe-sub % (calc-adjustment total-processed discarded minbts maxbts))]
-                              (info (str ">>>>> dec calculated " x))
-                              (if (pos? x)
-                                x
-                                %)))))]
+                            (debug "Adjusting inc " (:topic wu) " " (:partition wu) "  max-bytes discarded " discarded " minbts " minbts " maxbts " maxbts)
+                            #(let [x (nil-safe-add % (calc-adjustment discarded minbts maxbts))]
+                              (debug ">>>>> inc calculated " % ": " x)
+                              (if (> x TWENTY-MEGS)
+                                TWENTY-MEGS
+                                x))))]
 
-        (when update-f
-          (swap! max-bytes-at #(update-in % [(:topic wu)] update-f)))))
+          (when update-f
+            (swap! max-bytes-at #(update-in % [(:topic wu) (:partition wu)] update-f))))))
     (catch Exception e (do
                          (.printStackTrace e)
                          (error e e)))))

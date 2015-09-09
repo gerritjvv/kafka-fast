@@ -32,21 +32,17 @@
 (defn publish-consumed-wu!
   "sends the wu as ok and the offset read"
   [state wu offset-read]
-  (error "publish-consumed-consumed! " wu)
   (publish-work-response! state wu wu :ok {:offset-read offset-read}))
 
 (defn publish-error-wu!
   "sends the wu as error status"
   [state wu status offset-read]
-  (error "publish-error! " wu)
   (publish-work-response! state wu wu status {:offset-read offset-read}))
 
 (defn publish-zero-consumed-wu! [state wu]
-  (error "publish-zero-consumed! " wu)
   (publish-work-response! state wu wu :ok {:offset-read 0}))
 
 (defn publish-error-consumed-wu! [state wu]
-  (error "publish-error-consumed! " wu)
   (publish-work-response! state wu wu :fail {:offset-read 0}))
 
 (defn wait-on-work-unit!

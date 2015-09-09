@@ -7,7 +7,7 @@
   :javac-options ["-target" "1.6" "-source" "1.6" "-Xlint:-options"]
 
   :global-vars {*warn-on-reflection* true
-               *assert* false}
+               *assert* true}
 
   ;:main kafka-clj.app
   :scm {:name "git"
