@@ -1,2 +1,1 @@
-language: clojure
-script: cd ./kafka-clj; lein midje
+script: travis-build.sh
