@@ -60,8 +60,7 @@
     (prn "sending messages")
     (dotimes [i msg-count]
       (.acquire ^RateLimiter rate-limiter)
-      (client/send-msg connector topic (msg-gen-f i))
-      (prn "Sending " i))
+      (client/send-msg connector topic (msg-gen-f i)))
     (prn "stop sending messages")))
 
 (defn with-resources [topic f]
