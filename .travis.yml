@@ -1,1 +1,2 @@
-script: ./travis-build.sh
+language: clojure
+script: scripts/travis-build.sh
