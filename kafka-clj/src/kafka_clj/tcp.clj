@@ -16,7 +16,7 @@
 
     "}
   kafka-clj.tcp
-  (:require [clojure.tools.logging :refer [error info debug]]
+  (:require [clojure.tools.logging :refer [error info debug enabled?]]
             [kafka-clj.pool :as pool]
             [clj-tuple :refer [tuple]])
   (:import (java.net Socket SocketException)
@@ -79,10 +79,11 @@
       (while (not (closed? conn))
         (try
           (handler (read-response conn))
-          (catch IOException e (debug "Timeout while reading response from producer broker " e))
-          (catch TimeoutException e (debug "Timeout while reading response from producer broker " e))
-          (catch SocketException e (debug "Timeout while reading response from producer broker " e))
-          (catch Exception e (error e e))))
+          (catch Exception e
+            ;;only print out exceptions during debug
+            (debug "Timeout while reading response from producer broker " e)
+            (when (enabled? :debug)
+              (error e e)))))
       (catch SocketException e nil))))
 
 (defn write! [tcp-client obj & {:keys [flush] :or {flush false}}]
