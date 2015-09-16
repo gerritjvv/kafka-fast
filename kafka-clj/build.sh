@@ -9,6 +9,8 @@ function fail (){
  exit -1
 }
 
+export LEIN_SNAPSHOTS_IN_RELEASE=true
+
 echo "Running check"
 lein do clean, check || fail "CHECK" "check" 
 
@@ -21,5 +23,5 @@ done
 
 echo "Installing"
 
-lein install
+lein install 
 
