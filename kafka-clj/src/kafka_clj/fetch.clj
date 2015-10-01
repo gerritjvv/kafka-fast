@@ -30,7 +30,7 @@
   FetchOffset => int64
   MaxBytes => int32"
   ;(prn "!!!!!!!!!!!!!!!!!!!! max bytes " max-bytes)
-  ;(info "min-bytes " min-bytes " max-bytes " max-bytes " max-wait-time " max-wait-time)
+  (debug "topic " topics "min-bytes " min-bytes " max-bytes " max-bytes " max-wait-time " max-wait-time)
   (-> buff
       (.writeInt (int -1))
       (.writeInt (int max-wait-time))
