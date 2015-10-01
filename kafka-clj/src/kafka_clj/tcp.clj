@@ -20,11 +20,7 @@
             [kafka-clj.pool :as pool]
             [clj-tuple :refer [tuple]])
   (:import (java.net Socket SocketException)
-<<<<<<< HEAD
-           (java.io InputStream OutputStream BufferedInputStream BufferedOutputStream DataInputStream IOException)
-=======
            (java.io IOException InputStream OutputStream BufferedInputStream BufferedOutputStream DataInputStream)
->>>>>>> dev/3.0.3
            (io.netty.buffer ByteBuf Unpooled)
            (kafka_clj.util Util IOUtil)
            (java.util.concurrent TimeoutException)))

@@ -219,11 +219,12 @@
           (assoc state :producers-cache-ref producers-cache-ref))
         (catch Exception e
           (do
-            (when (instance? IOException e)
+            (if (instance? IOException e)
               (try
                 (doseq [prod prods] (produce/shutdown prod))
                 (dosync (alter producers-cache-ref dissoc-in [(:host partition-rc) (:port partition-rc)]))
-                (catch Exception e (error e e))))
+                (catch Exception e (error e e)))
+              (error e e))
 
             (Thread/sleep PRODUCER_ERROR_BACKOFF_DEFAULT)
             (handle-async-topic-messages (assoc state :blacklisted-producers-ref (blacklist! (:blacklisted-producers-ref state) partition-rc)) topic msgs))))
