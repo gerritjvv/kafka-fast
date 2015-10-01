@@ -88,18 +88,11 @@
       (while (not (closed? conn))
         (try
           (handler (read-response conn))
-<<<<<<< HEAD
           (catch Exception e
             ;;only print out exceptions during debug
             (debug "Timeout while reading response from producer broker " e)
             (when (enabled? :debug)
               (error e e)))))
-=======
-          (catch TimeoutException e nil)
-          (catch IOException e (when-not (closed-exception? e) (error e)))
-          (catch SocketException e nil)
-          (catch Exception e (error e e))))
->>>>>>> dev/3.0.3
       (catch SocketException e nil))))
 
 (defn write! [tcp-client obj & {:keys [flush] :or {flush false}}]

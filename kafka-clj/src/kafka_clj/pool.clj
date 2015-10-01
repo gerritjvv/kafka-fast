@@ -51,7 +51,7 @@
   (let [conf-obj (reduce set-prop (GenericKeyedObjectPoolConfig.) {:block-when-exhausted true
                                                                    ;:time-between-eviction-runs-millis 30000
                                                                    :test-while-idle true
-                                                                   :test-on-return true
+                                                                   :test-on-return false
                                                                    :test-on-borrow true
                                                                    ;:min-evictable-idle-time-millis 30000
                                                                    :max-total 20
