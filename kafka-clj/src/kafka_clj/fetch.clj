@@ -168,9 +168,7 @@
 (defn send-offset-request [{:keys [client conf]} topics]
   "topics must have format [[topic [{:partition 0} {:partition 1}...]] ... ]"
   (write! client (fn [^ByteBuf buff]
-                   (with-size buff write-offset-request (merge conf {:topics topics}))))
-
-  )
+                   (with-size buff write-offset-request (merge conf {:topics topics})))))
 
 (defn create-offset-producer
   ([{:keys [host port]} conf]
@@ -203,6 +201,8 @@
 
 
 
- 
+ (defn offset-producer-closed? [{:keys [client]}]
+   (tcp/closed? client))
   
-  
+  (defn shutdown-offset-producer [{:keys [client]}]
+    (tcp/close! client))
