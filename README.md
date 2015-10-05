@@ -322,6 +322,8 @@ See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for wr
 |:conf :reset-ahead-offsets | ```:reset-ahead-offsets true``` default is false | If the brokers during restarts report a lower offset than is saved, we reset the read offset to that of the max reported broker offset for a topic/partition see https://github.com/gerritjvv/kafka-fast/issues/10 |
 |:conf :consumer-threads | 2 | number of background threads doing fetching from kafka |
 |:conf :consumer-reporting | false | if true the kafka consumer will print out metrics for the number of messages sent the the msg-ch every 10 seconds |
+|:conf :consumer-conn-max-total | 40 | The maximum number of connections that should be created |
+|:conf :consumer-conn-max-total-per-key | 40 | The maximum number of connections that should be created per broker |
 
 ### Performance configuration for consuming
 

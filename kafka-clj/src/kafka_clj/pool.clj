@@ -14,12 +14,15 @@
   (borrow
     [pool k timeout-ms]
     "Throws NoSuchElementException if no connection can be returned or timedout")
-  (release [pool k obj]))
+  (release [pool k obj])
+  (invalidate! [pool k obj]))
 
 (extend-protocol IPool
   KeyedObjectPool
   (borrow [pool k timeout-ms] (.borrowObject ^GenericKeyedObjectPool pool k (long timeout-ms)))
-  (release [pool k obj] (.returnObject ^KeyedObjectPool pool k obj)))
+  (release [pool k obj] (.returnObject ^KeyedObjectPool pool k obj))
+  (invalidate! [pool k obj]
+    (.invalidateObject ^KeyedObjectPool pool k obj)))
 
 (defn- word->camlcase [word]
   (str (Character/toUpperCase (char (nth word 0))) (subs word 1 (count word))))
@@ -54,7 +57,8 @@
                                                                    :test-on-return false
                                                                    :test-on-borrow true
                                                                    ;:min-evictable-idle-time-millis 30000
-                                                                   :max-total 40
+                                                                   :max-total-per-key (get conf :consumer-conn-max-total-per-key 40)
+                                                                   :max-total (get conf :consumer-conn-max-total 40)
                                                                    })]
     (reduce set-prop conf-obj conf)))
 

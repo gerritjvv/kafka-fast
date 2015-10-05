@@ -146,13 +146,8 @@
 
       (try
         (do
-          (try
-            (do
-              (write-fetch-req! state conn wu))
-            (catch Throwable e (do
-                                   (error e e)
-                                   (wu-api/publish-error-consumed-wu! state wu)
-                                   (throw e))))
+          (write-fetch-req! state conn wu)
+
           (let [bts (tcp/read-response wu conn 60000)
                 _ (tcp/release conn-pool host port conn)     ;release the connection early
                 [status offset maxoffset discarded minbts maxbts :as v] (read-process-resp! delegate-f wu bts)]
@@ -166,9 +161,12 @@
         (catch SocketException _ (do
                                    ;socket exceptions are common when brokers fall down, the best we can do is repush the work unit so that a new broker is found for it depending
                                    ;on the metadata
-                                    (warn "Work unit " wu " refers to a broker " host port " that is down, pushing back for reconfiguration")
-                                    (wu-api/publish-error-consumed-wu! state wu)
-                                    (tcp/release conn-pool host port conn)
+                                   (tcp/close! conn)
+                                   (tcp/invalidate! conn-pool host port conn)
+
+                                   (Thread/sleep 10)        ;sleep to avoid bursts
+                                   (error "Work unit " wu " refers to a broker " host port " that is down, pushing back for reconfiguration")
+                                   (wu-api/publish-error-consumed-wu! state wu)
                                    nil))
         (catch Throwable e (do (.printStackTrace e)
                                (error e e)
@@ -241,7 +239,6 @@
                           (do
                             (debug "Adjusting inc " (:topic wu) " " (:partition wu) "  max-bytes discarded " discarded " minbts " minbts " maxbts " maxbts)
                             #(let [x (nil-safe-add % (calc-adjustment discarded minbts maxbts))]
-                              (debug ">>>>> inc calculated " % ": " x)
                               (if (> x TWENTY-MEGS)
                                 TWENTY-MEGS
                                 x))))]

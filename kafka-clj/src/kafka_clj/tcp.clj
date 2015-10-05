@@ -99,11 +99,14 @@
 
 (defn close! [{:keys [^Socket socket ^InputStream input ^OutputStream output]}]
   {:pre [socket]}
-  (when (not (.isClosed socket))
-    (.flush output)
-    (.close output)
-    (.close input)
-    (.close socket)))
+  (try
+    (when (not (.isClosed socket))
+      (.flush output)
+      (.close output)
+      (.close input)
+      (.close socket))
+    (catch Throwable t
+      (error t t))))
 
 (defn- _write-bytes [tcp-client ^"[B" bts]
   (.write ^BufferedOutputStream (:output tcp-client) bts))
@@ -122,6 +125,10 @@
     (borrow obj-pool host port 10000))
   ([obj-pool host port timeout-ms]
    (pool/borrow obj-pool (tuple host port) timeout-ms)))
+
+(defn invalidate! [obj-pool host port v]
+  (pool/invalidate! obj-pool (tuple host port) v))
+
 
 (defn release [obj-pool host port v]
   (pool/release obj-pool (tuple host port) v))
