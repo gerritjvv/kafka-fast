@@ -1,6 +1,6 @@
 (ns kafka-clj.consumer.util
   (:require
-    [kafka-clj.fetch :refer [create-offset-producer send-offset-request]]
+    [kafka-clj.fetch :refer [create-offset-producer send-offset-request] :as fetch]
     [clojure.core.async :refer [timeout alts!!]]
     [clojure.tools.logging :refer [info error]]
     [kafka-clj.metadata :as meta]))
@@ -17,6 +17,22 @@
                    m
                    (assoc m broker (create-offset-producer broker conf))))))
       broker)))
+
+(defn get-offset-producer!
+  "Get a producer, if closed we remove the broker from the offset-producers-ref
+   and shutdown the producer associated and return nil,
+   this will allow the producer to be blacklisted first, and then
+   at a later timeout to recreate the producer, this behaviour avoids
+   bursts of close/create sequences which could make the application unstable."
+  [offset-producers-ref broker conf]
+  (let [producer (get-create-offset-producer offset-producers-ref broker conf)]
+    (if (fetch/offset-producer-closed? producer)
+      (do                                                   ;check for closed
+        (dosync                                             ;if so remove broker and close producer
+          (alter offset-producers-ref dissoc broker))
+        (fetch/shutdown-offset-producer producer)
+        nil)
+      producer)))
 
 (defn get-offsets [offset-producer topic partitions]
   "returns [{:topic topic :partitions {:partition :error-code :offsets}}]"
@@ -61,8 +77,12 @@
                      (do
                        (try
                          (let [offset-producer (get-create-offset-producer offset-producers broker conf)
+
+                               ;throw exception if the offset-producer is nil
+                               _ (if (not offset-producer) (throw (RuntimeException. (str "No producer found or bad producer connection for " broker))))
+
                                offsets-response (get-offsets offset-producer topic (map first v))]
-                           ;(info "offsets: " v)
+
                            [broker (transform-offsets topic offsets-response conf)])
                          (catch Exception e (do
                                               (error e e)

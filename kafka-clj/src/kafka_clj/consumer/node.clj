@@ -36,7 +36,6 @@
   {:pre [redis-conn topics group-name]}
   ;timeout-ms wait-ms
   (let [lock-timeout (* 10 60000)]
-    (error "Work-calculate-delegate!!!: lock")
     (try
       (redis/with-lock
         redis-conn
