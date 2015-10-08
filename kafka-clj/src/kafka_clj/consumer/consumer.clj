@@ -17,9 +17,17 @@
            (java.util.concurrent.atomic AtomicBoolean)
            (com.codahale.metrics MetricRegistry Meter ConsoleReporter)))
 
+;;;;;;;;;;;;;;;
+;;;;; Metrics
 (def ^AtomicBoolean METRICS-REPORTING-STARTED (AtomicBoolean. false))
 (def ^MetricRegistry metrics-registry (MetricRegistry.))
 (def messages-read (.meter metrics-registry "messages-read"))
+
+;;;;;;;;;;;;;
+
+
+;;;;;;;;;;;;;;;
+;;;;;; Internal top level functions used by metrics and Protocols
 
 (defn mark!
   "Mark messages read meter"
@@ -31,11 +39,6 @@
 
 (defn mark-max-bytes! [topic maxbts]
   (.update (.histogram metrics-registry (str topic "-max-bts")) (long maxbts)))
-
-(defprotocol IMsgEvent
-  "Simplifies the logic of processing a FetchError and normal Message instance from a broker fetch response"
-  (-msg-event [msg state] "Must return FetchState status can be :ok or :error"))
-
 
 (defn ^FetchState fetch-state
   "Creates a mutable initial state"
@@ -65,6 +68,16 @@
                (.getMaxByteSize state)
                (- (.getOffset state) (.getInitOffset state)))))
 
+;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;; Message Protocols
+;;;;;;;;;;
+;;;;;;;;;;  When a message is received from the Fetch process it can either be a Message or Fetch Error
+;;;;;;;;;;  How the message is handled is taken care of through the IMsgEven protocol
+
+(defprotocol IMsgEvent
+  "Simplifies the logic of processing a FetchError and normal Message instance from a broker fetch response"
+  (-msg-event [msg state] "Must return FetchState status can be :ok or :error"))
+
 (extend-protocol IMsgEvent
   Fetch$Message                                           ;topic partition offset bts
   (-msg-event [{:keys [^long offset ^"[B" bts] :as msg} ^FetchState state]
@@ -82,6 +95,9 @@
   (-msg-event [{:keys [error-code] :as msg} ^FetchState state]
     (error (.toString ^Fetch$FetchError msg))
     (doto state (.setStatus (if (#{1 3} error-code) :fail-delete :fail)))))
+
+;;;;;;;;;;;;;;;;;;;
+;;;;;; Private Functions
 
 (defn- write-fetch-req!
   "Write a fetch request to the connection based on wu"
@@ -117,6 +133,7 @@
   "Monoid
    Returns FetchState"
   ([state msg]
+    ;;;see IMsgEvent Protocol
    (-msg-event msg state)))
 
 (defn read-process-resp!
@@ -150,10 +167,13 @@
 
           (let [bts (tcp/read-response wu conn 60000)
                 _ (tcp/release conn-pool host port conn)     ;release the connection early
-                [status offset maxoffset discarded minbts maxbts :as v] (read-process-resp! delegate-f wu bts)]
+                [status offset maxoffset discarded minbts maxbts offsets-read :as v] (read-process-resp! delegate-f wu bts)]
+
             (if (= :ok status)
               (do
-                (wu-api/publish-consumed-wu! state wu (if (pos? offset) offset (:offset wu)))
+                (if (zero? (long offsets-read))
+                  (wu-api/publish-zero-consumed-wu! state wu) ;of no offsets were read, we need to mark the wu as zero consumed
+                  (wu-api/publish-consumed-wu! state wu (if (pos? offset) offset (:offset wu))))
                 v)
               (do
                 (wu-api/publish-error-wu! state wu status offset)
@@ -248,6 +268,9 @@
     (catch Exception e (do
                          (.printStackTrace e)
                          (error e e)))))
+
+;;;;;;;;;;;;;;;;
+;;;;;;;; Public Functions
 
 (defn start-metrics-reporting!
   "Start the metrics reporting, writing to STDOUT every 10 seconds"
