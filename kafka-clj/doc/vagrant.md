@@ -62,7 +62,9 @@ Remember to create the topic first using vagrant/scripts/create_topic_remote.sh 
 
 (def msg1kb (.getBytes (clojure.string/join "," (range 278))))
 
-(def c (create-connector [{:host "192.168.4.40" :port 9092}] {}))
+;;use flush-on-write true for testing, this will flush the message on write to kafka
+;;set to false for performance in production
+(def c (create-connector [{:host "192.168.4.40" :port 9092}]  {:flush-on-write true}))
 
 (send-msg c "my-topic" msg1kb)
 ```
