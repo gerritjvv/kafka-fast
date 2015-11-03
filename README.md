@@ -51,7 +51,9 @@ One producer will be created per topic partition combination, each with its own 
 
 (def msg1kb (.getBytes (clojure.string/join "," (range 278))))
 
-(def c (create-connector [{:host "localhost" :port 9092}] {}))
+;;use flush-on-write true for testing, this will flush the message on write to kafka
+;;set to false for performance in production
+(def c (create-connector [{:host "localhost" :port 9092}] {:flush-on-write true}))
 
 ;to send snappy
 ;(def c (create-connector [{:host "localhost" :port 9092}] {:codec 2}))
