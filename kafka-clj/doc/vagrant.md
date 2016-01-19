@@ -9,6 +9,11 @@ Using vagrant allows you to develop kafka application as if your running a full 
 
 Note: you need vagrant installed before running it :) (https://www.vagrantup.com/)
 
+## Requirements
+
+
+```vagrant plugin install vagrant-vbguest```
+
 ## Machines/Boxes
 
 The boxes launched are:

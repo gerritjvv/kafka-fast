@@ -18,7 +18,7 @@
     (use 'kafka-clj.consumer.work-organiser :reload)
     (def org (create-organiser!
     {:bootstrap-brokers [{:host \"localhost\" :port 9092}]
-     :redis-conf {:host "localhost" :max-active 5 :timeout 1000} :working-queue \"working\" :complete-queue \"complete\" :work-queue \"work\" :conf {}}))
+     :redis-conf {:host \"localhost\" :max-active 5 :timeout 1000} :working-queue \"working\" :complete-queue \"complete\" :work-queue \"work\" :conf {}}))
       (calculate-new-work org [\"ping\"])
 
 

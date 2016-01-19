@@ -46,7 +46,7 @@
                  [metrics-clojure "2.5.1"]
                  [org.clojure/core.async "0.1.303.0-886421-alpha"]
                  [com.stuartsierra/component "0.2.2"]
-                 [org.clojure/clojure "1.6.0" :scope "provided"]
+                 [org.clojure/clojure "1.8.0-RC5" :scope "provided"]
                  [org.apache.zookeeper/zookeeper "3.4.6" :scope "provided"
                   :exclusions [io.netty/netty]]
                  [org.apache.kafka/kafka_2.10 "0.8.1.1" :scope "provided"
