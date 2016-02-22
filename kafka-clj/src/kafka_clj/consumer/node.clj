@@ -1,13 +1,13 @@
 (ns kafka-clj.consumer.node
   (:import [java.net InetAddress])
   (:require
-            [kafka-clj.consumer.work-organiser :refer [create-organiser! close-organiser! calculate-new-work]]
-            [kafka-clj.consumer.consumer :refer [consume! close-consumer!]]
-            [kafka-clj.redis.core :as redis]
-            [com.stuartsierra.component :as component]
-            [fun-utils.core :refer [fixdelay-thread stop-fixdelay buffered-chan]]
-            [clojure.tools.logging :refer [info error]]
-            [clojure.core.async :refer [chan <!! alts!! timeout close! sliding-buffer]]))
+    [kafka-clj.consumer.work-organiser :refer [create-organiser! close-organiser! calculate-new-work]]
+    [kafka-clj.consumer.consumer :refer [consume! close-consumer!]]
+    [kafka-clj.redis.core :as redis]
+    [com.stuartsierra.component :as component]
+    [fun-utils.core :refer [fixdelay-thread stop-fixdelay buffered-chan]]
+    [clojure.tools.logging :refer [info error]]
+    [clojure.core.async :refer [chan <!! alts!! timeout close! sliding-buffer]]))
 
 
 (defn- safe-call
@@ -21,7 +21,7 @@
 
 (defn shutdown-node!
   "Closes the consumer node"
-  [{:keys [ org consumer msg-ch calc-work-thread redis-conn] :as node}]
+  [{:keys [org consumer msg-ch calc-work-thread redis-conn] :as node}]
   {:pre [org consumer msg-ch calc-work-thread redis-conn]}
   (stop-fixdelay calc-work-thread)
   (safe-call close-consumer! consumer)
@@ -55,8 +55,8 @@
   [org topics & {:keys [freq] :or {freq 10000}}]
   {:pre [org topics]}
   (fixdelay-thread
-            freq
-            (safe-call work-calculate-delegate! org @topics)))
+    freq
+    (safe-call work-calculate-delegate! org @topics)))
 
 (defn filter-is-map [wu]
   (if (map? wu) true (do
@@ -92,7 +92,7 @@
 
             (info "Copied " res " work units")
             ;drop-last to drop the result from teh apply car lpush command
-            (when (>= res (count wus))                            ;only recur if we did delete all the values
+            (when (>= res (count wus))                      ;only recur if we did delete all the values
               (recur (redis/wcar redis-conn (redis/llen redis-conn from-queue))))))))))
 
 (defn create-node!
@@ -115,25 +115,32 @@
   Note that unrecouverable work units like error-code 1 are added to the kafka-error-queue. This queue should be monitored.
   Returns a map {:conf intermediate-conf :topics-ref topics-ref :org org :msg-ch msg-ch :consumer consumer :calc-work-thread calc-work-thread :group-conn group-conn :group-name group-name}
   "
-  [conf topics & {:keys [error-handler redis-factory] :or {error-handler (fn [& args]) redis-factory redis/create}}]
-  {:pre [conf topics (not-empty (:bootstrap-brokers conf)) (:redis-conf conf)]}
+  [conf topics & {:keys [error-handler
+                         redis-factory
+                         msg-ch-buff-size
+                         work-unit-event-ch-buff-size] :or {error-handler                (fn [& args])
+                                                            redis-factory                redis/create
+                                                            msg-ch-buff-size             100
+                                                            work-unit-event-ch-buff-size 100}}]
+  {:pre [conf topics (not-empty (:bootstrap-brokers conf)) (:redis-conf conf) (number? msg-ch-buff-size) (number? work-unit-event-ch-buff-size)]}
+
   (let [host-name (.getHostName (InetAddress/getLocalHost))
         topics-ref (ref (into #{} topics))
         group-name (get-in conf [:redis-conf :group-name] "default")
         working-queue-name (str group-name "-kafka-working-queue/" host-name)
         work-queue-name (str group-name "-kafka-work-queue")
         intermediate-conf (assoc conf
-                                      :group-name group-name
-                                      :work-queue work-queue-name
-                                      :working-queue working-queue-name
-                                      :error-queue (str group-name "-kafka-erorr-queue")
-                                      :complete-queue (str group-name "-kafka-complete-queue"))
+                            :group-name group-name
+                            :work-queue work-queue-name
+                            :working-queue working-queue-name
+                            :error-queue (str group-name "-kafka-erorr-queue")
+                            :complete-queue (str group-name "-kafka-complete-queue"))
 
-        work-unit-event-ch (chan (sliding-buffer 100))
+        work-unit-event-ch (chan (sliding-buffer work-unit-event-ch-buff-size))
         org (assoc (create-organiser! intermediate-conf) :error-handler error-handler)
         ;;reuse the redis conn to avoid creating yet another
         redis-conn (:redis-conn org)
-        msg-ch (chan 100)
+        msg-ch (chan msg-ch-buff-size)
         consumer (consume! (assoc intermediate-conf :redis-conn redis-conn :msg-ch msg-ch :work-unit-event-ch work-unit-event-ch))
         calc-work-thread (start-work-calculate (assoc org :redis-conn redis-conn) topics-ref :freq (get conf :work-calculate-freq 10000))
         ]
@@ -141,9 +148,9 @@
     ;check for left work-units in working queue
     (copy-redis-queue redis-conn working-queue-name work-queue-name)
 
-    {:conf intermediate-conf :topics-ref topics-ref :org org :msg-ch msg-ch :consumer consumer :calc-work-thread calc-work-thread
-     :group-name group-name
-     :redis-conn redis-conn
+    {:conf               intermediate-conf :topics-ref topics-ref :org org :msg-ch msg-ch :consumer consumer :calc-work-thread calc-work-thread
+     :group-name         group-name
+     :redis-conn         redis-conn
      :work-unit-event-ch work-unit-event-ch}))
 
 (defn add-topics!
@@ -175,7 +182,7 @@
 (defn buffered-msgs
   "Creates a channel that on each read returns n messages, or as much as could be buffered befire timeout-ms.
    The buffering happens in the background"
-  [{:keys [msg-ch]}  n timeout-ms]
+  [{:keys [msg-ch]} n timeout-ms]
   (buffered-chan msg-ch n 1000))
 
 
