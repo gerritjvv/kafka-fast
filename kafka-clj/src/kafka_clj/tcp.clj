@@ -95,26 +95,39 @@
     (if flush
       (.flush ^BufferedOutputStream (:output tcp-client)))))
 
+(defn wrap-exception [f & args]
+  (try
+    (apply f args)
+    (catch Exception e
+      (do
+        (error (str "Ignored Exception " e) e)
+        nil))))
+
 (defn close! [{:keys [^Socket socket ^InputStream input ^OutputStream output]}]
   {:pre [socket]}
   (try
     (when (not (.isClosed socket))
-      (.flush output)
-      (.close output)
-      (.close input)
-      (.close socket))
+      (wrap-exception #(.flush output))
+      (wrap-exception #(.close output))
+      (wrap-exception #(.close input))
+      (wrap-exception #(.close socket)))
     (catch Throwable t
-      (error t t))))
+      (error (str "Ignored exception " t) t))))
 
 (defn- _write-bytes [tcp-client ^"[B" bts]
   (.write ^BufferedOutputStream (:output tcp-client) bts))
 
+
 (defn tcp-pool [conf]
   (pool/object-pool
     (pool/keyed-obj-factory
-      (fn [[host port] conf] (apply tcp-client host port (flatten (seq conf))))
-      (fn [v conf] (not (closed? v)))
-      (fn [v conf] (close! v))
+      (fn [[host port] conf] (wrap-exception tcp-client host port (flatten (seq conf)))) ;;create-f
+      (fn [v conf] (try
+                     (not (closed? v))
+                     (catch Exception e (do
+                                          (error (str "Ignored Exception " e) e)
+                                          false))))                       ;;validate-f
+      (fn [v conf] (wrap-exception close! v))                              ;;destroy-f
       conf)
     conf))
 
