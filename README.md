@@ -326,6 +326,8 @@ See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for wr
 |:conf :consumer-reporting | false | if true the kafka consumer will print out metrics for the number of messages sent the the msg-ch every 10 seconds |
 |:conf :consumer-conn-max-total | 40 | The maximum number of connections that should be created |
 |:conf :consumer-conn-max-total-per-key | 40 | The maximum number of connections that should be created per broker |
+|:conf :msg-ch-buff-size | 100 | The buffer size between the background fetching threads and the calling consumer api |
+|:conf :work-unit-event-ch-buff-size | The buffer (sliding window) of work unit events |
 
 ### Performance configuration for consuming
 
@@ -337,6 +339,11 @@ every 10 seconds.
 Sometimes if might be as simple as increasing the number of ```:consumer-threads```, try 4, 6 threads.  
 Normally if you see that you can keepup with processing kafka messages from the connector even if the queue contains allot of messages still  
 this is a sign that you are not fetching fast enough.  
+
+**MSG Channel Buffer**
+
+The message buffer between fetching threads and the calling code is 100 by default. Depending on the message size etc and memory usage this value 
+can be reduced. Increasing it doesnt seem to increase performance.
 
 ## Java 
 
