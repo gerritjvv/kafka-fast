@@ -128,6 +128,10 @@
 
 (defrecord RedissonObj [pool]
   IRedis
+
+  (-conn-pool-idle [_] -1)
+  (-conn-pool-active [_] -1)
+
   (-lpush* [pool queue obj-coll]
     (doseq [obj obj-coll]
       (lpush (:pool pool) queue obj)))

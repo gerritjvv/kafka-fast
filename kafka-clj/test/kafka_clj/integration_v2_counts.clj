@@ -2,7 +2,7 @@
   (:require [kafka-clj.test-utils :refer [startup-resources shutdown-resources]]
             [kafka-clj.consumer.work-organiser :refer [wait-on-work-assigned-flag]]
             [kafka-clj.client :refer [create-connector send-msg close]]
-            [kafka-clj.consumer.node :refer [create-node! read-msg! shutdown-node!]]
+            [kafka-clj.consumer.node :refer [create-node! read-msg! shutdown-node!] :as node]
             [clojure.tools.logging :refer [info error]])
   (:use midje.sweet))
 
@@ -61,4 +61,11 @@
 
         (let [msgs (read-messages @node-ref)]
           (prn "->>>>>>>>>>>>>> got messages " (count msgs))
-          (count msgs) => msg-count)))
+          (count msgs) => msg-count)
+
+
+        ;;test monitoring options
+        (pos? (node/msg-chan-byte-size @node-ref)) => true
+        (pos? (node/conn-pool-byte-size @node-ref)) => true
+        (not (neg? (node/conn-pool-active @node-ref))) => true
+        (not (neg? (node/conn-pool-idle @node-ref))) => true))

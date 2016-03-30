@@ -260,7 +260,51 @@ For testing this is one of the best things you can do and makes testing kafka + 
 
 See: https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/vagrant.md
 
-##Consumer Work Units and monitoring
+##Monitoring
+
+A kafka consumer can have a considerable memory footprint due to buffering and background fetching going on (all done for the sake of performance).  
+To see where and how memory is used several functions are provided in the consumer namespace.   
+
+For byte sizes the openjkd jol (http://openjdk.java.net/projects/code-tools/jol/) project is used. 
+This works with any JVM including the Oracle JVM.  
+
+### MSG Channel
+
+The consumer message channel is an intermediate buffer and can contain N amount of messages that take up place in memory before being consumed.
+Note that the size will vary as messages move through the channel.  
+
+A measure if how many bytes can be obtained using:
+
+```clojure
+
+(require '[kafka-clj.consumer.node :as node])
+
+(node/msg-chan-byte-size consumer-node)
+;; the total deep size in bytes occupied by the message channel
+
+```
+
+
+### Redis Connection Pools
+
+When using a non clustered redis install, a Redis connection pool is used for performance and better failover.
+To monitor how many active and idle connections are alive in the system use:
+
+```clojure
+(require '[kafka-clj.consumer.node :as node])
+
+(node/conn-pool-idle consumer-node)
+;; number of idle connections
+
+(node/conn-pool-active consumer-node)
+;; number of active connections
+
+(node/conn-pool-byte-size consumer-node)
+;; the total deep size in bytes occupied by the whole redis pool
+
+```
+
+###Consumer Work Units and monitoring
 
 Each consumer will process work units as they become available on the work queue. 
 When a work unit has been completed by the consumer an event is sent to the work-unit-event-ch channel (core.async channel).
