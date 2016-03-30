@@ -7,6 +7,9 @@
 ;;;Also two apis are used because carmine as of writing does not yet support redis cluster
 ;;;So we need to use Jedis and mimick carmine usage via Nippy
 (defprotocol IRedis
+  (-conn-pool-idle [_])
+  (-conn-pool-active [_])
+
   (-lpush* [_ queue obj-coll])
   (-lpush [_ queue obj])
   (-llen  [_ queue])

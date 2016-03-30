@@ -65,11 +65,10 @@
          :max-total 40
          }
         opts (merge jedis-defaults carmine-defaults pool-opts)
-        ]
-    (conns/->ConnectionPool
-      (reduce set-pool-option
-              (GenericObjectPool. (make-connection-factory spec))
-              opts))))
+        object-pool (reduce set-pool-option
+                            (GenericObjectPool. (make-connection-factory spec))
+                            opts)]
+    (conns/->ConnectionPool object-pool)))
 
 (defn close-pool [{:keys [^ObjectPool pool]}] (.close pool))
 
@@ -174,10 +173,20 @@
     (_wcar pool (apply car/del lkeys))))
 
 
-(defrecord SingleRedis [^ObjectPool pool])
+;;pool is of type #taoensso.carmine.connections.ConnectionPool {:pool ObjectPool}
+(defrecord SingleRedis [pool])
+
+(defn ^ObjectPool get-object-pool
+  "Internal helper function that returns the internal ObjectPool"
+  [carmine-conn]
+  (:pool (:pool carmine-conn)))
 
 (extend-type SingleRedis
   IRedis
+
+  (-conn-pool-idle [this] (.getNumIdle (get-object-pool this)))
+  (-conn-pool-active [this] (.getNumActive (get-object-pool this)))
+
   (-lpush* [_ queue obj-coll]
     (apply car/lpush queue obj-coll))
   (-lpush [_ queue obj]

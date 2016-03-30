@@ -1,5 +1,6 @@
 (ns kafka-clj.consumer.node
-  (:import [java.net InetAddress])
+  (:import [java.net InetAddress]
+           (org.openjdk.jol.info GraphLayout))
   (:require
     [kafka-clj.consumer.work-organiser :refer [create-organiser! close-organiser! calculate-new-work]]
     [kafka-clj.consumer.consumer :refer [consume! close-consumer!]]
@@ -152,6 +153,26 @@
      :group-name         group-name
      :redis-conn         redis-conn
      :work-unit-event-ch work-unit-event-ch}))
+
+(defn conn-pool-idle
+  "Return the number of idle redis connections used by the consumer node"
+  [{:keys [redis-conn]}]
+  (redis/conn-pool-idle redis-conn))
+
+(defn conn-pool-byte-size
+  "Return the total bytes referenced by the redis connection pool"
+  [{:keys [redis-conn]}]
+  (.totalSize (GraphLayout/parseInstance redis-conn)))
+
+(defn conn-pool-active
+  "Return the number of active redis connections used by the consumer node"
+  [{:keys [redis-conn]}]
+  (redis/conn-pool-active redis-conn))
+
+(defn msg-chan-byte-size
+  "Return the number of bytes referenced by consumer channel"
+  [{:keys [msg-ch]}]
+  (.totalSize (GraphLayout/parseInstance msg-ch)))
 
 (defn add-topics!
   "Add topics to the node's topics-ref set, this will cause the orgnaniser run by the node to check for workunits for the topics

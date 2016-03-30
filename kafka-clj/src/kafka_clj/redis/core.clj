@@ -9,6 +9,9 @@
 
 (defn flushall [pool] (-flushall pool))
 
+(defn conn-pool-idle [pool] (-conn-pool-idle pool))
+(defn conn-pool-active [pool] (-conn-pool-active pool))
+
 (defn lpush* [pool queue obj-coll] (-lpush* pool queue obj-coll))
 (defn lpush [pool queue obj] (-lpush pool queue obj))
 (defn llen [pool queue] (-llen pool queue))
