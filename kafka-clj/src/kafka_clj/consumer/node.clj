@@ -154,7 +154,7 @@
      :redis-conn         redis-conn
      :work-unit-event-ch work-unit-event-ch}))
 
-(def node-stats
+(defn node-stats
   "Returns the consumer stats, takes as argument the instance returned from create-node!"
   [{:keys [consumer]}]
   (consumer-pool-stats consumer))
