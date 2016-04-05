@@ -3,6 +3,7 @@
     :doc "Internal consumer code, for consumer public api see kafka-clj.node"}
   kafka-clj.consumer.consumer
   (:require [kafka-clj.tcp :as tcp]
+            [kafka-clj.pool :as pool]
             [fun-utils.threads :as threads]
             [clojure.tools.logging :refer [error info warn debug]]
             [kafka-clj.fetch :as fetch]
@@ -10,7 +11,7 @@
             [kafka-clj.consumer.workunits :as wu-api]
             [clojure.core.async :as async]
             [clojure.tools.logging :refer [info]])
-  (:import (java.util.concurrent Executors TimeUnit)
+  (:import (java.util.concurrent Executors TimeUnit ExecutorService ThreadPoolExecutor)
            (kafka_clj.util FetchState Fetch Fetch$Message Fetch$FetchError)
            (clojure.core.async.impl.channels ManyToManyChannel)
            (java.net SocketException)
@@ -98,6 +99,17 @@
 
 ;;;;;;;;;;;;;;;;;;;
 ;;;;;; Private Functions
+
+(defn- thread-pool-stats
+  "Return the stats of the ExecutorService depending on its type
+   currently only ThreadPoolExecutor is supported"
+  [^ExecutorService exec]
+  (if (instance? ThreadPoolExecutor exec)
+    {:active-count (.getActiveCount ^ThreadPoolExecutor exec)
+     :core-pool-size (.getCorePoolSize ^ThreadPoolExecutor exec)
+     :pool-size (.getPoolSize ^ThreadPoolExecutor exec)
+     :queue-remaining-capacity (-> exec .getQueue .remainingCapacity)}
+    {}))
 
 (defn- write-fetch-req!
   "Write a fetch request to the connection based on wu"
@@ -283,7 +295,7 @@
         (.start 10 TimeUnit/SECONDS))))
 
 (defn consume!
-  "Starts the consumer consumption process, by initiating 1+consumer-threads threads, one thread is used to wait for work-units
+  "Starts the consumer consumption process, by initiating redis-fetch-threads(default 1)+consumer-threads threads, one thread is used to wait for work-units
    from redis, and the other threads are used to process the work-unit, the resp data from each work-unit's processing result is
    sent to the msg-ch, note that the send to msg-ch is a blocking send, meaning that the whole process will block if msg-ch is full
    The actual consume! function returns inmediately
@@ -299,10 +311,14 @@
     (start-metrics-reporting!))
 
   (io!
-    (let [publish-exec-service (Executors/newSingleThreadExecutor)
+    (let [
+          redis-fetch-threads (get conf :redis-fetch-threads 1)
+          consumer-threads (get conf :consumer-threads 2)
+
+          publish-exec-service (threads/create-exec-service redis-fetch-threads)
           shutdown-flag (AtomicBoolean. false)
           conn-pool (tcp/tcp-pool conf)
-          consumer-threads (get conf :consumer-threads 2)
+
           exec-service (threads/create-exec-service consumer-threads)
           delegate-f (if (get conf :consumer-reporting)
                        (fn [msg]
@@ -314,8 +330,17 @@
           max-bytes-at (atom {})
           wu-processor (partial auto-tune-fetch max-bytes-at state conn-pool delegate-f)]
 
-      (start-wu-publisher! (assoc state :shutdown-flag shutdown-flag)  publish-exec-service exec-service wu-processor)
+      ;;for each fetch thread we start a fetcher on the publish-exec-service
+      (dotimes [_ redis-fetch-threads]
+        (start-wu-publisher! (assoc state :shutdown-flag shutdown-flag)  publish-exec-service exec-service wu-processor))
+
       (assoc state :publish-exec-service publish-exec-service :exec-service exec-service :conn-pool conn-pool :shutdown-flag shutdown-flag))))
+
+(defn consumer-pool-stats
+  "Return a stats map for instances returned from the consume! function"
+  [{:keys [^ExecutorService exec-service conn-pool]}]
+  {:exec-service (thread-pool-stats exec-service)
+   :conn-pool (pool/pool-stats conn-pool)})
 
 (defn close-consumer! [{:keys [publish-exec-service exec-service conn-pool ^AtomicBoolean shutdown-flag]}]
   (.set shutdown-flag true)
