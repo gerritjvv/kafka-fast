@@ -3,7 +3,7 @@
            (org.openjdk.jol.info GraphLayout))
   (:require
     [kafka-clj.consumer.work-organiser :refer [create-organiser! close-organiser! calculate-new-work]]
-    [kafka-clj.consumer.consumer :refer [consume! close-consumer!]]
+    [kafka-clj.consumer.consumer :refer [consume! close-consumer! consumer-pool-stats]]
     [kafka-clj.redis.core :as redis]
     [com.stuartsierra.component :as component]
     [fun-utils.core :refer [fixdelay-thread stop-fixdelay buffered-chan]]
@@ -153,6 +153,11 @@
      :group-name         group-name
      :redis-conn         redis-conn
      :work-unit-event-ch work-unit-event-ch}))
+
+(def node-stats
+  "Returns the consumer stats, takes as argument the instance returned from create-node!"
+  [{:keys [consumer]}]
+  (consumer-pool-stats consumer))
 
 (defn conn-pool-idle
   "Return the number of idle redis connections used by the consumer node"
