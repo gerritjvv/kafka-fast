@@ -293,9 +293,9 @@ Fetching data from Kafka uses
   * TCP Pool for connections to kafka
 
 ```clojure
-(require '[kafka-clj.consumer.consumer :as consumer])
+(require '[kafka-clj.consumer.node :as node])
 
-(consumer/consumer-pool-stats node)
+(consumer/node-stats consumer-node)
 ;; {:exec-service <consume-thread-pool-stats>
 ;;  :conn-pool <tcp-pool-stats>}
 ```
