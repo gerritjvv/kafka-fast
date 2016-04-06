@@ -85,3 +85,10 @@
   conf is map of settings from GenericKeyedObjectPoolConfig e.g setMaxTotal is {:max-total 10}"
   [^KeyedPooledObjectFactory factory conf]
   (GenericKeyedObjectPool. factory (config-obj conf)))
+
+(defn pool-stats
+  "Return a stats map for pools returned from the object-pool function"
+  [^GenericKeyedObjectPool pool]
+  {:num-active (.getNumActive pool)
+   :num-idle (.getNumIdle pool)
+   :num-waiters (.getNumWaiters pool)})

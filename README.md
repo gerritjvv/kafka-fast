@@ -284,6 +284,21 @@ A measure if how many bytes can be obtained using:
 
 ```
 
+### Consumer TCP Pools and Redis/Kafka Fetch Threads
+
+Fetching data from Kafka uses  
+
+  * Thread pool for fetching work units from redis ( default 1 )
+  * Thread pool for fetching data from kafka ( default 2 )
+  * TCP Pool for connections to kafka
+
+```clojure
+(require '[kafka-clj.consumer.node :as node])
+
+(consumer/node-stats consumer-node)
+;; {:exec-service <consume-thread-pool-stats>
+;;  :conn-pool <tcp-pool-stats>}
+```
 
 ### Redis Connection Pools
 
@@ -367,6 +382,7 @@ See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for wr
 |:conf:redis-conf | ```:redis-conf {:host "localhost" :max-active 10 :timeout 500}``` | The redis configuration for the consumer |
 |:conf :reset-ahead-offsets | ```:reset-ahead-offsets true``` default is false | If the brokers during restarts report a lower offset than is saved, we reset the read offset to that of the max reported broker offset for a topic/partition see https://github.com/gerritjvv/kafka-fast/issues/10 |
 |:conf :consumer-threads | 2 | number of background threads doing fetching from kafka |
+|:conf :redis-fetch-threads | 1 | number of background threads that fetch workunits from redis parallel |
 |:conf :consumer-reporting | false | if true the kafka consumer will print out metrics for the number of messages sent the the msg-ch every 10 seconds |
 |:conf :consumer-conn-max-total | 40 | The maximum number of connections that should be created |
 |:conf :consumer-conn-max-total-per-key | 40 | The maximum number of connections that should be created per broker |
