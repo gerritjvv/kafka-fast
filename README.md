@@ -37,6 +37,11 @@ See https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/vagrant.md
 </repositories>
 ```
 
+## Creating Topics
+
+In production and for testing its best practice to create the topics manually (or via an automated script) rather than try and use the Kafka Producer to "auto-create" it. Care should be taken and some thought given to the number of partitions and the replication factor. Although this library in particular is not bounded by the number of partitions it is still a means by which the Kafka Brokers split data internally and affects data deletion and replication.
+
+
 ## Producer
 
 The ```kafka-client.client``` namespace contains a ```create-connector``` function that returns a async multi threaded thread safe connector.
