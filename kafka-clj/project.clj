@@ -1,4 +1,4 @@
-(defproject kafka-clj "3.6.4"
+(defproject kafka-clj "3.6.5-SNAPSHOT"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -14,45 +14,51 @@
          :url "https://github.com/gerritjvv/kafka-fast.git"}
   :java-source-paths ["java"]
   :jvm-opts ["-Xmx3g"]
-  :plugins [
-         [lein-rpm "0.0.5"] [lein-midje "3.1.1"] [lein-marginalia "0.7.1"]
-	       [lein-cloverage "1.0.2"]
-         [lein-kibit "0.0.8"] [no-man-is-an-island/lein-eclipse "2.0.0"]
-           ]
+  :plugins [[lein-midje "3.1.1"]
+            [lein-kibit "0.0.8"]]
   :test-paths ["test" "test-java"]
   :dependencies [
-                 [org.clojars.runa/conjure "2.1.3" :scope "test"]
-
-                 [com.taoensso/carmine "2.7.0" :exclusions [org.clojure/clojure]]
-                 [redis.clients/jedis "2.6.2"]
-                 [org.redisson/redisson "1.2.1"]
-                 [org.apache.commons/commons-pool2 "2.2"]
+                 [com.taoensso/carmine "2.12.2" :exclusions [org.clojure/clojure]]
+                 [org.redisson/redisson "2.2.14" :exclusions [io.netty/netty-buffer]]
+                 [org.apache.commons/commons-pool2 "2.4.2"]
                  [com.alexkasko.unsafe/unsafe-tools "1.4.4"]
 
-                 [org.mapdb/mapdb "1.0.6"]
-                 [midje "1.6.3" :scope "test"]
-                 [org.clojure/tools.trace "0.7.6"]
-                 [org.xerial.snappy/snappy-java "1.1.1.6"]
+                 [org.mapdb/mapdb "1.0.9"]
+                 [org.xerial.snappy/snappy-java "1.1.2.4"]
 
-                 [pjson "0.2.7"]
                  [net.jpountz.lz4/lz4 "1.3.0"]
                  [org.clojure/tools.logging "0.3.1"]
-                 [clj-tcp "0.4.9"]
-                 ;[fmap-clojure "LATEST" :exclusions [org.clojure/tools.logging]]
+                 [clj-tcp "1.0.1"
+                  :exclusions [com.taoensso/nippy
+                               com.taoensso/truss
+                               org.clojure/tools.reader
+                               com.taoensso/encore]]
+
                  [fun-utils "0.6.1" :exclusions [org.clojure/tools.logging]]
                  [clj-tuple "0.2.2"]
-                 ;[thread-load "0.2.0-SNAPSHOT" :exclusions [org.clojure/clojure]]
-                 [com.codahale.metrics/metrics-core "3.0.1"]
-                 [metrics-clojure "2.5.1"]
-                 [org.clojure/core.async "0.2.374"]
-                 [com.stuartsierra/component "0.2.2"]
 
-                 [org.openjdk.jol/jol-core "0.4"]
+                 [com.codahale.metrics/metrics-core "3.0.2"]
+
+                 [org.clojure/core.async "0.2.374"
+                  :exclusions [org.clojure/tools.reader]]
+
+                 [com.stuartsierra/component "0.3.1"]
+
+                 [org.openjdk.jol/jol-core "0.5"]
 
                  [org.clojure/clojure "1.8.0" :scope "provided"]
-                 [org.apache.zookeeper/zookeeper "3.4.6" :scope "provided"
+
+                 [midje "1.8.3" :scope "test"
+                  :exclusions [potemkin
+                               riddley]]
+
+                 [org.clojars.runa/conjure "2.2.0" :scope "test"]
+
+                 [org.apache.zookeeper/zookeeper "3.4.8" :scope "test"
                   :exclusions [io.netty/netty]]
-                 [org.apache.kafka/kafka_2.10 "0.8.1.1" :scope "provided"
-                  :exclusions [io.netty/netty]]
-                 [redis.embedded/embedded-redis "0.3" :scope "provided"]
-                 ])
+                 [org.apache.kafka/kafka_2.10 "0.10.0.0" :scope "test"
+                  :exclusions [io.netty/netty
+                               log4j
+                               org.slf4j/slf4j-api
+                               org.slf4j/slf4j-log4j12]]
+                 [redis.embedded/embedded-redis "0.5" :scope "test"]])

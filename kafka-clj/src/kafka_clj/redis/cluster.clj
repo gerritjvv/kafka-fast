@@ -6,10 +6,11 @@
   (:import [kafka_clj.util Util]
            [org.redisson.core RBucket RLock]
            [org.redisson Redisson Config ClusterServersConfig SingleServerConfig]
-           [org.redisson.codec RedissonCodec]
            [java.nio ByteBuffer]
            (java.util Queue List)
-           (java.util.concurrent TimeUnit)))
+           (java.util.concurrent TimeUnit)
+           (org.redisson.client.codec Codec)
+           (org.redisson.client.protocol Decoder Encoder)))
 
 
 (defprotocol IToBytes
@@ -29,20 +30,41 @@
     (thaw bts)
     (String. bts "UTF-8")))
 
+(defn nippy-decoder []
+  (reify Decoder
+    (decode [this buffer state]
+      (from-bytes (Util/toBytes ^ByteBuffer buffer)))))
+
+(defn nippy-encoder []
+  (reify Encoder
+    (encode [this o]
+      (-write o))))
+
+(defn nippy-map-key-decoder []
+  (reify Decoder
+    (decode [this buffer state]
+      (Util/asStr ^ByteBuffer buffer))))
+
+(defn nippy-map-key-encoder []
+  (reify Encoder
+    (encode [this o]
+      (.getBytes (str o) "UTF-8"))))
+
+
 (defn codec []
-  (reify RedissonCodec
-    (decodeKey [_ buffer]
-      (Util/asStr ^ByteBuffer buffer))
-    (decodeValue [_ buffer]
-      (from-bytes (Util/toBytes ^ByteBuffer buffer)))
-    (encodeKey [_ k]
-      (.getBytes (str k) "UTF-8"))
-    (encodeValue [_ v]
-      (-write v))
-    (encodeMapValue [^RedissonCodec this v] (.encodeValue this v))
-    (encodeMapKey [^RedissonCodec this k] (.encodeKey this k))
-    (decodeMapValue [^RedissonCodec this v] (.decodeValue this ^ByteBuffer v))
-    (decodeMapKey [^RedissonCodec this k] (.decodeKey this ^ByteBuffer k))))
+  (reify Codec
+    (getMapValueDecoder [this]
+      (nippy-decoder))
+    (getMapValueEncoder [this]
+      (nippy-encoder))
+    (getMapKeyDecoder [this]
+      (nippy-map-key-decoder))
+    (getMapKeyEncoder [this]
+      (nippy-map-key-encoder))
+    (getValueDecoder [this]
+      (nippy-decoder))
+    (getValueEncoder [this]
+      (nippy-encoder))))
 
 (defn ^Config create-config [hosts]
   (let [^Config conf (.setCodec (Config.) (codec))]
