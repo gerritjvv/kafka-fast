@@ -9,7 +9,6 @@
   :global-vars {*warn-on-reflection* true
                *assert* true}
 
-  ;:main kafka-clj.app
   :scm {:name "git"
          :url "https://github.com/gerritjvv/kafka-fast.git"}
   :java-source-paths ["java"]
