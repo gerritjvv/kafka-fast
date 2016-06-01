@@ -1,5 +1,7 @@
 language: clojure
 
+jdk:
+  - oraclejdk8
 
 install: ./scripts/travis-install.sh
 
