@@ -1,9 +1,12 @@
 package kafka_clj.util;
 
 import kafka.admin.AdminUtils;
+import kafka.admin.RackAwareMode;
 import kafka.server.KafkaConfig;
 import kafka.server.KafkaServer;
+import kafka.utils.ZkUtils;
 import org.I0Itec.zkclient.ZkClient;
+import scala.Option$;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -57,9 +60,18 @@ public class EmbeddedKafkaCluster {
         this.brokerList = constructBrokerList(this.ports);
     }
 
+
+    public ZkUtils getZkUtils(){
+        for(KafkaServer server : brokers){
+            return server.zkUtils();
+        }
+        return null;
+    }
+
+
     public ZkClient getZkClient(){
         for(KafkaServer server : brokers){
-            return server.zkClient();
+            return server.zkUtils().zkClient();
         }
         return null;
     }
@@ -79,7 +91,7 @@ public class EmbeddedKafkaCluster {
      */
     public void createTopics(Collection<String> topics, int partition, int replication){
         for(String topic : topics){
-            AdminUtils.createTopic(getZkClient(), topic, partition, replication, new Properties());
+            AdminUtils.createTopic(getZkUtils(), topic, partition, replication, new Properties(), new RackAwareMode.Safe$().MODULE$);
         }
     }
 
@@ -146,7 +158,7 @@ public class EmbeddedKafkaCluster {
 
 
     private KafkaServer startBroker(Properties props) {
-        KafkaServer server = new KafkaServer(new KafkaConfig(props), new SystemTime());
+        KafkaServer server = new KafkaServer(new KafkaConfig(props), new SystemTime(), Option$.MODULE$.<String>empty());
         server.startup();
         return server;
     }

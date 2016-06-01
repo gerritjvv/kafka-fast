@@ -5,12 +5,13 @@
     (java.util.concurrent TimeUnit)
     (java.util UUID))
   (:require [taoensso.carmine
-             (protocol    :as protocol)
+             (protocol :as protocol)
              (connections :as conns)
-             (commands    :as commands)]
+             (commands :as commands)]
             [kafka-clj.redis.protocol :refer [IRedis]]
             [taoensso.carmine :as car]
-            [clojure.tools.logging :refer [info]]))
+            [clojure.tools.logging :refer [info]]
+            [taoensso.encore :as enc]))
 
 
 (defn nil-safe [v default]
@@ -78,30 +79,31 @@
 (defn release-conn [{:keys [^ObjectPool pool]} conn]
   (.returnObject pool conn))
 
+
 (defmacro _wcar
   "
   The ConnectionPool returned from conn-pool must be the first argument to this macro
-  Evaluates body in the context.
-  Sends Redis commands to server as pipeline and returns the
+  Evaluates body in the context of a fresh thread-bound pooled connection to
+  Redis server. Sends Redis commands to server as pipeline and returns the
   server's response. Releases connection back to pool when done.
-
   `conn-opts` arg is a map with connection pool and spec options:
-    {:pool {} :spec {:host \"127.0.0.1\" :porst 6379}} ; Default
+    {:pool {} :spec {:host \"127.0.0.1\" :port 6379}} ; Default
     {:pool {} :spec {:uri \"redis://redistogo:pass@panga.redistogo.com:9475/\"}}
     {:pool {} :spec {:host \"127.0.0.1\" :port 6379
                      :password \"secret\"
                      :timeout-ms 6000
                      :db 3}}
-
   A `nil` or `{}` `conn-opts` will use defaults. A `:none` pool can be used
   to skip connection pooling (not recommended).
   For other pool options, Ref. http://goo.gl/e1p1h3,
                                http://goo.gl/Sz4uN1 (defaults).
-
+  Note that because of thread-binding, you'll probably want to avoid lazy Redis
+  command calls in `wcar`'s body unless you know what you're doing. Compare:
+  `(wcar {} (for   [k [:k1 :k2]] (car/set k :val))` ; Lazy, NO commands run
+  `(wcar {} (doseq [k [:k1 :k2]] (car/set k :val))` ; Not lazy, commands run
   See also `with-replies`."
-  {:arglists '([conn-opts :as-pipeline & body] [conn-opts & body])}
-  ;; [conn-opts & [s1 & sn :as sigs]]
-  [^ObjectPool pool & sigs]
+  {:arglists '([conn-pool :as-pipeline & body] [conn-pool & body])}
+  [^ObjectPool pool & sigs] ; [conn-opts & [s1 & sn :as sigs]]
   `(let [conn# (kafka-clj.redis.single/pooled-conn ~pool)
 
          ;; To support `wcar` nesting with req planning, we mimic
@@ -112,7 +114,7 @@
 
      (try
        (let [response# (protocol/with-context conn#
-                                              (protocol/with-replies* ~@sigs))]
+                                              (protocol/with-replies ~@sigs))]
          (release-conn ~pool conn#)
          response#)
 
@@ -123,7 +125,7 @@
        (finally
          (when ?stashed-replies#
            (car/parse nil ; Already parsed on stashing
-                      (mapv car/return ?stashed-replies#)))))))
+                      (enc/backport-run! car/return ?stashed-replies#)))))))
 
 (def ^:private lkey (partial car/key :carmine :lock))
 
