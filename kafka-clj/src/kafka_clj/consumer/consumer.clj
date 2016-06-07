@@ -9,8 +9,7 @@
             [kafka-clj.fetch :as fetch]
             [clj-tuple :refer [tuple]]
             [kafka-clj.consumer.workunits :as wu-api]
-            [clojure.core.async :as async]
-            [clojure.tools.logging :refer [info]])
+            [clojure.core.async :as async])
   (:import (java.util.concurrent Executors TimeUnit ExecutorService ThreadPoolExecutor)
            (kafka_clj.util FetchState Fetch Fetch$Message Fetch$FetchError)
            (clojure.core.async.impl.channels ManyToManyChannel)

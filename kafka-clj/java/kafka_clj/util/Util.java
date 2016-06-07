@@ -136,7 +136,17 @@ public class Util {
     }
 
     public static String asStr(ByteBuffer buff){
-        return new String(buff.array(), buff.arrayOffset()+buff.position(), buff.limit());
+        if(buff.hasArray())
+            return new String(buff.array(), buff.arrayOffset()+buff.position(), buff.limit());
+        else
+            return new String(toBytes(buff));
+    }
+
+    public static String asStr(ByteBuf buff){
+        if(buff.hasArray())
+            return new String(buff.array(), buff.arrayOffset(), buff.readableBytes());
+        else
+            return new String(toBytes(buff));
     }
 
     public static final String[] strArray(String str) {
@@ -148,6 +158,15 @@ public class Util {
         byte[] arr = new byte[limit];
         System.arraycopy(buff.array(), buff.arrayOffset()+buff.position(), arr, 0, limit);
         return arr;
+    }
+
+    public static byte[] toBytes(ByteBuf buff){
+        ByteBuf buff2 = buff.slice();
+        byte[] bts = new byte[buff2.readableBytes()];
+
+        buff2.readBytes(bts);
+
+        return bts;
     }
 
     public final static boolean isNippyCompressed(byte[] bts){

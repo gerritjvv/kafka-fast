@@ -72,13 +72,28 @@
     (redis-cluster-conn redis-conf)
     (apply redis-cluster-conn redis-conf)))
 
+(defn add-host-port
+  "Take server and see if its host:port add (assoc conf :host (host server) :port (server)) else (assoc conf :host server)"
+  [conf server]
+  (let [[host port] (clojure.string/split server #":")]
+    (if port
+      (assoc conf :host host :port (Integer/parseInt port))
+      (assoc conf :host host))))
+
 (defn create
   "{:host []} use cluster
-   {:host \"\"} use single"
+   {:host \"\"} :or {:host [v1]} use single"
   [redis-conf]
-  (if (string? (clojure.core/get redis-conf :host))
-    (create-single-conn redis-conf)
-    (create-cluster-conn (clojure.core/get redis-conf :host))))
+  (let [host (:host redis-conf)]
+    (cond
+      (string? host)
+      (create-single-conn redis-conf)
+
+      (and (coll? host) (= (count host) 1) (string? (nth (vec host) 0)))
+      (create-single-conn (add-host-port redis-conf (nth (vec host) 0)))
+
+      :else
+      (create-cluster-conn redis-conf))))
 
 (comment
   (if (string? (clojure.core/get redis-conf :host))
