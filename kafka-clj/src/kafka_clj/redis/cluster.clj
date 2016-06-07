@@ -10,20 +10,48 @@
            (java.util Queue List)
            (java.util.concurrent TimeUnit)
            (org.redisson.client.codec Codec)
-           (org.redisson.client.protocol Decoder Encoder)))
+           (org.redisson.client.protocol Decoder Encoder)
+           (io.netty.buffer ByteBuf)))
 
+(defprotocol IAsStr
+  (-as-str [obj]))
 
-(defprotocol IToBytes
+(defprotocol IToEncodedBytes
   (-write [obj]))
+
+(defprotocol IToRawBytes
+  (-raw-bytes [obj]))
 
 ;; only use nippy for clojure objects (except True/False) for String and Number use a binary string
 (extend-protocol
-  IToBytes
+  IToEncodedBytes
   String (-write [obj] (Util/byteString obj))
   Number (-write [obj] (Util/byteString obj))
   nil    (-write [obj] (freeze obj))
   Object (-write [obj] (freeze obj)))
 
+(extend-protocol
+  IToRawBytes
+
+  ByteBuffer
+  (-raw-bytes [^ByteBuffer obj]
+    (Util/toBytes obj))
+
+  ByteBuf
+  (-raw-bytes [^ByteBuf obj]
+    (Util/toBytes obj)))
+
+
+  (extend-protocol
+    IAsStr
+
+    ByteBuffer
+    (-as-str [^ByteBuffer obj]
+             (Util/asStr obj))
+
+    ByteBuf
+    (-as-str [^ByteBuf obj]
+             (Util/asStr obj)))
 
 (defn from-bytes [^bytes bts]
   (if (Util/isNippyCompressed bts)
@@ -33,7 +61,7 @@
 (defn nippy-decoder []
   (reify Decoder
     (decode [this buffer state]
-      (from-bytes (Util/toBytes ^ByteBuffer buffer)))))
+      (from-bytes (-raw-bytes buffer)))))
 
 (defn nippy-encoder []
   (reify Encoder
@@ -43,7 +71,7 @@
 (defn nippy-map-key-decoder []
   (reify Decoder
     (decode [this buffer state]
-      (Util/asStr ^ByteBuffer buffer))))
+      (-as-str buffer))))
 
 (defn nippy-map-key-encoder []
   (reify Encoder
@@ -131,13 +159,16 @@
       (.add ^Queue (.getQueue cmd queue2) v)
       v)))
 
-(defn flushall [^Redisson cmd] (.flushdb cmd))
+(defn flushall [^Redisson cmd] )
 (defn close! [^Redisson cmd] (.shutdown cmd))
 
 
 (defn acquire-lock [^Redisson cmd ^String lock-name ^long timeout-ms ^long wait-ms]
   (let [^RLock lock (.getLock cmd lock-name)]
-    (if (.tryLock lock wait-ms timeout-ms TimeUnit/MILLISECONDS) lock)))
+
+    (try
+      (if (.tryLock lock wait-ms timeout-ms TimeUnit/MILLISECONDS) lock)
+      (catch Exception e (error e e)))))
 
 (defn release-lock [^Redisson cmd ^String lock-name ^RLock lock]
   (when lock
