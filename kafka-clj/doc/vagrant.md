@@ -3,6 +3,11 @@ Kafka Vagrant Development
 
 Home: https://github.com/gerritjvv/kafka-fast
 
+
+*Important*
+
+The vagrant setup is under construction for the moment so if you do not have the vagrant box locally it will give you errors. This will be fixed shortly
+
 # Overview
 
 Using vagrant allows you to develop kafka application as if your running a full production deployed cluster.
