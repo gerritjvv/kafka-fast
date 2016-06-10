@@ -170,11 +170,10 @@ public class Util {
     }
 
     public final static boolean isNippyCompressed(byte[] bts){
-        return (bts.length > 4
-                && bts[0] == 78
-                && bts[1] == 80
-                && bts[2] == 89
-                && bts[3] == 1);
+        return (bts.length > 3
+                && bts[0] == 78   //N
+                && bts[1] == 80   //P
+                && bts[2] == 89); //Y
     }
 
     public final static byte[] byteString(Object obj) throws UnsupportedEncodingException {

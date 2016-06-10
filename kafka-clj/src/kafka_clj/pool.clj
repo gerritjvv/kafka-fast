@@ -73,7 +73,9 @@
   [create-f validate-f destroy-f conf]
   (reify KeyedPooledObjectFactory
     (makeObject [_ k] (DefaultPooledObject. (create-f k conf)))
-    (destroyObject [_ _ v] (destroy-f (lift v) conf))
+    (destroyObject [_ _ v]
+      (when (and v (lift v))
+        (destroy-f (lift v) conf)))
     (validateObject [_ _ v] (validate-f (lift v) conf))
     (activateObject [_ _ _])
     (passivateObject [_ _ _])))

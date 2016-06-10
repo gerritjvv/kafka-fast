@@ -94,20 +94,28 @@
     (getValueEncoder [this]
       (nippy-encoder))))
 
-(defn ^Config create-config [hosts]
-  (let [^Config conf (.setCodec (Config.) (codec))]
+(defn ^Config create-config [redis-conf]
+  {:pre [(vector (:host redis-conf))]}
+
+  (let [hosts (:host redis-conf)
+        ^Config conf (.setCodec (Config.) (codec))]
     (if (> (count hosts) 1)
       (let [^ClusterServersConfig config (.useClusterServers conf)]
         (.setScanInterval config (int 2000))
+        (.setSlaveConnectionPoolSize config (clojure.core/get redis-conf :slave-connection-pool-size 100))
+        (.setMasterConnectionPoolSize config (clojure.core/get redis-conf :master-connection-pool-size 100))
+        (.setSlaveSubscriptionConnectionPoolSize config (clojure.core/get redis-conf :slave-subscription-connection-pool-size 500))
+
+        ;;we need read from slaves to be false, this otherwise produces connection issues
+        (.setReadFromSlaves config false)
+
         (.addNodeAddress config (into-array String (mapv #(Util/correctURI (str %)) hosts))))
       (-> conf .useSingleServer ^SingleServerConfig (.setAddress (first hosts))))
-
     conf))
 
 (defn connect
-  ([host & hosts]
-    (Redisson/create (create-config (conj hosts host)))))
-
+  ([redis-conf]
+    (Redisson/create (create-config redis-conf))))
 
 (defn set [^Redisson cmd ^String k v]
   (->
@@ -136,8 +144,12 @@
 (defn lrange [^Redisson cmd ^String queue ^long n ^long limit]
   (let [^List ls (.getList cmd queue)
         size (.size ls)]
-    (flatten
-      (into [] (.subList ls (int (if (< n 0) 0 n)) (int (if (>= limit size) (dec size) limit)))))))
+
+    (when (and
+            (pos? size)
+            (pos? limit))
+      (flatten
+        (into [] (.subList ls (int (if (< n 0) 0 n)) (int (Math/min (long size) limit))))))))
 
 
 (defn timeout? [^long start-time ^long timeout]
@@ -204,11 +216,5 @@
 
 
 (defn create
-  ([hosts]
-   (let [sp (clojure.string/split hosts #"[ ;,]")]
-     (if (> (count sp) 1)
-       (apply create sp)
-       (->RedissonObj (apply connect sp)))))
-  ([host & hosts]
-   (prn "redis-cluster/create host: " host " hosts: " hosts)
-    (->RedissonObj (apply connect (conj hosts host)))))
+  ([redis-conf]
+    (->RedissonObj (connect redis-conf))))
