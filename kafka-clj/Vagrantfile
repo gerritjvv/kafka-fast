@@ -5,7 +5,7 @@ VAGRANTFILE_API_VERSION = "2"
 
 Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
 
-  config.vm.box = "gerritjvv/centos-6.5-java"
+  config.vm.box = "precise64"
 
   config.vm.boot_timeout = 600
   config.vbguest.auto_update = true

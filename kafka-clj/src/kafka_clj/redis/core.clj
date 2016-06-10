@@ -68,9 +68,7 @@
     (redis-conn spec opts)))
 
 (defn create-cluster-conn [redis-conf]
-  (if (string? redis-conf)
-    (redis-cluster-conn redis-conf)
-    (apply redis-cluster-conn redis-conf)))
+  (redis-cluster-conn redis-conf))
 
 (defn add-host-port
   "Take server and see if its host:port add (assoc conf :host (host server) :port (server)) else (assoc conf :host server)"

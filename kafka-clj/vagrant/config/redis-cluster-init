@@ -20,6 +20,8 @@ REDIS_NODES="/etc/redis-nodes"
 
 [ -e /etc/sysconfig/redis ] && . /etc/sysconfig/redis
 
+#reset redis permissions
+chown -R redis /var/log/redis-dat
 
 start() {
 
@@ -30,6 +32,8 @@ HOST=`ip a s|sed -ne '/127.0.0.1/!{s/^[ \t]*inet[ \t]*\([0-9.]\+\)\/.*$/\1/p}' |
 while read PORT; do
 
     echo $PORT
+    mkdir -p /var/run/redis/
+
     pidfile="/var/run/redis/redis_$PORT.pid"
 
     REDIS_CONFIG="/etc/redis${PORT}.conf"
@@ -37,12 +41,13 @@ while read PORT; do
     sed -i "s/\$HOST/$HOST/g" $REDIS_CONFIG
 
     NODES="$NODES $HOST:$PORT"
+    mkdir -p /var/lock/subsys
     lockfile=/var/lock/subsys/redis$PORT
 
     [ -f $REDIS_CONFIG ] || exit 6
     [ -x $exec ] || exit 5
     echo -n $"Starting $name: "
-    daemon --user ${REDIS_USER-redis} "$exec $REDIS_CONFIG"
+    daemon --user ${REDIS_USER-redis} $exec $REDIS_CONFIG
 
     retval=$?
     echo
@@ -54,10 +59,12 @@ done <$REDIS_NODES
 
 sleep 1s
 
+echo /opt/$REDIS_NAME/src/redis-trib.rb create $NODES
+
 if [ `ls /var/log/redis-dat | wc -l` == 0 ]; then
 
  echo "Redis cluster setup"
- /opt/$REDIS_NAME/src/redis-trib.rb create $NODES
+ echo 'yes' | /opt/$REDIS_NAME/src/redis-trib.rb create $NODES
 
 fi
 
@@ -97,7 +104,7 @@ rh_status() {
 
 while read PORT; do
     pidfile="/var/run/redis/redis_$PORT.pid"
-    status -p $pidfile $name
+    status $pidfile $name
 done <$REDIS_NODES
 
 }
