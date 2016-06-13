@@ -18,7 +18,7 @@
              topic "test"
              total-processed 10
 
-             init-max-bytes 400000
+             init-max-bytes [7340032 524288 524288 (System/currentTimeMillis)]
              max-bytes-at (atom {topic {0 init-max-bytes}})]
 
 
@@ -29,7 +29,7 @@
            (consumer/auto-tune-fetch max-bytes-at {} {} (fn []) {:topic topic :partition 0})
 
            ;;check that the actual subtraction did happen
-           (get-in @max-bytes-at [topic 0]) => (- init-max-bytes 1450))))
+           (drop-last (get-in @max-bytes-at [topic 0])) =>  [6815744 524288 655360])))
 
 (facts "Test auto tune increments when maxoffset-offset > 5, this means that we have not consumed all the messages for this wu
         and the max bytes needs to be increased.
@@ -39,7 +39,7 @@
              discarded 0
              minbts 123
              maxbts 456
-             init-max-bytes 400000
+             init-max-bytes [7340032 524288 524288 (System/currentTimeMillis)]
              topic "test"
              total-processed 10
 
@@ -53,7 +53,7 @@
            (consumer/auto-tune-fetch max-bytes-at {} {} (fn []) {:topic topic :partition 0})
 
            ;;check that the addition did happen
-           (get-in @max-bytes-at [topic 0]) => (+ init-max-bytes 290))))
+           (drop-last (get-in @max-bytes-at [topic 0])) => [7864320 786432 524288])))
 
 (facts "Test auto tune handles nil returned"
        (let [topic "test"
@@ -89,4 +89,4 @@
            (consumer/auto-tune-fetch max-bytes-at {} {} (fn []) {:topic topic :partition 0})
 
            ;;check that the addition did happen
-           (get-in @max-bytes-at [topic 0]) => 290)))
+           (drop-last (get-in @max-bytes-at [topic 0])) => [7340032 524288 524288])))

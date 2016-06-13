@@ -15,7 +15,8 @@
            (clojure.core.async.impl.channels ManyToManyChannel)
            (java.net SocketException)
            (java.util.concurrent.atomic AtomicBoolean)
-           (com.codahale.metrics MetricRegistry Meter ConsoleReporter)))
+           (com.codahale.metrics MetricRegistry Meter ConsoleReporter)
+           (java.util ArrayList)))
 
 ;;;;;;;;;;;;;;;
 ;;;;; Metrics
@@ -213,16 +214,10 @@
 
 
 (defonce ^Long TWENTY-MEGS 20971520)
+(defonce ^Long TWO-MEGS 2097152)
+(defonce ^Long ONE-KB 1024)
 
-(defn ^Long avg
-  ([a]
-    (long (Math/ceil (double (/ a 2)))))
-  ([a b]
-   (long (Math/ceil (double (/ (+ (long a) (long b)) 2))))))
-
-(defn calc-adjustment [discarded minbts maxbts]
-  (long (* (avg (if (pos? discarded) discarded 1))
-           (avg maxbts minbts))))
+(defonce DEFAULT-MAX-BTS-REM [7340032 (* 1024 512) (* 1024 512) (System/currentTimeMillis)])
 
 (defn update-state-max-bytes [state max-bytes]
   (if (and max-bytes (pos? max-bytes))
@@ -241,41 +236,87 @@
     a a
     :else b))
 
+(defn over-seconds-ago? [^long time-ms ^long seconds]
+  (> (- (System/currentTimeMillis) time-ms) (* seconds 1000)))
+
+(defn increase-val
+  "increase the value v by (/ v decayer) up to a max of two megs,
+   if v is already MAX or the values has been updated more than 60 seconds ago RESET-VAL is returned to reset the value"
+  [v decayer MAX RESET-VAL updates-ts]
+  (if (or (>= (long v) (long MAX)) (over-seconds-ago? (long updates-ts) 60))
+    RESET-VAL
+    (Math/min (long (+ v (Math/ceil (/ v decayer)))) (long MAX))))
+
+(defn increase-inc
+  "Increase the incrementing value by half its size up to two megs,
+  if the value is already TWO-MEGS long its reset to 1KB"
+  [^long v ^long update-ts]
+  (increase-val v 2 TWO-MEGS ONE-KB update-ts))
+
+(defn increase-dec
+  "Increase the decrementing value by a quarter of its size up to two megs,
+  if the value is already TWO-MEGS long its reset to 1KB"
+  [^long v ^long update-ts]
+  (increase-val v 4 TWO-MEGS ONE-KB update-ts))
+
+(defn update-dec-rem
+  "Update the memory set containing [max-bts incrementor decrementor updated-ts], increasing the decrementor"
+  [[max-bts rem-inc rem-dec updated-ts]]
+  (tuple (Math/max 512 (long (- (long max-bts) (long rem-dec))))
+         rem-inc
+         (increase-dec rem-dec updated-ts)
+         (System/currentTimeMillis)))
+
+(defn update-inc-rem
+  "Update the memory set containing [max-bts incrementor decrementor updated-ts] increasing the incrementor"
+  [[max-bts rem-inc rem-dec updated-ts]]
+
+  (tuple (Math/min (long TWENTY-MEGS) (long (+ (long max-bts) (long rem-dec))))
+         (increase-inc rem-inc updated-ts)
+         rem-dec
+         (System/currentTimeMillis)))
+
+
+(defn with-default
+  "Apply the function to its argument only if the argument is not nil, otherwise default-val is returned"
+  [f default-val]
+  (fn [arg]
+    (if arg
+      (f arg)
+      default-val)))
+
 (defn auto-tune-fetch
   "Wraps around the process-wu! function and use the return state to calculate what the max-bytes in up comming fetch requests should be.
    "
   [max-bytes-at state conn-pool delegate-f wu]
   (try
-    (let [[_ offset maxoffset discarded minbts maxbts total-processed] (process-wu!
+    (let [topic (:topic wu)
+          partition (:partition wu)
+
+          [rem-max-bts _ _] (get-in @max-bytes-at [topic partition] DEFAULT-MAX-BTS-REM)
+
+          [_ offset maxoffset discarded minbts maxbts total-processed] (process-wu!
                                                                          (update-state-max-bytes state
-                                                                                                 (get-in @max-bytes-at [(:topic wu) (:partition wu)] 7340032))
+                                                                                                 rem-max-bts)
                                                                          conn-pool
                                                                          delegate-f
                                                                          wu)]
       (when discarded                                       ;test that any of the items exist and that nil wasn't returned from process-wu!
-        (mark-min-bytes! (:topic wu) minbts)
-        (mark-max-bytes! (:topic wu) maxbts)
+        (mark-min-bytes! topic minbts)
+        (mark-max-bytes! topic maxbts)
 
         (let [update-f  (cond
                           (> (long discarded) 5)
                           (do
-                            (debug "Adjusting dec " (:topic wu) " " (:partition wu) "  max-bytes discarded " discarded " minbts " minbts " maxbts " maxbts " maxoffset " maxoffset " offset " offset)
-                            #(let [x (nil-safe-sub % (calc-adjustment discarded minbts maxbts))
-                                   x2 (if (< x 512) 512 x)]
-                              (debug (str ">>>>> dec calculated " x2))
-                              (if (pos? x2)
-                                x2
-                                %)))
+                            (debug "Adjusting dec " topic` " " partition "  max-bytes discarded " discarded " minbts " minbts " maxbts " maxbts " maxoffset " maxoffset " offset " offset)
+                           update-dec-rem)
                           (> (- maxoffset offset) 5)
                           (do
-                            (debug "Adjusting inc " (:topic wu) " " (:partition wu) "  max-bytes discarded " discarded " minbts " minbts " maxbts " maxbts)
-                            #(let [x (nil-safe-add % (calc-adjustment discarded minbts maxbts))]
-                              (if (> x TWENTY-MEGS)
-                                TWENTY-MEGS
-                                x))))]
+                            (debug "Adjusting inc " topic " " partition "  max-bytes discarded " discarded " minbts " minbts " maxbts " maxbts)
+                            update-inc-rem))]
 
           (when update-f
-            (swap! max-bytes-at #(update-in % [(:topic wu) (:partition wu)] update-f))))))
+            (swap! max-bytes-at #(update-in % [topic partition] (with-default update-f DEFAULT-MAX-BTS-REM)))))))
     (catch Exception e (do
                          (.printStackTrace e)
                          (error e e)))))
