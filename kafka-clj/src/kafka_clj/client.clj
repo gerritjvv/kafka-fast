@@ -12,7 +12,7 @@
             [com.stuartsierra.component :as component]
             [clj-tuple :refer [tuple]]
             [clojure.core.async :as async])
-  (:import [java.util.concurrent.atomic AtomicLong]
+  (:import [java.util.concurrent.atomic AtomicLong AtomicBoolean]
            (java.util.concurrent Executors ScheduledExecutorService TimeUnit ThreadFactory ExecutorService CountDownLatch)
            (java.io IOException ByteArrayInputStream DataInputStream)))
 
@@ -68,14 +68,25 @@
         (throw (RuntimeException. "The client has been shutdown")))
       (throw (RuntimeException. (str "No healthy brokers available for topic " topic " " connector))))))
 
-(defn close [{{:keys [^AtomicLong activity-counter metadata-producers-ref producers-cache-ref scheduled-service retry-cache]} :state
-              msg-ch :msg-ch
-              persist-delay-thread :persist-delay-thread
-              async-latch :async-latch}]
+(defn close
   "Close all producers and channels created for the connected"
-  ;only close when all activity has ceased
-  ;close
+
+  [{{:keys [^AtomicBoolean shutdown-flag
+            ^AtomicLong activity-counter
+            metadata-producers-ref
+            producers-cache-ref
+            scheduled-service
+            retry-cache]} :state
+    msg-ch :msg-ch
+    persist-delay-thread :persist-delay-thread
+    async-latch :async-latch}]
+
+  ;;set shutdown flag
+  (.set shutdown-flag true)
+
   (async/close! msg-ch)
+
+  ;only close when all activity has ceased
   (loop [v (.get activity-counter)]
     (Thread/sleep 500)
     (if (not= v (.get activity-counter))
@@ -280,9 +291,8 @@
                                                 blacklisted-expire 10000 acks 0 batch-fail-message-over-limit true batch-byte-limit 10485760
                                                 topic-auto-create true flush-on-write false}
                                            :as conf}]
-  (let [
 
-        ^ScheduledExecutorService scheduled-service (Executors/newSingleThreadScheduledExecutor (daemon-thread-factory))
+  (let [^ScheduledExecutorService scheduled-service (Executors/newSingleThreadScheduledExecutor (daemon-thread-factory))
         async-ctx (fthreads/create-exec-service io-threads)                                       ;(fthreads/shared-threads (inc io-threads))
         metadata-producers-ref (ref (meta/bootstrap->producermap bootstrap-brokers conf))
 
@@ -301,7 +311,11 @@
         activity-counter (AtomicLong. 0)
         async-latch (CountDownLatch. 1)
 
+        ;;set to true on shutdown, and used to ignore NPE errors in the persist cache, and also exit the fixdelay thread
+        ^AtomicBoolean shutdown-flag (AtomicBoolean. false)
+
         state {
+               :shutdown-flag shutdown-flag
                :activity-counter activity-counter
                :retry-cache retry-cache
                :metadata-producers-ref metadata-producers-ref
@@ -333,7 +347,7 @@
 
         persist-delay-thread (futils/fixdelay-thread 1000
                                                      (try
-                                                       (do
+                                                       (when-not (.get shutdown-flag)
                                                          (doseq [retry-msg (persist/retry-cache-seq connector)]
                                                            (do (warn "Retry messages for " (:topic retry-msg) " " (:key-val retry-msg))
                                                                (if (coll? (:v retry-msg))
@@ -342,7 +356,9 @@
                                                                  (warn "Invalid retry value " retry-msg))
 
                                                                (persist/delete-from-retry-cache connector (:key-val retry-msg)))))
-                                                       (catch Exception e (error e e))))
+                                                       (catch Exception e
+                                                         (when-not (.get shutdown-flag)
+                                                           (error e e)))))
 
         ]
 
