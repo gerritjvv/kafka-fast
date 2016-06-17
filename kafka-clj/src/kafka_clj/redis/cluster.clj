@@ -4,7 +4,7 @@
             [kafka-clj.redis.protocol :refer [IRedis]]
             [clojure.tools.logging :refer [info error]])
   (:import [kafka_clj.util Util]
-           [org.redisson.core RBucket RLock]
+           [org.redisson.core RBucket RLock RScript$Mode RScript$ReturnType]
            [org.redisson Redisson Config ClusterServersConfig SingleServerConfig]
            [java.nio ByteBuffer]
            (java.util Queue List)
@@ -191,6 +191,9 @@
   (and lock (.isLocked ^RLock lock)))
 
 
+(defn lua [^Redisson cmd ^String script-str]
+  (.eval (.getScript cmd) RScript$Mode/READ_WRITE script-str RScript$ReturnType/VALUE))
+
 (defrecord RedissonObj [pool]
   IRedis
 
@@ -212,7 +215,9 @@
   (-have-lock?   [pool lock-name owner-uuid] (have-lock? (:pool pool) lock-name owner-uuid))
   (-flushall [pool] (flushall (:pool pool)))
   (-close! [pool] (close! (:pool pool)))
-  (-wcar [_ f] (f)))
+  (-wcar [_ f] (f))
+  (-lua [pool script-str]
+    (lua (:pool pool) script-str)))
 
 
 (defn create

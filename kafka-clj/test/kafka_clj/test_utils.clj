@@ -1,9 +1,10 @@
 (ns kafka-clj.test-utils
   (:require [clojure.string :as cljstr])
-  (:import [redis.embedded RedisServer]
+  (:import [redis.embedded RedisServer RedisCluster]
            [kafka_clj.util EmbeddedKafkaCluster EmbeddedZookeeper]
            [java.util Properties]
-           (org.apache.log4j BasicConfigurator)))
+           (org.apache.log4j BasicConfigurator)
+           (redis.embedded.util JedisUtil)))
 
 ;;USAGE
 ;; (def state (start-up-resources))
@@ -39,6 +40,19 @@
 (defn startup-redis []
   (let [redis (doto (RedisServer. (int 6379)) .start)]
     {:server redis :port 6379}))
+
+(defn start-redis-cluster []
+  ;;see https://github.com/kstyrc/embedded-redis
+  (let [cluster (-> (RedisCluster/builder)
+                    .ephemeral
+                    (.replicationGroup "master1" 1)
+                    .build)]
+    (.start cluster)
+    (while (not (.isActive cluster)) (Thread/sleep 1000) (prn "waiting for cluster up"))
+    {:cluster cluster :hosts (mapv #(str "localhost:" %) (take 1 (.serverPorts cluster)))}))
+
+(defn shutdown-redis-cluster [{:keys [^RedisCluster cluster]}]
+  (.stop cluster))
 
 (defn shutdown-redis [{:keys [^RedisServer server]}]
   (when server
@@ -85,3 +99,19 @@
    returns [{:host <broker> :port <port>}]"
   [res]
   (get-in res [:kafka :brokers]))
+
+
+(defn with-resources
+  "Simple fixtures testing with a setup and shutdown sequence"
+  [setup shutdown test-fn]
+  (let [rsc (setup)]
+    (try
+      (test-fn rsc)
+      (finally
+        (shutdown rsc)))))
+
+(defn with-redis [test-fn]
+  (with-resources startup-redis shutdown-redis test-fn))
+
+(defn with-redis-cluster [test-fn]
+  (with-resources start-redis-cluster shutdown-redis-cluster test-fn))

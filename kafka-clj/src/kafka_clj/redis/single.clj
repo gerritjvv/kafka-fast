@@ -174,6 +174,8 @@
   (when-let [lkeys (seq (_wcar pool (car/keys (lkey :*))))]
     (_wcar pool (apply car/del lkeys))))
 
+(defn lua [_ script]
+  (car/lua script {:a 1} {:b 2}))
 
 ;;pool is of type #taoensso.carmine.connections.ConnectionPool {:pool ObjectPool}
 (defrecord SingleRedis [pool])
@@ -216,7 +218,13 @@
 
   (-close! [{:keys [pool]}] (close-pool pool))
   (-wcar [{:keys [pool]} f]
-    (_wcar pool (f))))
+    (_wcar pool (f)))
+
+  (-lua [{:keys [pool]} script-str]
+    (lua pool script-str))
+
+  (-flushall [_]
+    (car/flushall)))
 
 (defn create
   "Main public function that should be called to create a Redis pool instance"

@@ -72,29 +72,23 @@
     (throw (RuntimeException. "Cannot copy to and from the same queue")))
 
 
+
   (loop [len (redis/wcar redis-conn (redis/llen redis-conn from-queue))]
     (info "copy-redis-queue [" from-queue "] => [" to-queue "]: " len)
-    (if (> len 0)
-      (let [queue-data (redis/wcar redis-conn
-                                   (redis/lrange redis-conn from-queue 0 100))
-            wus (map #(into (sorted-map) %)
-                     (filter filter-is-map
-                             queue-data))]
-        (when (not-empty wus)
-          (let [res
-                (loop [wus1 wus n 0]
-                  (if-let [wu (first wus1)]
-                    (do
-                      (redis/wcar redis-conn
-                                  (redis/lrem redis-conn from-queue 1 wu)
-                                  (redis/lpush redis-conn to-queue wu))
-                      (recur (rest wus1) (inc n)))
-                    n))]
-
-            (info "Copied " res " work units")
-            ;drop-last to drop the result from teh apply car lpush command
-            (when (>= res (count wus))                      ;only recur if we did delete all the values
-              (recur (redis/wcar redis-conn (redis/llen redis-conn from-queue))))))))))
+    (when (pos? len)
+      (redis/wcar redis-conn
+                  (redis/lua redis-conn
+                             (str
+                               "local s = '" from-queue "'"
+                               "local d = '" to-queue "'"
+                               "local i = tonumber(redis.call(\"LLEN\", s))
+                               local j = 0
+                               while j < i do
+                                local l = redis.call(\"LRANGE\", s, j, j+99)
+                                redis.call(\"LPUSH\", d, unpack(l))
+                                j = j + 100
+                               end
+                               redis.call(\"DEL\", s)"))))))
 
 (defn create-node!
   "Create a consumer node that represents a consumer using an organiser consumer and group conn to coordinate colaborative consumption

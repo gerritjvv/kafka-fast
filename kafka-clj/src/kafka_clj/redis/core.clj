@@ -26,6 +26,9 @@
 (defn close! [pool] (-close! pool))
 
 
+(defn lua [pool script-str]
+  (-lua pool script-str))
+
 (defmacro wcar [pool & body]
   `(-wcar ~pool #(do
                  ~@body)))
@@ -55,8 +58,9 @@
 
 (defn redis-cluster-conn
   "Creates a redis connection for a redis cluster"
-  [& hosts]
-  (apply redis-cluster/create hosts))
+  [cluster-conf]
+  (:pre [(vector? (:host cluster-conf)) (not-empty (:host cluster-conf))])
+  (redis-cluster/create cluster-conf))
 
 
 (defn create-single-conn [redis-conf]
@@ -92,8 +96,3 @@
 
       :else
       (create-cluster-conn redis-conf))))
-
-(comment
-  (if (string? (clojure.core/get redis-conf :host))
-    (create-single-conn redis-conf)
-    (create-cluster-conn (clojure.core/get redis-conf :host))))
