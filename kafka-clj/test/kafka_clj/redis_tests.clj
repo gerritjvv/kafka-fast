@@ -139,11 +139,10 @@
 
 ;;; test cases to run in run-test-cases
 (def redis-test-cases [
-                       ;lrem
-                       ;lpush-llen
-                       ;brpoplpush
-                       copy-redis-queue
-                       ])
+                       lrem
+                       lpush-llen
+                       brpoplpush
+                       copy-redis-queue])
 
 (defn run-test-cases
   "For each test case in redis-test-cases run the function with quikc-check and return the result"
