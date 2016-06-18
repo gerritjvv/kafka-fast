@@ -66,4 +66,4 @@
                                log4j
                                org.slf4j/slf4j-api
                                org.slf4j/slf4j-log4j12]]
-                 [redis.embedded/embedded-redis "0.5" :scope "test"]])
+                 [com.github.kstyrc/embedded-redis "0.6" :scope "test"]])

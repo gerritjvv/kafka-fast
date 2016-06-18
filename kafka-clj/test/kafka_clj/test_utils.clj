@@ -1,6 +1,6 @@
 (ns kafka-clj.test-utils
   (:require [clojure.string :as cljstr])
-  (:import [redis.embedded RedisServer RedisCluster]
+  (:import [redis.embedded RedisServer RedisCluster Redis]
            [kafka_clj.util EmbeddedKafkaCluster EmbeddedZookeeper]
            [java.util Properties]
            (org.apache.log4j BasicConfigurator)
@@ -44,12 +44,12 @@
 (defn start-redis-cluster []
   ;;see https://github.com/kstyrc/embedded-redis
   (let [cluster (-> (RedisCluster/builder)
-                    .ephemeral
                     (.replicationGroup "master1" 1)
                     .build)]
     (.start cluster)
     (while (not (.isActive cluster)) (Thread/sleep 1000) (prn "waiting for cluster up"))
-    {:cluster cluster :hosts (mapv #(str "localhost:" %) (take 1 (.serverPorts cluster)))}))
+
+    {:cluster cluster :hosts (mapv #(str "localhost:" %) (.serverPorts cluster))}))
 
 (defn shutdown-redis-cluster [{:keys [^RedisCluster cluster]}]
   (.stop cluster))

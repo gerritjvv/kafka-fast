@@ -57,7 +57,7 @@
                  queue-src (gen-string)
                  n (gen/choose 10 60)]
                 (try
-                  (let [v (mapv #(array-map % 1) v-n)
+                  (let [v (mapv #(array-map % "1") v-n)
                         queue-dest (str queue-src (System/currentTimeMillis))
                         _ (push-vector redis-conn queue-src v)
                         queue-len-src1 (redis-llen redis-conn queue-src)
@@ -102,7 +102,7 @@
                 (try
 
 
-                  (let [v (mapv #(array-map % 1) v-s)
+                  (let [v (mapv #(array-map % "1") v-s)
                         _ (push-vector redis-conn queue-name v)
                         sub-v (random-sub-vec v)
                         new-vec (do
@@ -118,9 +118,11 @@
   "Test tath the lpush function works"
   [redis-conn]
   (prop/for-all [v-s (gen-vector)
-                 queue-name (gen-string)]
+                 queue-name-g (gen-string)]
                 (try
-                  (let [v (mapv #(vector % 1) v-s)
+                  (let [time (System/nanoTime)
+                        queue-name (str queue-name-g (System/nanoTime))
+                        v (mapv #(vector % (str time)) v-s)
                         _ (push-vector redis-conn queue-name v)
 
                         [result result-cnt] (redis-protocol/-wcar redis-conn
@@ -140,9 +142,10 @@
 ;;; test cases to run in run-test-cases
 (def redis-test-cases [
                        lrem
-                       lpush-llen
-                       brpoplpush
-                       copy-redis-queue])
+                       ;lpush-llen
+                       ;brpoplpush
+                       ;copy-redis-queue
+                       ])
 
 (defn run-test-cases
   "For each test case in redis-test-cases run the function with quikc-check and return the result"
@@ -169,5 +172,5 @@
 (facts "Test redis single impl"
        (run-single-redis-tests) => true)
 
-(facts "Test redis cluster impl"
-       (run-cluster-redis-tests) => true)
+;(facts "Test redis cluster impl"
+;       (run-cluster-redis-tests) => true)
