@@ -10,6 +10,8 @@
   (-conn-pool-idle [_])
   (-conn-pool-active [_])
 
+  (-lua [_ script-str])
+
   (-lpush* [_ queue obj-coll])
   (-lpush [_ queue obj])
   (-llen  [_ queue])

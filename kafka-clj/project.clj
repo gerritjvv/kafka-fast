@@ -1,4 +1,4 @@
-(defproject kafka-clj "3.6.5"
+(defproject kafka-clj "3.6.6-SNAPSHOT"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -12,16 +12,20 @@
   :scm {:name "git"
          :url "https://github.com/gerritjvv/kafka-fast.git"}
   :java-source-paths ["java"]
-  :jvm-opts ["-Xmx3g"]
+  :jvm-opts ["-Xmx3g" "-server"]
   :plugins [[lein-midje "3.1.1"]
             [lein-kibit "0.0.8"]]
   :test-paths ["test" "test-java"]
   :dependencies [
                  [com.taoensso/carmine "2.12.2" :exclusions [org.clojure/clojure]]
-                 [org.redisson/redisson "2.2.14" :exclusions [io.netty/netty-buffer]]
+                 [org.redisson/redisson "2.2.16" :exclusions [io.netty/netty-buffer]]
                  [org.apache.commons/commons-pool2 "2.4.2"]
+
+                 [org.vibur/vibur-object-pool "9.0"]
+
                  [com.alexkasko.unsafe/unsafe-tools "1.4.4"]
 
+                 [criterium "0.4.4"]
                  [org.mapdb/mapdb "1.0.9"]
                  [org.xerial.snappy/snappy-java "1.1.2.4"]
 
@@ -47,6 +51,8 @@
 
                  [org.clojure/clojure "1.8.0" :scope "provided"]
 
+                 [org.clojure/test.check "0.9.0"]
+
                  [midje "1.8.3" :scope "test"
                   :exclusions [potemkin
                                riddley]]
@@ -60,4 +66,4 @@
                                log4j
                                org.slf4j/slf4j-api
                                org.slf4j/slf4j-log4j12]]
-                 [redis.embedded/embedded-redis "0.5" :scope "test"]])
+                 [com.github.kstyrc/embedded-redis "0.6" :scope "test"]])

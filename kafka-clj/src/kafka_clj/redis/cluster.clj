@@ -4,7 +4,7 @@
             [kafka-clj.redis.protocol :refer [IRedis]]
             [clojure.tools.logging :refer [info error]])
   (:import [kafka_clj.util Util]
-           [org.redisson.core RBucket RLock]
+           [org.redisson.core RBucket RLock RScript$Mode RScript$ReturnType]
            [org.redisson Redisson Config ClusterServersConfig SingleServerConfig]
            [java.nio ByteBuffer]
            (java.util Queue List)
@@ -99,19 +99,16 @@
 
   (let [hosts (:host redis-conf)
         ^Config conf (.setCodec (Config.) (codec))]
-    (if (> (count hosts) 1)
-      (let [^ClusterServersConfig config (.useClusterServers conf)]
-        (.setScanInterval config (int 2000))
-        (.setSlaveConnectionPoolSize config (clojure.core/get redis-conf :slave-connection-pool-size 100))
-        (.setMasterConnectionPoolSize config (clojure.core/get redis-conf :master-connection-pool-size 100))
-        (.setSlaveSubscriptionConnectionPoolSize config (clojure.core/get redis-conf :slave-subscription-connection-pool-size 500))
+    (let [^ClusterServersConfig config (.useClusterServers conf)]
+      (.setScanInterval config (int 2000))
+      (.setSlaveConnectionPoolSize config (clojure.core/get redis-conf :slave-connection-pool-size 100))
+      (.setMasterConnectionPoolSize config (clojure.core/get redis-conf :master-connection-pool-size 100))
+      (.setSlaveSubscriptionConnectionPoolSize config (clojure.core/get redis-conf :slave-subscription-connection-pool-size 500))
 
-        ;;we need read from slaves to be false, this otherwise produces connection issues
-        (.setReadFromSlaves config false)
-
-        (.addNodeAddress config (into-array String (mapv #(Util/correctURI (str %)) hosts))))
-      (-> conf .useSingleServer ^SingleServerConfig (.setAddress (first hosts))))
-    conf))
+      ;;we need read from slaves to be false, this otherwise produces connection issues
+      (.setReadFromSlaves config false)
+      (.addNodeAddress config (into-array String (mapv #(Util/correctURI (str %)) hosts)))
+      conf)))
 
 (defn connect
   ([redis-conf]
@@ -191,6 +188,9 @@
   (and lock (.isLocked ^RLock lock)))
 
 
+(defn lua [^Redisson cmd ^String script-str]
+  (.eval (.getScript cmd) RScript$Mode/READ_WRITE script-str RScript$ReturnType/VALUE))
+
 (defrecord RedissonObj [pool]
   IRedis
 
@@ -212,7 +212,9 @@
   (-have-lock?   [pool lock-name owner-uuid] (have-lock? (:pool pool) lock-name owner-uuid))
   (-flushall [pool] (flushall (:pool pool)))
   (-close! [pool] (close! (:pool pool)))
-  (-wcar [_ f] (f)))
+  (-wcar [_ f] (f))
+  (-lua [pool script-str]
+    (lua (:pool pool) script-str)))
 
 
 (defn create
