@@ -2,8 +2,11 @@
   (require [kafka-clj.pool-impl :as pool-impl]
            [clojure.test.check :as tc]
            [clojure.test.check.generators :as gen]
-           [clojure.test.check.properties :as prop])
-  (:import (java.util.concurrent TimeoutException Semaphore)))
+           [clojure.test.check.properties :as prop]
+           [midje.sweet :refer :all])
+  (:import (java.util.concurrent TimeoutException Semaphore Executors TimeUnit ExecutorService)
+           (clojure.lang Box)
+           (java.util HashMap Map)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;; util functions
@@ -24,6 +27,41 @@
      ~@body
      (catch TimeoutException _# true)))
 
+;;;;;;;;;;;;;;;;;
+;;;; util functions specific to the test-multiple-threads tests
+(defn with-pool-keyed-obj
+  "Get a pooled object at key k, call (f obj) then return obj to the keyed pool at key k,
+   this function's return value is that of f"
+  [keyed-pool k f]
+  (let [obj (pool-impl/poll keyed-pool k)]
+    (try
+      (f obj)
+      (finally
+        (pool-impl/return keyed-pool k obj)))))
+
+(defn set-inc-cnt!
+  "Requires a mutable map and calls get inc put with the key :cnt get :cnt"
+  [^Map m]
+  (.put m :cnt (inc (.get m :cnt)))
+  (.get m :cnt))
+
+(defn get-cnt-val-from-pool
+  "Get the :cnt value for a key k, otherwise -1 is returned, the object is returned to the pool after its usage
+   we assume a pool of 1"
+  [keyed-pool k]
+  (with-pool-keyed-obj keyed-pool k (fn [^Map m] (get m :cnt -1))))
+
+(defn all-java-futures-completes? [futures]
+  (every? #(and (.isDone %) (.get %)) futures))
+
+(defn merge-max-cnt-maps
+  "merge {:k <k> :cnt <int-count>} maps with max"
+  [cnt-maps]
+  (let [merge-fn (fn [state {:keys [k cnt]}]
+                   (update state k (fn [cnt2] (if cnt2 (max cnt cnt2) cnt))))]
+
+    (reduce merge-fn {} cnt-maps)))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;; test mock functions
 
@@ -43,9 +81,15 @@
   "Create a random value pool with limit as pool-limit"
   [limit]
   (pool-impl/create-atom-keyed-obj-pool {:pool-limit limit}
-                                        (always (rand))
-                                        (always true)
-                                        (always nil)))
+                                        (pool-impl/identity-f (rand))
+                                        (pool-impl/identity-f true)
+                                        (pool-impl/identity-f nil)))
+
+
+(defn create-f-rand [_] (rand))
+(def validate-f-true (pool-impl/identity-f true))
+(def validate-f-false (pool-impl/identity-f false))
+(def destroy-f-noop (pool-impl/identity-f nil))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -87,9 +131,9 @@
                 (let [ctx nil
                       m-atom (atom {})
 
-                      create-f (fn [_] (rand))
-                      validate-f identity
-                      destroy-f identity
+                      create-f create-f-rand
+                      validate-f validate-f-true
+                      destroy-f  destroy-f-noop
                       create-pool-f (fn [_] (pool-impl/create-atom-keyed-obj-pool nil create-f validate-f destroy-f))
 
                       get-results (doall (filter not-nil? (for [k v]
@@ -102,9 +146,9 @@
 
 (defn test-keyed-obj-pool []
   (prop/for-all [v (gen/vector gen/keyword)]
-                (let [create-f (fn [_] (rand))
-                      validate-f identity
-                      destroy-f identity
+                (let [create-f create-f-rand
+                      validate-f validate-f-true
+                      destroy-f destroy-f-noop
                       keyed-pool (pool-impl/create-atom-keyed-obj-pool nil create-f validate-f destroy-f)
 
                       get-results (doall (filter not-nil? (for [k v]
@@ -116,10 +160,72 @@
 
 
 
-(def test-cases [test-a-pool-limit
+(defn test-timeout-no-valid-object []
+  (prop/for-all [v (gen/vector gen/keyword)]
+                (let [create-f create-f-rand
+                      validate-f validate-f-false
+                      destroy-f destroy-f-noop
+                      pool-limit 10
+                      keyed-pool (pool-impl/create-atom-keyed-obj-pool {:pool-limit pool-limit} create-f validate-f destroy-f)
+                      k (first v)]
+
+                  (pool-impl/close-all keyed-pool)
+                  ;;;we expect a timeout exception because validate-f always returns false
+
+                  (and
+                    (expect-timeout-exception (pool-impl/poll keyed-pool k 100))
+                    (= (pool-impl/avaiable? keyed-pool k) pool-limit)))))
+
+(defn test-multiple-threads []
+  (prop/for-all [v (gen/such-that not-empty (gen/vector gen/keyword 2 5))
+                 th-len (gen/choose 5 20)
+                 th-it (gen/choose 1000 10000)]
+
+                ;;keyed pool that will create for each key the number 0 hidden in a mutable hash map under the key :cnt (we need a mutable set because we want to test that the object pool doesn't
+                ;;  leak same instances to other threads)
+                ;; the tasks will select a random key, then increment the number 1 th-it times, each increment will get a pool object and release it.
+                ;; sometimes the increment will sleep a random amount of time to simulate pauses and longer usage
+                ;; each task returns the count it thinks the key should have with its key. {:k key :cnt count}
+                ;;
+                ;; to check we merge the results of the different futures and max on the count,
+                ;; the compare this value with what is in the pool.
+                (let [create-f (fn [_] (doto (HashMap.) (.put :cnt 0)))
+
+                      validate-f  validate-f-true
+                      destroy-f destroy-f-noop
+
+                      keyed-pool (pool-impl/create-atom-keyed-obj-pool {:pool-limit 1} create-f validate-f destroy-f)
+
+                      pool-keys (into [] (take 5 v))
+                      ^ExecutorService exec (Executors/newCachedThreadPool)
+
+                      test-fn (fn []
+                                (let [k (rand-nth pool-keys)
+                                      cnt (last (repeatedly th-it #(with-pool-keyed-obj keyed-pool k set-inc-cnt!)))]
+                                  {:k k :cnt cnt}))
+
+                      futures (.invokeAll exec (repeat th-len test-fn))]
+
+                  (.shutdown exec)
+                  (.awaitTermination exec 30 TimeUnit/SECONDS)
+
+                  ;;check all futures have completed
+                  (assert (all-java-futures-completes? futures))
+
+                  (let [merged-maps (merge-max-cnt-maps (mapv #(.get %) futures))]
+                    (every?
+                      true?
+                      (for [[k cnt] merged-maps]
+                        (= cnt (get-cnt-val-from-pool keyed-pool k))))))))
+
+(def test-cases [                                           ;test-a-pool-limit
+                 test-multiple-threads
                  test-keyed-pool-fns
                  test-keyed-obj-pool
-                 test-a-pool-acquire-release])
+                 test-a-pool-acquire-release
+                 test-timeout-no-valid-object
+                 test-a-pool-limit
+                 ])
 
 (defn run-test-cases
   "For each test case in redis-test-cases run the function with quikc-check and return the result"
@@ -128,3 +234,6 @@
     (for [test-case test-cases]
       (do
         (:result (tc/quick-check 10 (test-case)))))))
+
+(facts "pool impl tests"
+       (every? true? (run-test-cases)) => true)
