@@ -128,7 +128,7 @@
    Note: validate-f is only called if (pool-obj-val v) is non nil\n
    "
   [pool timeout-ms]
-  (let [timeout-sleep-init (Math/min 100 (Math/abs (/ (long timeout-ms) 4)))]
+  (let [timeout-sleep-init (Math/min 100 (Math/abs (long (/ (long timeout-ms) 4))))]
 
     (loop [v (a-poll pool timeout-ms) ts (System/currentTimeMillis) timeout-sleep timeout-sleep-init]
       (if (a-validate-safely pool v)                          ;;test valid

@@ -289,8 +289,9 @@
   []
   (doall
     (for [test-case test-cases]
-      (do
-        (:result (tc/quick-check 10 (test-case)))))))
+      (let [res (:result (tc/quick-check 10 (test-case)))]
+        (prn test-case " => " res)
+        res))))
 
 (facts "pool impl tests"
        (every? true? (run-test-cases)) => true)
