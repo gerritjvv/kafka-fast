@@ -208,8 +208,11 @@
 
                   ;;wait one second for objs to expire
                   (prn "idle waiting on latch")
-                  (.await count-latch 1000 TimeUnit/MILLISECONDS)
+                  (.await count-latch 10 TimeUnit/SECONDS)
                   (prn "idle got latch")
+                  (prn "count v: " (count v) " = " (count (keys @created-atoms)))
+                  (prn "vals " (clojure.string/join "," (vals @created-atoms)))
+
                   (try
                     (and
                       (= (count v) (count (keys @created-atoms)))
