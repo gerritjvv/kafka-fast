@@ -19,9 +19,10 @@
   :dependencies [
                  [com.taoensso/carmine "2.12.2" :exclusions [org.clojure/clojure]]
                  [org.redisson/redisson "2.2.16" :exclusions [io.netty/netty-buffer]]
-                 [org.apache.commons/commons-pool2 "2.4.2"]
-
-                 [org.vibur/vibur-object-pool "9.0"]
+                 ;[org.apache.commons/commons-pool2 "2.4.2"]
+                 ;
+                 ;
+                 ;[org.vibur/vibur-object-pool "9.0"]
 
                  [com.alexkasko.unsafe/unsafe-tools "1.4.4"]
 

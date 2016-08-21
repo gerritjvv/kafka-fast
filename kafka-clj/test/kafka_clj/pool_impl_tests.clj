@@ -1,11 +1,13 @@
 (ns kafka-clj.pool-impl-tests
-  (require [kafka-clj.pool-impl :as pool-impl]
+  (require
+           [kafka-clj.pool.api :refer :all]
+           [kafka-clj.pool.keyed :refer :all]
+           [kafka-clj.pool.util :refer :all]
            [clojure.test.check :as tc]
            [clojure.test.check.generators :as gen]
            [clojure.test.check.properties :as prop]
            [midje.sweet :refer :all])
-  (:import (java.util.concurrent TimeoutException Semaphore Executors TimeUnit ExecutorService)
-           (clojure.lang Box)
+  (:import (java.util.concurrent TimeoutException Semaphore Executors TimeUnit ExecutorService CountDownLatch)
            (java.util HashMap Map)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -33,11 +35,11 @@
   "Get a pooled object at key k, call (f obj) then return obj to the keyed pool at key k,
    this function's return value is that of f"
   [keyed-pool k f]
-  (let [obj (pool-impl/poll keyed-pool k)]
+  (let [obj (poll keyed-pool k)]
     (try
-      (f obj)
+      (f (pool-obj-val obj))
       (finally
-        (pool-impl/return keyed-pool k obj)))))
+        (return keyed-pool k obj)))))
 
 (defn set-inc-cnt!
   "Requires a mutable map and calls get inc put with the key :cnt get :cnt"
@@ -68,28 +70,28 @@
 (defn poll-pool-objs
   "Run poll on pool with key k limit times and return a list of the results"
   [pool limit k]
-  (reduce (fn [v _] (conj v (pool-impl/poll pool k))) [] (range limit)))
+  (reduce (fn [v _] (conj v (poll pool k))) [] (range limit)))
 
 (defn return-pool-objs
   "Run return on pool with key k limit times and return a list of the results"
   [pool k objs]
   (doseq [o objs]
-    (pool-impl/return pool k o)))
+    (return pool k o)))
 
 
 (defn create-test-pool
   "Create a random value pool with limit as pool-limit"
   [limit]
-  (pool-impl/create-atom-keyed-obj-pool {:pool-limit limit}
-                                        (pool-impl/identity-f (rand))
-                                        (pool-impl/identity-f true)
-                                        (pool-impl/identity-f nil)))
+  (create-keyed-obj-pool {:pool-limit limit}
+                         (identity-f (rand))
+                         (identity-f true)
+                         (identity-f nil)))
 
 
-(defn create-f-rand [_] (rand))
-(def validate-f-true (pool-impl/identity-f true))
-(def validate-f-false (pool-impl/identity-f false))
-(def destroy-f-noop (pool-impl/identity-f nil))
+(defn create-f-rand [& _] (rand))
+(def validate-f-true (identity-f true))
+(def validate-f-false (identity-f false))
+(def destroy-f-noop (identity-f nil))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -100,7 +102,7 @@
                  limit (gen-rand-int)]
                 (let [pool (create-test-pool limit)
 
-                      pool-size-equals-limit? #(= (pool-impl/avaiable? pool %) limit)]
+                      pool-size-equals-limit? #(= (avaiable? pool %) limit)]
 
                   ;;we test that we can poll and return all objects without hanging on polling
                   ;;and then check the sempahore output
@@ -123,21 +125,21 @@
 
                   (and
                     (zero? (.availablePermits sem))
-                    (expect-timeout-exception (pool-impl/poll pool :a 200))))))
+                    (expect-timeout-exception (poll pool :a 200))))))
 
 
 (defn test-keyed-pool-fns []
-  (prop/for-all [v (gen/vector gen/keyword)]
+  (prop/for-all [v (gen/such-that not-empty (gen/vector gen/keyword))]
                 (let [ctx nil
                       m-atom (atom {})
 
                       create-f create-f-rand
                       validate-f validate-f-true
                       destroy-f  destroy-f-noop
-                      create-pool-f (fn [_] (pool-impl/create-atom-keyed-obj-pool nil create-f validate-f destroy-f))
+                      create-pool-f (fn [_ _] (create-keyed-obj-pool nil create-f validate-f destroy-f))
 
                       get-results (doall (filter not-nil? (for [k v]
-                                                            (pool-impl/get-keyed-pool ctx m-atom k create-pool-f))))]
+                                                            (get-keyed-pool ctx m-atom k create-pool-f))))]
 
 
                   (and
@@ -145,14 +147,14 @@
                     (= (count (distinct v)) (count (keys @m-atom)))))))
 
 (defn test-keyed-obj-pool []
-  (prop/for-all [v (gen/vector gen/keyword)]
+  (prop/for-all [v (gen/such-that not-empty (gen/vector gen/keyword))]
                 (let [create-f create-f-rand
                       validate-f validate-f-true
                       destroy-f destroy-f-noop
-                      keyed-pool (pool-impl/create-atom-keyed-obj-pool nil create-f validate-f destroy-f)
+                      keyed-pool (create-keyed-obj-pool nil create-f validate-f destroy-f)
 
                       get-results (doall (filter not-nil? (for [k v]
-                                                            (pool-impl/poll keyed-pool k))))]
+                                                            (poll keyed-pool k))))]
 
 
                   (and
@@ -161,20 +163,62 @@
 
 
 (defn test-timeout-no-valid-object []
-  (prop/for-all [v (gen/vector gen/keyword)]
+  (prop/for-all [v (gen/such-that not-empty (gen/vector gen/keyword))]
                 (let [create-f create-f-rand
                       validate-f validate-f-false
                       destroy-f destroy-f-noop
                       pool-limit 10
-                      keyed-pool (pool-impl/create-atom-keyed-obj-pool {:pool-limit pool-limit} create-f validate-f destroy-f)
+                      keyed-pool (create-keyed-obj-pool {:pool-limit pool-limit} create-f validate-f destroy-f)
                       k (first v)]
 
-                  (pool-impl/close-all keyed-pool)
+                  (close-all keyed-pool)
                   ;;;we expect a timeout exception because validate-f always returns false
 
                   (and
-                    (expect-timeout-exception (pool-impl/poll keyed-pool k 100))
-                    (= (pool-impl/avaiable? keyed-pool k) pool-limit)))))
+                    (expect-timeout-exception (poll keyed-pool k 100))
+                    (= (avaiable? keyed-pool k) pool-limit)))))
+
+(defn test-remove-idle []
+  (prop/for-all [v (gen/such-that not-empty (gen/vector gen/keyword 2 5))]
+
+
+                (let [
+                      ^CountDownLatch count-latch (CountDownLatch. (count v))
+                      created-atoms (ref {})
+                      ;;each create-f rerturns atom(1) and each destroy decrements the value
+                      ;;values are added during create to the created-atom ref, such that after
+                      ;; destroy-f has been called the atom at that key in created-atoms should be 0
+                      create-f (fn [_ k] (let [a (atom 1)]
+                                           (dosync
+                                             (alter created-atoms assoc k a))
+                                           a))
+
+                      validate-f validate-f-true
+                      destroy-f (fn [_ _ v]
+                                  (swap! (pool-obj-val v) dec)
+                                  (.countDown count-latch))
+
+                      managed-pool (create-managed-keyed-obj-pool {:idle-limit-ms 100
+                                                                   :idle-check-freq-ms 100}
+                                                                  (create-keyed-obj-pool {:pool-limit 1} create-f validate-f destroy-f))]
+
+                  (doseq [k v]
+                    ;;cause objects to be created and returned
+                    (with-pool-keyed-obj managed-pool k (fn [v] (assert (not-nil? v)))))
+
+                  ;;wait one second for objs to expire
+                  (prn "idle waiting on latch")
+                  (.await count-latch 1000 TimeUnit/MILLISECONDS)
+                  (prn "idle got latch")
+                  (try
+                    (and
+                      (= (count v) (count (keys @created-atoms)))
+                      (every?
+                        zero?
+                        (for [[_ cnt] @created-atoms]
+                          @cnt)))
+                    (finally
+                      (close-all managed-pool))))))
 
 (defn test-multiple-threads []
   (prop/for-all [v (gen/such-that not-empty (gen/vector gen/keyword 2 5))
@@ -189,12 +233,12 @@
                 ;;
                 ;; to check we merge the results of the different futures and max on the count,
                 ;; the compare this value with what is in the pool.
-                (let [create-f (fn [_] (doto (HashMap.) (.put :cnt 0)))
+                (let [create-f (fn [_ _] (doto (HashMap.) (.put :cnt 0)))
 
                       validate-f  validate-f-true
                       destroy-f destroy-f-noop
 
-                      keyed-pool (pool-impl/create-atom-keyed-obj-pool {:pool-limit 1} create-f validate-f destroy-f)
+                      keyed-pool (create-keyed-obj-pool {:pool-limit 1} create-f validate-f destroy-f)
 
                       pool-keys (into [] (take 5 v))
                       ^ExecutorService exec (Executors/newCachedThreadPool)
@@ -218,6 +262,18 @@
                       (for [[k cnt] merged-maps]
                         (= cnt (get-cnt-val-from-pool keyed-pool k))))))))
 
+
+(defn create-k-pool []
+  (let [create-f (fn [_ _] (doto (HashMap.) (.put :cnt 0)))
+
+        validate-f  validate-f-true
+        destroy-f destroy-f-noop
+
+        keyed-pool (create-keyed-obj-pool {:pool-limit 1} create-f validate-f destroy-f)]
+
+    keyed-pool))
+
+
 (def test-cases [                                           ;test-a-pool-limit
                  test-multiple-threads
                  test-keyed-pool-fns
@@ -225,6 +281,7 @@
                  test-a-pool-acquire-release
                  test-timeout-no-valid-object
                  test-a-pool-limit
+                 test-remove-idle
                  ])
 
 (defn run-test-cases

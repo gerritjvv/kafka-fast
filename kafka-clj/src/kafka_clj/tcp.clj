@@ -1,6 +1,6 @@
 (ns
   ^{:author "gerritjvv"
-    :doc "
+    :doc    "
     Simple Direct TCP Client for the producer
     The producers sit behind an async buffer where data is pushed on
     by multiple threads, the TCP sending itself does not need yet another layer or indirection
@@ -17,13 +17,13 @@
     "}
   kafka-clj.tcp
   (:require [clojure.tools.logging :refer [error info debug enabled?]]
-            [kafka-clj.pool :as pool]
+            [kafka-clj.pool.keyed :as pool-keyed]
+            [kafka-clj.pool.api :as pool-api]
             [clj-tuple :refer [tuple]])
   (:import (java.net Socket SocketException)
-           (java.io IOException InputStream OutputStream BufferedInputStream BufferedOutputStream DataInputStream)
+           (java.io InputStream OutputStream BufferedInputStream BufferedOutputStream DataInputStream)
            (io.netty.buffer ByteBuf Unpooled)
-           (kafka_clj.util Util IOUtil)
-           (java.util.concurrent TimeoutException)))
+           (kafka_clj.util IOUtil)))
 
 
 (defrecord TCPClient [host port conf socket ^BufferedInputStream input ^BufferedOutputStream output])
@@ -63,7 +63,7 @@
    The message bytes are returned as a byte array
    Throws SocketException, Exception"
   ([k]
-    (read-response {} k 30000))
+   (read-response {} k 30000))
   ([wu {:keys [^DataInputStream input]} ^long timeout]
    (let [len (read-int input timeout)
          bts (read-bts input timeout len)]
@@ -100,6 +100,7 @@
     (apply f args)
     (catch Exception e
       (do
+        (.printStackTrace e)
         (error (str "Ignored Exception " e) e)
         nil))))
 
@@ -118,34 +119,43 @@
   (.write ^BufferedOutputStream (:output tcp-client) bts))
 
 
-(defn tcp-pool [conf]
-  (pool/object-pool
-    (pool/keyed-obj-factory
-      (fn [[host port] conf] (wrap-exception tcp-client host port (flatten (seq conf)))) ;;create-f
-      (fn [v conf] (try
-                     (not (closed? v))
-                     (catch Exception e (do
-                                          (error (str "Ignored Exception " e) e)
-                                          false))))                       ;;validate-f
-      (fn [v conf] (wrap-exception close! v))                              ;;destroy-f
-      conf)
-    conf))
+(defn tcp-pool
+  "Note that objects returned from this pool are PoolObj instances and to get at the tcp-conn we
+   need to use pool-obj-val"
+  [conf]
+  (pool-keyed/create-keyed-obj-pool conf
+                                    (fn [conf [host port]] (wrap-exception tcp-client host port (flatten (seq conf)))) ;;create-f
+                                    (fn [_ _ v] (try
+                                                      (not (closed? (pool-api/pool-obj-val v)))
+                                                      (catch Exception e (do
+                                                                           (error (str "Ignored Exception " e) e)
+                                                                           false)))) ;;validate-f
+                                    (fn [_ _ v]
+                                      (wrap-exception close! (pool-api/pool-obj-val v))) ;;destroy-f
+                                    ))
 
 (defn borrow
   ([obj-pool host port]
-    (borrow obj-pool host port 10000))
+   (borrow obj-pool host port 10000))
   ([obj-pool host port timeout-ms]
-   (pool/borrow obj-pool (tuple host port) timeout-ms)))
+   (pool-api/poll obj-pool (tuple host port) timeout-ms)))
+
+(defn pool-obj-val
+  "Returns the PoolObj contained value"
+  [pooled-obj]
+  (pool-api/pool-obj-val pooled-obj))
 
 (defn invalidate! [obj-pool host port v]
-  (pool/invalidate! obj-pool (tuple host port) v))
+  (let [k (tuple host port)]
+    (pool-api/return obj-pool k v)
+    (pool-api/close-all obj-pool k)))
 
 
 (defn release [obj-pool host port v]
-  (pool/release obj-pool (tuple host port) v))
+  (pool-api/return obj-pool (tuple host port) v))
 
 (defn close-pool! [obj-pool]
-  (pool/close! obj-pool))
+  (pool-api/close-all obj-pool))
 
 (defn ^ByteBuf empty-byte-buff []
   (Unpooled/buffer))
@@ -158,6 +168,7 @@
   (-write! [obj tcp-client]
     (let [^ByteBuf buff obj
           readable-bytes (.readableBytes buff)]
+
       (.readBytes buff ^OutputStream (:output tcp-client) (int readable-bytes))))
   String
   (-write! [obj tcp-client]
