@@ -147,7 +147,7 @@
   [{:keys [queue ^Semaphore sem]} v]
   {:pre [v (instance? PoolObj v)]}
   ;;all returned objects must be transformed to (delay PoolObj) instances to track idle objects
-  (swap! queue (fn [[x xs]] [x (vec (conj xs (delay (create-pool-obj (pool-obj-val v)))))]))
+  (swap! queue (fn [[x xs]] [x (vec (conj xs (delay (pool-obj-update-ts v (now)))))]))
   (.release sem))
 
 (defn a-available?
@@ -181,19 +181,16 @@
   nil)
 
 (defn a-destroy-timeouts!
-  "Destroy pool objects that are idle timeout"
-  [{:keys [queue closed-atom] :as pool} timeout-ms]
+  "Destroy pool objects timeout"
+  [{:keys [queue closed-atom] :as pool} should-destroy? timeout-ms]
   (when-not (atom-closed? closed-atom)
     (let [
-          ;;; used to partition idle objects into keep and destroy
+          ;;; used to partition  objects into keep and destroy
           ;;; to destroy an object it must have been realized and idle for longer than timeout-ms
-
-          should-destroy? (fn [obj] (pool-obj-idle-timeout? @obj timeout-ms))
-
-          partition-f (fn [obj] (if (should-destroy? obj)
-                                  :destroy
-                                  :keep))
-
+          partition-f (fn [obj]
+                        (if (should-destroy? obj)
+                          :destroy
+                          :keep))
           ;;; takes the queue atom values [h queue-objs d]
           ;;; d contains the actions that will destroy objects
           swap-f (fn [[h objs _ :as v]]
@@ -207,7 +204,26 @@
       (when-let [destroy-actions (last (swap! queue swap-f))]
         @destroy-actions))))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defn a-destroy-idle-timeouts!
+  [pool timeout-ms]
+  (let [should-destroy? (fn [obj] (pool-obj-idle-timeout? @obj timeout-ms))]
+
+    (a-destroy-timeouts!
+      pool
+      should-destroy?
+      timeout-ms)))
+
+(defn a-destroy-ttl-timeouts!
+  [pool timeout-ms]
+  (let [should-destroy? (fn [obj] (pool-obj-ttl-timeout? @obj timeout-ms))]
+    ;;; used to partition idle objects into keep and destroy
+    ;;; to destroy an object it must have been realized and idle for longer than timeout-ms
+
+    (a-destroy-timeouts!
+      pool
+      should-destroy?
+      timeout-ms)))
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;; Records
 
 (defrecord AtomObjPool [ctx]
@@ -226,8 +242,11 @@
   (-pool-stats [_]
     (a-pool-stats ctx))
 
+  (-remove-ttl! [_ time-limit-ms]
+    (a-destroy-ttl-timeouts! ctx time-limit-ms))
+
   (-remove-idle! [_ time-limit-ms]
-    (a-destroy-timeouts! ctx time-limit-ms)))
+    (a-destroy-idle-timeouts! ctx time-limit-ms)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;; Public functiosn

@@ -64,8 +64,11 @@
 
 ;;;; A managed keyed pool
 ;;;;; managing idle pool objects, and delegates all operations to the keyed-pool
+;;;;; ttl is the ttl for each connection, this allows connections to be expired after being open for a period of time,
+;;;;;  good practice with long open connections given that OSes have the tendency to close them after a while any how and
+;;;;;  leave the application with broken pipe errors
 
-(defrecord ManagedObjPool [keyed-pool ^ScheduledExecutorService exec-service]
+(defrecord ManagedObjPool [keyed-pool ^ScheduledExecutorService exec-service ttl-ms]
   IKeyedObjPool
   (-get-keyed-pool [_ k]
     (-get-keyed-pool keyed-pool k))
@@ -84,7 +87,10 @@
     (-keyed-pool-stats keyed-pool))
 
   (-keyed-pool-remove-idle! [_ time-limit-ms]
-    (-keyed-pool-remove-idle! keyed-pool time-limit-ms)))
+    (-keyed-pool-remove-idle! keyed-pool time-limit-ms))
+
+  (-keyed-pool-remove-ttl! [_ time-limit-ms]
+    (-keyed-pool-remove-ttl! keyed-pool time-limit-ms)))
 
 
 ;;; m-atom is a map of keys and values as IObjPool instances
@@ -106,6 +112,10 @@
 
   (-keyed-pool-stats [_]
     (keyed-pool-stats m-atom))
+
+  (-keyed-pool-remove-ttl! [_ time-limit-ms]
+    (doseq [[_ pool] @m-atom]
+      (-remove-ttl! pool time-limit-ms)))
 
   (-keyed-pool-remove-idle! [_ time-limit-ms]
     (doseq [[_ pool] @m-atom]
@@ -142,14 +152,17 @@
 (defn create-managed-keyed-obj-pool
   "ctx = :idle-limit-ms  the time an object can be idle till its removed permemantly from the pool 60 seconds
          :idle-check-freq-ms time to check for idle timeouts 60 seconds
+         :ttl-ms time to live ms that a connection closed afterwards no matter if its being used or not, default 15 minutes
    "
   [ctx keyed-obj-pool]
   (let [exec-service (scheduled-exec-service "keyed-pool-idle-check-service") ;;closed in the ManagedObjPool:-keyed-pool-close-all
 
-        managed-pool (->ManagedObjPool keyed-obj-pool keyed-obj-pool)
+        ttl-ms (get ctx :ttl-ms 900000)
+        managed-pool (->ManagedObjPool keyed-obj-pool keyed-obj-pool ttl-ms)
         idle-limit-ms (get ctx :idle-limit-ms 60000)
 
         check-idle-f #(try
+                       (-keyed-pool-remove-ttl! managed-pool ttl-ms)
                        (-keyed-pool-remove-idle! managed-pool idle-limit-ms)
                        (catch Exception e (error e e)))]
 

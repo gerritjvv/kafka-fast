@@ -32,12 +32,19 @@
     (throw (TimeoutException.))))
 
 (defn ^PoolObj create-pool-obj [v]
-  (PoolObj. (now) v))
+  (pool-obj v))
+
+(defn pool-obj-ttl-timeout?
+  "True if (diff curr-time (.gen-ts v)) > timeout-ms"
+  [^PoolObj v timeout-ms]
+  {:pre [v (number? timeout-ms)]}
+  (timeout? timeout-ms (pool-obj-gen-ts v)))
 
 (defn pool-obj-idle-timeout?
   "True if (diff curr-time (.ts v)) > timeout-ms"
   [^PoolObj v timeout-ms]
-  (timeout? timeout-ms (.ts v)))
+  {:pre [v (number? timeout-ms)]}
+  (timeout? timeout-ms (pool-obj-ts v)))
 
 (defn scheduled-exec-service
   "Create a single threaded exec service that creates daemon threads with name n"

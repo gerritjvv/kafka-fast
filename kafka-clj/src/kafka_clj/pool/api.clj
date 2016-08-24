@@ -10,9 +10,26 @@
 ;;;;;;; Pool Object types
 
 ;;;; All pools must return objects of this type
-;;;; ts is the timestamp when the PoolObj was created (or may also be since the last return to the pool)
+;;;; gen-ts the timestamp of thwne the PoolObj was first created
+;;;; ts is the timestamp when the PoolObj was created/or returned to the pool
+
 ;;;; v is untyped and is the actual type of the object pooled
-(deftype PoolObj [^long ts v])
+(deftype PoolObj [^long gen-ts ^long ts v])
+
+(defn pool-obj [v] ^PoolObj
+  (let [ts (System/currentTimeMillis)]
+    (PoolObj. ts ts v)))
+
+(defn pool-obj-ts [^PoolObj v] ^long
+  (.ts v))
+
+(defn pool-obj-update-ts
+  "Update the ts of the pool obj and return a new instance of PoolObj"
+  [^PoolObj v ^long ts]
+  (PoolObj. (.gen-ts v) ts (.v v)))
+
+(defn pool-obj-gen-ts [^PoolObj v] ^long
+  (.gen-ts v))
 
 (defn pool-obj-val [^PoolObj v]
   (.v v))
@@ -26,6 +43,7 @@
   (-keyed-pool-close [this k])
   (-keyed-pool-close-all [this])
   (-keyed-pool-stats [this] "The all the stats for each IObjPool stored in IKeyedObjPool")
+  (-keyed-pool-remove-ttl! [this time-limit-ms] "Remove any objects in all keyed pools that has been live longer than time-limit-ms")
   (-keyed-pool-remove-idle! [this time-limit-ms] "Remove any objects in all keyed pools that has been idle (ie. not polled and returned in more than time-limit-ms)"))
 
 (defprotocol IObjPool
@@ -34,6 +52,7 @@
   (-available? [this] "Return the number of objects available")
   (-close-all [this])
   (-pool-stats [this] "Return the stats for the given pool")
+  (-remove-ttl! [this time-limit-ms] "Remove any objects in the pool that has been live longer than time-limit-ms")
   (-remove-idle! [this time-limit-ms] "Remove any objects in the pool that has been idle (ie. not polled and returned in more than time-limit-ms)"))
 
 (defn pool-stats
