@@ -48,9 +48,14 @@
      v
      (get (add-keyed-pool ctx m-atom k pool-create-f) k))))
 
+(defn join-key [k]
+  (if (coll? k)
+    (clojure.string/join "/" k)
+    (str k)))
+
 (defn keyed-pool-stats [m-atom]
   (let [r-f (fn [state k apool]
-              (assoc state k (-pool-stats apool)))]
+              (assoc state (join-key k) (-pool-stats apool)))]
     (reduce-kv r-f {} @m-atom)))
 
 
