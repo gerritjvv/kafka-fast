@@ -36,7 +36,7 @@
   "create-f when called should create a valid object called as (create-f ctx),
    validate-f is called before poll returns, called (validate-f ctx v)
    destroy-f  is called to destroy an object (destroy-f ctx v)
-   sem is a semaphore setting up the limit = (get ctx :pool-limit 100)"
+   sem is a semaphore setting up the limit = (get ctx :pool-limit 20)"
   [ctx create-f validate-f destroy-f]
   {:pre [(every? fn? [create-f validate-f destroy-f])]}
   (->AtomPool
@@ -45,7 +45,7 @@
     create-f
     validate-f
     destroy-f
-    (Semaphore. (int (get ctx :pool-limit 100)))
+    (Semaphore. (int (get ctx :pool-limit 20)))
     (AtomicBoolean. false)))
 
 (defn a-destroy
