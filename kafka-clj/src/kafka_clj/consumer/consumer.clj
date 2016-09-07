@@ -16,7 +16,7 @@
            (java.net SocketException)
            (java.util.concurrent.atomic AtomicBoolean)
            (com.codahale.metrics MetricRegistry Meter ConsoleReporter)
-           (java.util ArrayList)))
+           (java.util ArrayList Map)))
 
 ;;;;;;;;;;;;;;;
 ;;;;; Metrics
@@ -334,6 +334,14 @@
         .build
         (.start 10 TimeUnit/SECONDS))))
 
+(defn update-work-unit-thread-stats!
+  "Update the map work-unit-thread-stats with key=<thread-name> value={:ts <timestamp> wu: <work-unit> :duration <ts-ms>}"
+  [^Map work-unit-thread-stats start-ts end-ts wu]
+  (.put work-unit-thread-stats (.getName (Thread/currentThread)) {:ts start-ts
+                                                                  :duration (- (long end-ts) (long start-ts))
+                                                                  :wu wu})
+  work-unit-thread-stats)
+
 (defn consume!
   "Starts the consumer consumption process, by initiating redis-fetch-threads(default 1)+consumer-threads threads, one thread is used to wait for work-units
    from redis, and the other threads are used to process the work-unit, the resp data from each work-unit's processing result is
@@ -342,7 +350,7 @@
 
     reporting: if (get :consumer-reporting conf) is true then messages consumed metrics will be written every 10 seconds to stdout
   "
-  [{:keys [conf msg-ch work-unit-event-ch] :as state}]
+  [{:keys [conf msg-ch work-unit-event-ch work-unit-thread-stats] :as state}]
   {:pre [conf work-unit-event-ch msg-ch
          (instance? ManyToManyChannel msg-ch)
          (instance? ManyToManyChannel work-unit-event-ch)]}
@@ -368,7 +376,17 @@
                          (async/>!! msg-ch msg)))
 
           max-bytes-at (atom {})
-          wu-processor (partial auto-tune-fetch max-bytes-at state conn-pool delegate-f)]
+
+          ;;call update work-unit-stats and return the value of auto-tune-fetch
+          wu-processor (fn [wu]
+                         (let [start-ts (System/currentTimeMillis)
+                               v (auto-tune-fetch max-bytes-at state conn-pool delegate-f wu)]
+
+                           ;;update stats!
+                           (update-work-unit-thread-stats! work-unit-thread-stats start-ts (System/currentTimeMillis) wu)
+
+                           ;;return auto-tune-fetch result
+                           v))]
 
       ;;for each fetch thread we start a fetcher on the publish-exec-service
       (dotimes [_ redis-fetch-threads]
