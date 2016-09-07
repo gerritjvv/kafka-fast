@@ -1,7 +1,6 @@
 (ns kafka-clj.consumer.node
   (:import [java.net InetAddress]
-           (org.openjdk.jol.info GraphLayout)
-           (java.util.concurrent ConcurrentHashMap))
+           (org.openjdk.jol.info GraphLayout))
   (:require
     [kafka-clj.consumer.work-organiser :refer [create-organiser! close-organiser! calculate-new-work]]
     [kafka-clj.consumer.consumer :refer [consume! close-consumer! consumer-pool-stats]]
@@ -134,9 +133,6 @@
 
         work-unit-event-ch (chan (sliding-buffer work-unit-event-ch-buff-size))
 
-        ;;shows last work-unit processed by a consumer thread key=<thread-name> value=<work-unit>
-        work-unit-thread-stats (ConcurrentHashMap.)
-
         org (assoc (create-organiser! intermediate-conf) :error-handler error-handler)
         ;;reuse the redis conn to avoid creating yet another
         redis-conn (:redis-conn org)
@@ -144,8 +140,7 @@
         consumer (consume! (assoc intermediate-conf
                              :redis-conn redis-conn
                              :msg-ch msg-ch
-                             :work-unit-event-ch work-unit-event-ch
-                             :work-unit-thread-stats work-unit-thread-stats))
+                             :work-unit-event-ch work-unit-event-ch))
         calc-work-thread (start-work-calculate (assoc org :redis-conn redis-conn) topics-ref :freq (get conf :work-calculate-freq 10000))
         ]
 
@@ -156,18 +151,10 @@
      :topics-ref topics-ref
      :org org :msg-ch msg-ch
      :consumer consumer
-     :work-unit-thread-stats work-unit-thread-stats
      :calc-work-thread calc-work-thread
      :group-name         group-name
      :redis-conn         redis-conn
      :work-unit-event-ch work-unit-event-ch}))
-
-(defn show-work-unit-thread-stats
-  "
-  public function
-  Return the work-unit-thread-stats that show key=thread value={:ts <the time the wu was seen> :duration <time it took for fetch> :wu <work-unit>}"
-  [{:keys [work-unit-thread-stats]}]
-  work-unit-thread-stats)
 
 (defn node-stats
   "Returns the consumer stats, takes as argument the instance returned from create-node!"
