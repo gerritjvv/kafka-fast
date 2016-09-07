@@ -9,7 +9,7 @@
 (def test-facts (ref {}))
 
 (defn start-server []
-  (server/start-server 7009))
+  (server/start-server 7006))
 
 (defn start-test-facts! []
   (dosync
@@ -22,6 +22,7 @@
 (with-state-changes
   [(before :facts (start-test-facts!))
    (after  :facts (stop-test-facts!))]
+
 
   (comment
     (fact "Send byte array data"
@@ -43,7 +44,4 @@
             (tcp/write! client (.getBytes "hi") :flush true)
             @data => "hi"
             (tcp/release pool "localhost" 7009 client)
-            (tcp/close-pool! client)))
-
-    )
-  )
+            (tcp/close-pool! client)))))

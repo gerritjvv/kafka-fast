@@ -189,12 +189,14 @@
                                            ]}))]
      {:client c :conf conf :broker {:host host :port port}})))
 
-(defn send-fetch [{:keys [client conf]} topics]
-  {:pre [client (coll? topics)]}
+(defn send-fetch
   "Version2: send-fetch requires a kafka-clj.tcp client
    topics must have format [[topic [{:partition 0} {:partition 1}...]] ... ]
 
    Sends fetch request"
+  [{:keys [client conf]} topics]
+  {:pre [client (coll? topics)]}
+
   (tcp/write! client
               (write-fetch-request (tcp/empty-byte-buff) (merge conf {:topics topics}))
               :flush true))

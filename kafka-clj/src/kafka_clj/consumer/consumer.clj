@@ -3,14 +3,13 @@
     :doc "Internal consumer code, for consumer public api see kafka-clj.node"}
   kafka-clj.consumer.consumer
   (:require [kafka-clj.tcp :as tcp]
-            [kafka-clj.pool :as pool]
             [fun-utils.threads :as threads]
             [clojure.tools.logging :refer [error info warn debug]]
             [kafka-clj.fetch :as fetch]
             [clj-tuple :refer [tuple]]
             [kafka-clj.consumer.workunits :as wu-api]
             [clojure.core.async :as async])
-  (:import (java.util.concurrent Executors TimeUnit ExecutorService ThreadPoolExecutor)
+  (:import (java.util.concurrent TimeUnit ExecutorService ThreadPoolExecutor)
            (kafka_clj.util FetchState Fetch Fetch$Message Fetch$FetchError)
            (clojure.core.async.impl.channels ManyToManyChannel)
            (java.net SocketException)
@@ -113,7 +112,7 @@
 
 (defn- write-fetch-req!
   "Write a fetch request to the connection based on wu"
-  [{:keys [conf]} conn {:keys [topic partition offset] :as wu}]
+  [{:keys [conf]} conn {:keys [topic partition offset]}]
   (fetch/send-fetch {:client conn :conf conf} [[topic [{:partition partition :offset offset}]]]))
 
 (defn- start-wu-publisher! [state publish-exec-service exec-service handler-f]
@@ -171,14 +170,18 @@
   (try
 
     (let [{:keys [host port]} (:producer wu)
-          conn (tcp/borrow conn-pool host port)]
+          pooled-conn (tcp/borrow conn-pool host port)
+          conn (tcp/pool-obj-val pooled-conn)]
+
+      (when (nil? conn)
+        (throw (RuntimeException. (str "Now connection could be retreived from the connection pool for " host ":" port))))
 
       (try
         (do
           (write-fetch-req! state conn wu)
 
           (let [bts (tcp/read-response wu conn 60000)
-                _ (tcp/release conn-pool host port conn)     ;release the connection early
+                _ (tcp/release conn-pool host port pooled-conn)     ;release the connection early
                 [status offset maxoffset discarded minbts maxbts offsets-read :as v] (read-process-resp! delegate-f wu bts)]
 
             (if (= :ok status)
@@ -194,7 +197,7 @@
                                    ;socket exceptions are common when brokers fall down, the best we can do is repush the work unit so that a new broker is found for it depending
                                    ;on the metadata
                                    (tcp/close! conn)
-                                   (tcp/invalidate! conn-pool host port conn)
+                                   (tcp/invalidate! conn-pool host port pooled-conn)
 
                                    (Thread/sleep 10)        ;sleep to avoid bursts
                                    (error "Work unit " wu " refers to a broker " host port " that is down, pushing back for reconfiguration")
@@ -202,7 +205,7 @@
                                    nil))
         (catch Throwable e (do (.printStackTrace e)
                                (error e e)
-                               (tcp/release conn-pool host port conn)
+                               (tcp/release conn-pool host port pooled-conn)
 
                                (wu-api/publish-error-consumed-wu! state wu)
                                nil))))
@@ -289,6 +292,8 @@
   "Wraps around the process-wu! function and use the return state to calculate what the max-bytes in up comming fetch requests should be.
    "
   [max-bytes-at state conn-pool delegate-f wu]
+  {:pre [(not (nil? conn-pool))]}
+
   (try
     (let [topic (:topic wu)
           partition (:partition wu)
@@ -398,7 +403,7 @@
   "Return a stats map for instances returned from the consume! function"
   [{:keys [^ExecutorService exec-service conn-pool]}]
   {:exec-service (thread-pool-stats exec-service)
-   :conn-pool (pool/pool-stats conn-pool)})
+   :conn-pool (kafka-clj.pool.api/pool-stats conn-pool)})
 
 (defn close-consumer! [{:keys [publish-exec-service exec-service conn-pool ^AtomicBoolean shutdown-flag]}]
   (.set shutdown-flag true)
