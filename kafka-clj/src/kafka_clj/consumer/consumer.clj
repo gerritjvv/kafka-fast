@@ -9,12 +9,13 @@
             [clj-tuple :refer [tuple]]
             [kafka-clj.consumer.workunits :as wu-api]
             [clojure.core.async :as async])
-  (:import (java.util.concurrent TimeUnit ExecutorService ThreadPoolExecutor)
+  (:import (java.util.concurrent TimeUnit ExecutorService ThreadPoolExecutor ConcurrentHashMap)
            (kafka_clj.util FetchState Fetch Fetch$Message Fetch$FetchError)
            (clojure.core.async.impl.channels ManyToManyChannel)
            (java.net SocketException)
            (java.util.concurrent.atomic AtomicBoolean)
-           (com.codahale.metrics MetricRegistry Meter ConsoleReporter)))
+           (com.codahale.metrics MetricRegistry Meter ConsoleReporter)
+           (java.util ArrayList Map)))
 
 ;;;;;;;;;;;;;;;
 ;;;;; Metrics
@@ -338,6 +339,14 @@
         .build
         (.start 10 TimeUnit/SECONDS))))
 
+(defn update-work-unit-thread-stats!
+  "Update the map work-unit-thread-stats with key=<thread-name> value={:ts <timestamp> wu: <work-unit> :duration <ts-ms>}"
+  [^Map work-unit-thread-stats start-ts end-ts wu]
+  (.put work-unit-thread-stats (.getName (Thread/currentThread)) {:ts start-ts
+                                                                  :duration (- (long end-ts) (long start-ts))
+                                                                  :wu wu})
+  work-unit-thread-stats)
+
 (defn consume!
   "Starts the consumer consumption process, by initiating redis-fetch-threads(default 1)+consumer-threads threads, one thread is used to wait for work-units
    from redis, and the other threads are used to process the work-unit, the resp data from each work-unit's processing result is
@@ -356,6 +365,9 @@
 
   (io!
     (let [
+          ;;shows last work-unit processed by a consumer thread key=<thread-name> value=<work-unit>
+          work-unit-thread-stats (ConcurrentHashMap.)
+
           redis-fetch-threads (get conf :redis-fetch-threads 1)
           consumer-threads (get conf :consumer-threads 2)
 
@@ -372,19 +384,43 @@
                          (async/>!! msg-ch msg)))
 
           max-bytes-at (atom {})
-          wu-processor (partial auto-tune-fetch max-bytes-at state conn-pool delegate-f)]
+
+          ;;call update work-unit-stats and return the value of auto-tune-fetch
+          wu-processor (fn [wu]
+                         (let [start-ts (System/currentTimeMillis)
+                               v (auto-tune-fetch max-bytes-at state conn-pool delegate-f wu)]
+
+                           ;;update stats!
+                           (update-work-unit-thread-stats! work-unit-thread-stats start-ts (System/currentTimeMillis) wu)
+
+                           ;;return auto-tune-fetch result
+                           v))]
 
       ;;for each fetch thread we start a fetcher on the publish-exec-service
       (dotimes [_ redis-fetch-threads]
         (start-wu-publisher! (assoc state :shutdown-flag shutdown-flag)  publish-exec-service exec-service wu-processor))
 
-      (assoc state :publish-exec-service publish-exec-service :exec-service exec-service :conn-pool conn-pool :shutdown-flag shutdown-flag))))
+      (assoc state
+        :publish-exec-service publish-exec-service
+        :exec-service exec-service
+        :conn-pool conn-pool
+        :shutdown-flag shutdown-flag
+        :work-unit-thread-stats work-unit-thread-stats))))
+
+
+(defn show-work-unit-thread-stats
+  "
+  public function
+  Return the work-unit-thread-stats that show key=thread value={:ts <the time the wu was seen> :duration <time it took for fetch> :wu <work-unit>}"
+  [{:keys [work-unit-thread-stats]}]
+  work-unit-thread-stats)
 
 (defn consumer-pool-stats
   "Return a stats map for instances returned from the consume! function"
-  [{:keys [^ExecutorService exec-service conn-pool]}]
+  [{:keys [^ExecutorService exec-service conn-pool] :as conn}]
   {:exec-service (thread-pool-stats exec-service)
-   :conn-pool (kafka-clj.pool.api/pool-stats conn-pool)})
+   :conn-pool (kafka-clj.pool.api/pool-stats conn-pool)
+   :fetch-stats (show-work-unit-thread-stats conn)})
 
 (defn close-consumer! [{:keys [publish-exec-service exec-service conn-pool ^AtomicBoolean shutdown-flag]}]
   (.set shutdown-flag true)

@@ -132,18 +132,26 @@
                             :complete-queue (str group-name "-kafka-complete-queue"))
 
         work-unit-event-ch (chan (sliding-buffer work-unit-event-ch-buff-size))
+
         org (assoc (create-organiser! intermediate-conf) :error-handler error-handler)
         ;;reuse the redis conn to avoid creating yet another
         redis-conn (:redis-conn org)
         msg-ch (chan msg-ch-buff-size)
-        consumer (consume! (assoc intermediate-conf :redis-conn redis-conn :msg-ch msg-ch :work-unit-event-ch work-unit-event-ch))
+        consumer (consume! (assoc intermediate-conf
+                             :redis-conn redis-conn
+                             :msg-ch msg-ch
+                             :work-unit-event-ch work-unit-event-ch))
         calc-work-thread (start-work-calculate (assoc org :redis-conn redis-conn) topics-ref :freq (get conf :work-calculate-freq 10000))
         ]
 
     ;check for left work-units in working queue
     (copy-redis-queue redis-conn working-queue-name work-queue-name)
 
-    {:conf               intermediate-conf :topics-ref topics-ref :org org :msg-ch msg-ch :consumer consumer :calc-work-thread calc-work-thread
+    {:conf               intermediate-conf
+     :topics-ref topics-ref
+     :org org :msg-ch msg-ch
+     :consumer consumer
+     :calc-work-thread calc-work-thread
      :group-name         group-name
      :redis-conn         redis-conn
      :work-unit-event-ch work-unit-event-ch}))
