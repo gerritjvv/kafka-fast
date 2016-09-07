@@ -15,6 +15,12 @@ See https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/vagrant.md
 
 [![Build Status](https://travis-ci.org/gerritjvv/kafka-fast.svg)](https://travis-ci.org/gerritjvv/kafka-fast)
 
+# Kafka versions tested
+
+*  0.8.2.x
+*  0.9.0.x
+*  0.10.0.0
+
 #Usage
 
 ## Leiningen
