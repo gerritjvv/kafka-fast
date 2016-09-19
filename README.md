@@ -309,7 +309,8 @@ Fetching data from Kafka uses
 (consumer/node-stats consumer-node)
 ;; {:exec-service <consume-thread-pool-stats>
 ;;  :conn-pool <tcp-pool-stats>
-;;  :fetch-stats <map key=thread-name val={:ts <time-wu-was-seen> :duration <fetch-time-ms> :wu <work-unit>}>}
+;;  :fetch-stats <map key=thread-name val={:ts <time-wu-was-seen> :duration <fetch-time-ms> :wu <work-unit>}>
+;;  :node-stats {:offsets-ahead-stats {<topic> {<partition> {:saved-offset <offset-in-redis> :max-offset <last-max-offset-from-kafka> :date <date>}} }}}
 ```
 
 ### Redis Connection Pools

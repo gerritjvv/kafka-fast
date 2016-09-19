@@ -133,6 +133,9 @@
 
         work-unit-event-ch (chan (sliding-buffer work-unit-event-ch-buff-size))
 
+        ;;contains stats like offset-ahead, see kafka-clj.consumer.work-organiser/calculate-new-work
+        stats-atom (atom {})
+
         org (assoc (create-organiser! intermediate-conf) :error-handler error-handler)
         ;;reuse the redis conn to avoid creating yet another
         redis-conn (:redis-conn org)
@@ -141,7 +144,8 @@
                              :redis-conn redis-conn
                              :msg-ch msg-ch
                              :work-unit-event-ch work-unit-event-ch))
-        calc-work-thread (start-work-calculate (assoc org :redis-conn redis-conn) topics-ref :freq (get conf :work-calculate-freq 10000))
+        calc-work-thread (start-work-calculate (assoc org :redis-conn redis-conn
+                                                          :stats-atom stats-atom) topics-ref :freq (get conf :work-calculate-freq 10000))
         ]
 
     ;check for left work-units in working queue
@@ -151,6 +155,7 @@
      :topics-ref topics-ref
      :org org :msg-ch msg-ch
      :consumer consumer
+     :stats-atom stats-atom
      :calc-work-thread calc-work-thread
      :group-name         group-name
      :redis-conn         redis-conn
@@ -158,8 +163,10 @@
 
 (defn node-stats
   "Returns the consumer stats, takes as argument the instance returned from create-node!"
-  [{:keys [consumer]}]
-  (consumer-pool-stats consumer))
+  [{:keys [consumer stats-atom]}]
+  (assoc
+    :node-stats @stats-atom
+    (consumer-pool-stats consumer)))
 
 (defn conn-pool-idle
   "Return the number of idle redis connections used by the consumer node"

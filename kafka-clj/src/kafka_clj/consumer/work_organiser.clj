@@ -42,7 +42,7 @@
     [kafka-clj.consumer.workunits :refer [wait-on-work-unit!]])
   (:import [java.util.concurrent Executors ExecutorService CountDownLatch TimeUnit]
            (java.util.concurrent.atomic AtomicBoolean)
-           (java.util HashMap Map)))
+           (java.util HashMap Map Date)))
 
 
 (declare get-offset-from-meta)
@@ -283,17 +283,18 @@
     v))
 
 (defn redis-offset-save [redis-conn group-name topic partition offset]
-   (redis/wcar redis-conn
-               (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) offset)))
+  (redis/wcar redis-conn
+              (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) offset)))
 
 (defn check-invalid-offsets!
   "Check for https://github.com/gerritjvv/kafka-fast/issues/10
    if a saved-offset > max-offset the redis offset is reset
    optional args
       redis-f (fn [redis-conn group-name topic partition offset] ) used to save the offset, the default impl is used to save to redis
-      get-saved-offset (fn [state topic partition] ) get the last saved offset, default impl is get-saved-offset"
-  [{:keys [group-name redis-conn] :as state} offsets & {:keys [redis-f saved-offset-f] :or {redis-f redis-offset-save
-                                                                                            saved-offset-f get-saved-offset}}]
+      get-saved-offset (fn [state topic partition] ) get the last saved offset, default impl is get-saved-offset
+
+      stats-atom (atom (map usefullstats))"
+  [{:keys [group-name redis-conn stats-atom] :as state} read-ahead-offsets offsets & {:keys [redis-f saved-offset-f] :or {redis-f redis-offset-save saved-offset-f get-saved-offset}}]
   (let [^Map m (HashMap.)]
 
     ;;local mutable code to simplify getting max offsets for a topic partition that may be given
@@ -307,21 +308,27 @@
 
     (doseq [[{:keys [topic partition]} [saved-offset max-offset]] m]
       (when (> saved-offset max-offset)
-        (redis-f redis-conn group-name topic partition max-offset)))))
+
+        (swap! stats-atom update-in [:offsets-ahead-stats topic partition] (constantly {:saved-offset saved-offset :max-offset max-offset :date (Date.)}))
+
+        (when read-ahead-offsets
+          (redis-f redis-conn group-name topic partition max-offset))))))
 
 (defn calculate-new-work
   "Accepts the state and returns the state as is.
-   For topics new work is calculated depending on the metadata returned from the producers"
-  [{:keys [metadata-producers-ref conf error-handler] :as state} topics]
-  {:pre [metadata-producers-ref conf]}
+   For topics new work is calculated depending on the metadata returned from the producers
+
+   stats is an atom that contains a map of adhoc stats which might be of interest to the user"
+  [{:keys [metadata-producers-ref conf error-handler stats-atom] :as state} topics]
+  {:pre [metadata-producers-ref conf stats-atom]}
   (try
 
     (let [meta (meta/get-metadata! state conf)
           offsets (cutil/get-broker-offsets state meta topics conf)]
 
       ;;check for inconsistent offsets https://github.com/gerritjvv/kafka-fast/issues/10
-      (when (get conf :reset-ahead-offsets false)
-        (check-invalid-offsets! state offsets))
+      (check-invalid-offsets! state (get conf :reset-ahead-offsets false) offsets)
+
 
       (doseq [[broker topic-data] offsets]
 

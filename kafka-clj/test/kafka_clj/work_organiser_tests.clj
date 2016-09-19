@@ -40,7 +40,7 @@
                                  0 150
                                  1 10))]
 
-          (wo/check-invalid-offsets! {:group-name group-name} offsets :redis-f redis-f :saved-offset-f saved-offset-f)
+          (wo/check-invalid-offsets! {:group-name group-name :stats-atom (atom {})} true offsets :redis-f redis-f :saved-offset-f saved-offset-f)
 
           @redis-offset => {"my-group" {"abc" {0 100}}})))
 
