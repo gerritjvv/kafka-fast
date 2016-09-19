@@ -23,9 +23,13 @@
       
         
 (defn retry-cache-seq [{:keys [retry-cache]}]
-    "Returns a sequence of values with format {:topic topic :v v} v is the value that was sent to write-to-retry-cache"
-    (when (:cache retry-cache)
-      (map format-val (vals (:cache retry-cache)))))
+    "Returns a sequence of values with format {:topic topic :v v} v is the value that was sent to write-to-retry-cache,
+
+     Ignore NPE in calling vals on retry-cache, this happens sometimes during shutdown"
+    (try
+      (when (:cache retry-cache)
+        (map format-val (vals (:cache retry-cache))))
+      (catch NullPointerException npe '())))
 
 (defn delete-from-retry-cache [{:keys [retry-cache]} key-val]
   (let [^DB db (:db retry-cache)
