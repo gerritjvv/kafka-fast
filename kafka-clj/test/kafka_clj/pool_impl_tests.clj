@@ -210,8 +210,8 @@
                   (prn "idle waiting on latch")
                   (.await count-latch 60 TimeUnit/SECONDS)
                   (prn "idle got latch")
-                  (prn "count v: " (count v) " = " (count (keys @created-atoms)))
-                  (prn "vals " (clojure.string/join "," (vals @created-atoms)))
+                  (prn "count v: " (count v) " = " (count (keys @created-atoms)) " keys " (mapv str (keys @created-atoms)))
+                  (prn "vals " (clojure.string/join "," (mapv deref (vals @created-atoms))))
 
                   (try
                     (and
