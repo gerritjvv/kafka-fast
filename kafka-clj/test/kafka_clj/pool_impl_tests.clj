@@ -208,7 +208,7 @@
 
                   ;;wait one second for objs to expire
                   (prn "idle waiting on latch")
-                  (.await count-latch 10 TimeUnit/SECONDS)
+                  (.await count-latch 60 TimeUnit/SECONDS)
                   (prn "idle got latch")
                   (prn "count v: " (count v) " = " (count (keys @created-atoms)))
                   (prn "vals " (clojure.string/join "," (vals @created-atoms)))
@@ -278,12 +278,12 @@
 
 
 (def test-cases [                                           ;test-a-pool-limit
-                 test-multiple-threads
-                 test-keyed-pool-fns
-                 test-keyed-obj-pool
-                 test-a-pool-acquire-release
-                 test-timeout-no-valid-object
-                 test-a-pool-limit
+                 ;test-multiple-threads
+                 ;test-keyed-pool-fns
+                 ;test-keyed-obj-pool
+                 ;test-a-pool-acquire-release
+                 ;test-timeout-no-valid-object
+                 ;test-a-pool-limit
                  test-remove-idle
                  ])
 
