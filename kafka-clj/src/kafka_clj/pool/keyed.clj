@@ -31,7 +31,7 @@
                   (if-let [p (get m k)]
                     (do
                       (call-safely -close-all p)
-                      (dissoc! m k))
+                      (dissoc m k))
                     m))))
 
 (defn remove-keyed-pool-all [m-atom]
