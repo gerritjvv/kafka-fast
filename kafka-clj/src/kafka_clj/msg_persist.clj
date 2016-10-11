@@ -2,16 +2,32 @@
   (:require [clojure.tools.logging :refer [error info]])
   (:import [org.mapdb DB DBMaker HTreeMap]
            [java.util.concurrent TimeUnit]
-           [java.util Map]))
+           [java.util Map Collection Iterator]))
 
-(defn close-retry-cache [{:keys [retry-cache]}]
-  (try (do
-         ;running this code causes 100% cpu usages,
-         ;for now we use close on JVM shutdown
-         ;(.close (:cache retry-cache))
-         )
-       
-       (catch Exception e (error e e))))
+(defn closed? [{{:keys [db]} :retry-cache}]
+  (.isClosed ^DB db))
+
+(defn close-retry-cache [_])
+
+(defn _it_next [^Iterator it]
+  (try
+    (.next it)
+    (catch Throwable _ nil)))
+
+(defn _map-values-seq [^Iterator it]
+  (try
+    (when (.hasNext it)
+      (lazy-seq
+        (when-let [n (_it_next it)]
+          (cons
+            n
+            (_map-values-seq it)))))
+    (catch Exception _ '())))
+
+(defn map-values [^Map m]
+  (when m
+    (let [^Collection vals' (.values m)]
+      (_map-values-seq (.iterator vals')))))
 
 (defn- format-val [m-vals]
   "Fix bug in DBMap that all keys return null when used as keywords"
@@ -20,38 +36,35 @@
            [(-> k name keyword) v])
          (keys m-vals)
          (vals m-vals))))
-      
-        
-(defn retry-cache-seq [{:keys [retry-cache]}]
+
+(defn retry-cache-seq [{:keys [retry-cache] :as connector}]
     "Returns a sequence of values with format {:topic topic :v v} v is the value that was sent to write-to-retry-cache,
 
-     Ignore NPE in calling vals on retry-cache, this happens sometimes during shutdown"
-    (try
-      (when (:cache retry-cache)
-        (map format-val (vals (:cache retry-cache))))
-      (catch NullPointerException npe '())))
+     Ignore NPE in calling vals on retry-cache, this happens sometimes during shutdown,
+     Can return null items"
+  (when (and (:cache retry-cache) (not (closed? connector)))
+    (map #(try
+           (format-val %)
+           (catch Exception e (when-not (closed? connector) ;;only rethrow npe if the connector is not closed
+                                             (throw e))))
+         (map-values (:cache retry-cache)))))
 
 (defn delete-from-retry-cache [{:keys [retry-cache]} key-val]
   (let [^DB db (:db retry-cache)
          ^Map m (:cache retry-cache)]
-    ;delete whole map
     (.remove m key-val);remove key
     (.commit db)
     (.compact db)))
-    
-    
-    
 
 (defn write-to-retry-cache [{:keys [retry-cache]} topic v]
   ;here v can be a function, that when called should return the msg sent, or a sequence of messages
    (let [^Map map (:cache retry-cache)
          ^DB db (:db retry-cache)
-         msgs (if (fn? v) (v nil)  v)
+
          msg-val {:topic topic :v v}
          key-val (hash msg-val)]
      (.put map key-val (assoc msg-val :key-val key-val))
      (.commit db)))
-
 
 (defn _create-retry-cache [{:keys [retry-cache-file retry-cache-delete-on-exit] :or {retry-cache-delete-on-exit false retry-cache-file "/tmp/kafka-retry-cache"}}]
  (let [file (clojure.java.io/file  retry-cache-file)
@@ -72,9 +85,9 @@
                          (clojure.java.io/delete-file retry-cache-file)
                          (_create-retry-cache conf)))))
   
-(defn remove-sent-message [{:keys [send-cache]} topic partition corr-id] 
-  (if-let [^HTreeMap cache (:cache send-cache)]
-	    (.remove cache (str corr-id ":" topic ":" partition))))
+;(defn remove-sent-message [{:keys [send-cache]} topic partition corr-id]
+;  (if-let [^HTreeMap cache (:cache send-cache)]
+;	    (.remove cache (str corr-id ":" topic ":" partition))))
 
 (defn cache-sent-messages
   "Offsets is expected to have format [[corr-id msgs]...]
@@ -120,8 +133,8 @@
      
      {:db db :cache cache}))
 
-(defn close-send-cache [{:keys [send-cache]}]
-  (try 
-    (if send-cache
-		    (.close ^DB (:db send-cache)))
-    (catch Exception e (error e e))))
+;(defn close-send-cache [{:keys [send-cache]}]
+;  (try
+;    (if send-cache
+;		    (.close ^DB (:db send-cache)))
+;    (catch Exception e (error e e))))

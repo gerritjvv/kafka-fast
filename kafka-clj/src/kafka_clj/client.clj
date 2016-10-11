@@ -347,15 +347,19 @@
 
         persist-delay-thread (futils/fixdelay-thread 1000
                                                      (try
-                                                       (when-not (.get shutdown-flag)
+                                                       (when-not (or (.get shutdown-flag) (persist/closed? connector))
                                                          (doseq [retry-msg (persist/retry-cache-seq connector)]
-                                                           (do (warn "Retry messages for " (:topic retry-msg) " " (:key-val retry-msg))
-                                                               (if (coll? (:v retry-msg))
-                                                                 (doseq [bts (retry-msg-bts-seq retry-msg)]
-                                                                   (send-msg connector2 (:topic retry-msg) bts))
-                                                                 (warn "Invalid retry value " retry-msg))
+                                                           (when retry-msg
+                                                             (warn "Retry messages for " (:topic retry-msg) " " (:key-val retry-msg))
+                                                             (if (coll? (:v retry-msg))
+                                                               (doseq [bts (retry-msg-bts-seq retry-msg)]
+                                                                 (send-msg connector2 (:topic retry-msg) bts))
+                                                               (warn "Invalid retry value " retry-msg))
 
-                                                               (persist/delete-from-retry-cache connector (:key-val retry-msg)))))
+                                                             (persist/delete-from-retry-cache connector (:key-val retry-msg)))))
+                                                       (catch NullPointerException npe
+                                                         (when-not (persist/closed? connector)
+                                                           (error npe npe)))
                                                        (catch Exception e
                                                          (when-not (.get shutdown-flag)
                                                            (error e e)))))
