@@ -278,12 +278,12 @@
 
 
 (def test-cases [                                           ;test-a-pool-limit
-                 ;test-multiple-threads
-                 ;test-keyed-pool-fns
-                 ;test-keyed-obj-pool
-                 ;test-a-pool-acquire-release
-                 ;test-timeout-no-valid-object
-                 ;test-a-pool-limit
+                 test-multiple-threads
+                 test-keyed-pool-fns
+                 test-keyed-obj-pool
+                 test-a-pool-acquire-release
+                 test-timeout-no-valid-object
+                 test-a-pool-limit
                  test-remove-idle
                  ])
 
