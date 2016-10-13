@@ -70,15 +70,17 @@
       (finally
         (shutdown res)))))
 
-(defn- read-messages [node timeout]
-  (loop [msgs []]
-    (if-let [msg (consumer-node/read-msg! node timeout)]
-      (do
-        ;(prn ">>>>> msg " msg)
-        (recur (conj msgs msg)))
-      (do
-        (prn "EXIT read-messages !!!!!!!!")
-        msgs))))
+(defn timeout? [curr-ts timeout]
+  (> (- (System/currentTimeMillis) (long curr-ts)) (long timeout)))
+
+(defn- read-messages [node expected-count timeout]
+  (loop [msgs [] ts (System/currentTimeMillis)]
+    (if (or (timeout? ts timeout)
+            (= (count msgs) expected-count))
+      (if-let [msg (consumer-node/read-msg! node timeout)]
+        (recur (conj msgs msg) (System/currentTimeMillis))
+        (recur msgs ts))
+      msgs)))
 
 (defn test-send-consume-with-failure
   "Runs the follwing test:
@@ -104,7 +106,7 @@
                             (fail-broker res)
 
                             (prn "waiting for message consumption")
-                            (let [msg-read-count (count (read-messages node (* 60000 10)))]
+                            (let [msg-read-count (count (read-messages node msg-count (* 60000 5)))]
                               (prn "!!!!!!!!!!############+++++++++=======>>>>>> messages " msg-read-count)
                               (consumer-node/shutdown-node! node)
                               (facts "Check that all messages were read"
