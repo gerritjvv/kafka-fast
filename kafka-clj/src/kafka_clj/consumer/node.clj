@@ -165,8 +165,7 @@
   "Returns the consumer stats, takes as argument the instance returned from create-node!"
   [{:keys [consumer stats-atom]}]
   (assoc
-    :node-stats @stats-atom
-    (consumer-pool-stats consumer)))
+    @stats-atom :node-stats (consumer-pool-stats consumer)))
 
 (defn conn-pool-idle
   "Return the number of idle redis connections used by the consumer node"

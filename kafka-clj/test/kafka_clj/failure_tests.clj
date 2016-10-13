@@ -104,7 +104,7 @@
                             (fail-broker res)
 
                             (prn "waiting for message consumption")
-                            (let [msg-read-count (count (read-messages node (* 60000 5)))]
+                            (let [msg-read-count (count (read-messages node (* 60000 10)))]
                               (prn "!!!!!!!!!!############+++++++++=======>>>>>> messages " msg-read-count)
                               (consumer-node/shutdown-node! node)
                               (facts "Check that all messages were read"
