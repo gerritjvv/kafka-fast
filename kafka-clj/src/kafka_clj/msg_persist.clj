@@ -26,8 +26,10 @@
 
 (defn map-values [^Map m]
   (when m
-    (let [^Collection vals' (.values m)]
-      (_map-values-seq (.iterator vals')))))
+    (try
+      (let [^Collection vals' (.values m)]
+        (_map-values-seq (.iterator vals')))
+      (catch Exception _ '()))))
 
 (defn- format-val [m-vals]
   "Fix bug in DBMap that all keys return null when used as keywords"
