@@ -4,6 +4,9 @@
            [java.util.concurrent TimeUnit]
            [java.util Map Collection Iterator]))
 
+(defn tmp-dir []
+  (System/getProperty "java.io.tmpdir"))
+
 (defn closed? [{{:keys [db]} :retry-cache}]
   (.isClosed ^DB db))
 
@@ -80,7 +83,7 @@
        map (-> db (.getTreeMap "kafka-retry-cache"))]
       {:db db :file file :cache map}))
 
-(defn create-retry-cache [{:keys [retry-cache-file] :or {retry-cache-file "/tmp/kafka-retry-cache"} :as conf}]
+(defn create-retry-cache [{:keys [retry-cache-file] :or {retry-cache-file (str (tmp-dir) "/kafka-retry-cache")} :as conf}]
   (try
     (_create-retry-cache conf)
     (catch Exception e (do ;delete the file and recreate
