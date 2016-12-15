@@ -1,12 +1,6 @@
 # Kerberos authentication
 
 
-# Overview
-
-
-## Kafka kerberos implementation
-
-https://github.com/apache/kafka/pull/334/files#diff-b6b91bd51fc3d3d54fb330e658bd890d
 
 ## Background reading
 
@@ -24,43 +18,6 @@ http://docs.oracle.com/javase/7/docs/technotes/guides/security/jgss/tutorials/
 # Kafka Protocol
 
 The kafka protocol is described in: https://kafka.apache.org/protocol
-
-The request is summarised as:
-
-```
-
-Request:
-
-SaslHandshake API (Key: 17):
-
-1. SizeInBytes => int16
-2. api_key => INT16      (0)    17
-3. api_version => INT16  (0)
-4. correlation_id => INT32
-5. client_id => NULLABLE_STRING
-6. mechanism => String  "GSSAPI" or "PLAIN"
-
-
-Response:
-
-1. SizeInBytes => int16
-2. correlation_id => INT32
-3. error_code => INT16      0 => None, 34 => InvalidSaslState, 35 => UnsupportedVersion
-4. enabled_mechanisms => [STRING]
-
-
-
-```
-
-Steps:
-
-1. Kafka SaslHandshakeRequest containing the SASL mechanism for authentication is sent by the client.
-
-2. If the requested mechanism is not enabled in the server, the server responds with the list of supported mechanisms and closes the client connection. If the mechanism is enabled in the server, the server sends a successful response and continues with SASL authentication.
-
-3. The actual SASL authentication is now performed. A series of SASL client and server tokens corresponding to the mechanism are sent as opaque packets. These packets contain a 32-bit size followed by the token as defined by the protocol for the SASL mechanism.
-
-4. sequent packets are handled as Kafka API requests. Otherwise, the client connection is closed.
 
 
 # Configuration
@@ -99,9 +56,15 @@ KafkaClient {
 :sasl-kerberos-service-name=kafka
 ```
 
+### Kafka kerberos implementation
+
+https://github.com/apache/kafka/pull/334/files#diff-b6b91bd51fc3d3d54fb330e658bd890d
+
+
 # Vagrant
 
-vagrant plugin install vagrant-hostmanager
+
+```vagrant plugin install vagrant-hostmanager```
 
 
 # Client testing
@@ -112,6 +75,13 @@ Log into broker1 ```vagrant ssh broker1``` and ```cd /vagrant``` ```lein repl```
 
 
 # Issues and Odities
+
+First of all, enable debug output for kerberos using:
+
+```
+-Dsun.security.krb5.debug=true
+-Djava.security.debug=gssloginconfig,configfile,configparser,logincontext
+```
 
 ## Kerberos is enabled and the client or node hangs or timesout
 

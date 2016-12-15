@@ -33,8 +33,6 @@
 
 (defrecord TCPClient [host port conf socket ^BufferedInputStream input ^BufferedOutputStream output sasl-ctx])
 
-
-
 (defn closed? [{:keys [^Socket socket sasl-ctx]}]
   (if sasl-ctx
     (or (.isClosed socket)
@@ -51,7 +49,12 @@
 
 (defn tcp-client
   "Creates a tcp client from host port and conf
-   InputStream is DataInputStream(BufferedInputStream) and output is BufferedOutputStream"
+   InputStream is DataInputStream(BufferedInputStream) and output is BufferedOutputStream
+
+   if jaas is specified it must point to a configuration section on the jaas and kerberos files defined as env properties
+   -Djava.security.auth.login.config=/vagrant/vagrant/config/kafka_client_jaas.conf
+   -Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf
+   "
   [host port & {:keys [jaas] :as conf}]
   {:pre [(string? host) (number? port)]}
   (let [socket (open-socket host port)
@@ -67,7 +70,7 @@
         sasl-ctx (when jaas
                    (let [c (jaas/jaas-login jaas)
 
-                         sasl-client (jaas/sasl-client c fqdn)]
+                         sasl-client (jaas/sasl-client conf c fqdn)]
 
                      (jaas/with-auth c                      ;;need to run handshake inside the subject doAs method
                                      #(jaas/sasl-handshake! tcp-client sasl-client 30000))

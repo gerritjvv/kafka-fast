@@ -6,7 +6,14 @@
             (def tcp-client (... create tcp client ...)
             (def c (jaas/jaas-login \"KafkaClient\"))
             (def sasl-client (jaas/sasl-client c (jaas/principal-name c) broker-host))
-            (jaas/sasl-handshake! tcp-client sasl-client timeout-ms)"}
+            (jaas/sasl-handshake! tcp-client sasl-client timeout-ms)
+
+            System environment config must be set, see the project.clj file for this project.
+            Properties required are:
+
+            -Djava.security.auth.login.config=/vagrant/vagrant/config/kafka_client_jaas.conf
+            -Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf
+            "}
 
   kafka-clj.jaas
   (:import (javax.security.auth.login LoginContext)
@@ -29,6 +36,8 @@
 
 (defonce ^:constant MECHS (into-array String ["GSSAPI"]))
 
+(defonce ^:constant ^Long HALF-MINUTE-MS (* 30 1000))
+
 (defn timeout? [timeout-ms current-ms]
   (> (- (System/currentTimeMillis) (long current-ms)) (long timeout-ms)))
 
@@ -41,6 +50,16 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;; public functions
 
+(defn kafka-service-name
+  "Search for sasl.kerberos.service.name is defined in either conf, System.properties its used,
+   otherwise the default kafka name is used"
+  [conf]
+  (or
+    (:sasl.kerberos.service.name conf)
+    (System/getProperty "sasl.kerberos.service.name")
+    "kafka"))
+
+
 (defn jaas-login ^LoginContext
 [jaas-name]
   (debug "trying jaas login for name " jaas-name)
@@ -49,12 +68,23 @@
     (debug "login complete: have " login)
     login))
 
-(defn jaas-expire-time [^LoginContext ctx]
-  (let [ticket (first (.getPrivateCredentials (.getSubject ctx) KerberosTicket))]
-    (.getAuthTime ticket)))
+(defn jaas-expire-time
+  "For all KerberosTicket(s) in the LoginContext the min auth time value is returned"
+  [^LoginContext ctx]
+  (apply
+    min
+    (map
+      #(.getTime (.getAuthTime ^KerberosTicket %))
+      (.getPrivateCredentials (.getSubject ctx) KerberosTicket))))
 
-(defn jaas-expired? [^LoginContext ctx]
- false)
+(defn jaas-expired?
+  "True if the expire time is withing 30 seconds of the current time"
+  [^LoginContext ctx]
+  (>
+    (- (System/currentTimeMillis)
+       (long (jaas-expire-time ctx)))
+
+    HALF-MINUTE-MS))
 
 (defn jaas-logout [^LoginContext ctx]
   (.logout ctx))
@@ -65,22 +95,17 @@
   [^LoginContext ctx]
   (.getName ^Principal (first (.getPrincipals ^Subject (.getSubject ctx)))))
 
-(defn kafka-principal-name
-  "A kafka principal i.e servicePrinipal contains kafka/host e.g kafka/broker1.kafkafast"
-  [broker-host]
-  (str "kafka/" broker-host))
-
 ;;with auth
 (defn ^SaslClient sasl-client
   "See https://docs.oracle.com/javase/8/docs/api/javax/security/sasl/Sasl.html
    servicePrincipal: should be in the format kafka/{host} see kafka-principal-name
    host: the kafka broker"
-  [^LoginContext ctx host]
+  [conf ^LoginContext ctx host]
   (let []
     (with-auth ctx (fn []
                      (Sasl/createSaslClient MECHS
                                             (principal-name ctx)
-                                            (str "kafka")   ;;the sasl client will construct kafka/{host}@{REALM}
+                                            (str (kafka-service-name conf))   ;;the sasl client will construct kafka/{host}@{REALM}
                                             (str host)
                                             {}
                                             (reify CallbackHandler
