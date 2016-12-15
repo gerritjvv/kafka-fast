@@ -73,7 +73,7 @@
                          sasl-client (jaas/sasl-client conf c fqdn)]
 
                      (jaas/with-auth c                      ;;need to run handshake inside the subject doAs method
-                                     #(jaas/sasl-handshake! tcp-client sasl-client 30000))
+                                     #(jaas/sasl-handshake! tcp-client sasl-client 30000 :kafka-version (:kafka-version conf)))
                      (->SASLCtx c sasl-client)))]
 
     (assoc tcp-client :sasl-ctx sasl-ctx)))

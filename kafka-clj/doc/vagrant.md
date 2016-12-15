@@ -21,6 +21,7 @@ This does mean extra time is required to download java etc and run update on the
 
 
 ```vagrant plugin install vagrant-vbguest```
+```vagrant plugin install vagrant-hostmanager```
 
 ## Machines/Boxes
 

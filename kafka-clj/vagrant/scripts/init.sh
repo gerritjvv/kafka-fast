@@ -50,9 +50,14 @@ fi
 
 ### Install Kafka
 
-KAFKA_DOWNLOAD="http://apache.rediris.es/kafka/0.10.1.0/kafka_2.10-0.10.1.0.tgz"
-KAFKA_FILE="kafka_2.10-0.10.1.0.tgz"
-KAFKA_DIR="/usr/local/kafka_2.10-0.10.1.0"
+KAFKA_DOWNLOAD="http://apache.uvigo.es/kafka/0.9.0.0/kafka_2.10-0.9.0.0.tgz"
+KAFKA_FILE="kafka_2.10-0.9.0.0.tgz"
+KAFKA_DIR="/usr/local/kafka_2.10-0.9.0.0"
+
+#KAFKA_DOWNLOAD="http://apache.rediris.es/kafka/0.10.1.0/kafka_2.10-0.10.1.0.tgz"
+#KAFKA_FILE="kafka_2.10-0.10.1.0.tgz"
+#KAFKA_DIR="/usr/local/kafka_2.10-0.10.1.0"
+
 
 #ensure vagrant/rpm exists
 mkdir -p /vagrant/rpm
@@ -60,7 +65,7 @@ mkdir -p /vagrant/rpm
 
 if [ ! -f /vagrant/rpm/$KAFKA_FILE ]; then
     echo Downloading kafka...
-    wget $KAFKA_DOWNLOAD -P /vagrant/rpm/
+    wget --no-check-certificate $KAFKA_DOWNLOAD -O "/vagrant/rpm/$KAFKA_FILE"
 fi
 
 if [ ! -d "$KAFKA_DIR" ]; then

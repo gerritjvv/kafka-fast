@@ -30,7 +30,7 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
       s.vm.provision "shell", path: "vagrant/scripts/init.sh"
       s.vm.hostname = "broker#{i}.kafkafast"
       s.vm.network :private_network, ip: "192.168.4.4#{i-1}"
-      s.vm.provision "shell", path: "vagrant/scripts/broker.sh", args:"#{i}"
+      s.vm.provision "shell", path: "vagrant/scripts/broker.sh", args: "#{i}"
       s.vm.synced_folder "~/.m2", "/home/vagrant/.m2", type: "nfs"
 
       s.vm.synced_folder ".", "/vagrant",  :nfs => { :mount_options => ["dmode=777","fmode=777"]}

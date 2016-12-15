@@ -32,7 +32,6 @@ See https://docs.oracle.com/javase/8/docs/technotes/guides/security/jgss/tutoria
 ```
 
 
-
 ## Jaas file format
 
 http://kafka.apache.org/documentation.html#security_kerberos_sasl_clientconfig

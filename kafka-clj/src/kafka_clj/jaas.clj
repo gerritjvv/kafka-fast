@@ -208,9 +208,10 @@
   "client: kafka-clj/tcp client
    sasl-client: jaas/sasl-client
    timeout-ms: timeout in milliseconds"
-  [client ^SaslClient sasl-client timeout-ms]
-  (handshake-request! client)
-  (handshake-response! client)
+  [client ^SaslClient sasl-client timeout-ms & {:keys [kafka-version] :or {kafka-version "0.10.0"}}]
+  (when (not (.contains (str kafka-version) "0.9"))
+    (handshake-request! client)
+    (handshake-response! client))
 
   ;;no exception means handshake is complete
   (handshake-loop! client sasl-client timeout-ms))
