@@ -2,9 +2,7 @@
   (:require [clojure.tools.logging :refer [info error]]
             [kafka-clj.buff-utils :refer [read-short-string]])
   (:import
-    [io.netty.handler.codec ReplayingDecoder]
     [io.netty.buffer ByteBuf]
-    [java.util List]
     (java.io DataInputStream)))
 
 (defrecord ResponseEnd [])
@@ -32,8 +30,7 @@
                                      }))
 
 (defn read-metadata-response [^ByteBuf in]
-  (let [_ (.readInt in)                        ;request size
-        correlation-id (.readInt in)           ;correlation id
+  (let [correlation-id (.readInt in)           ;correlation id
         broker-count (.readInt in)             ;broker array len
         brokers   (doall 
 	                  (for [_ (range broker-count)]
@@ -62,21 +59,6 @@
                          {:error-code error-code}))))]
            {:correlation-id correlation-id :brokers brokers :topics topics}))
                                                      
-        
-(defn metadata-response-decoder
-  "A handler that reads metadata request responses"
-  []
-  (proxy [ReplayingDecoder]
-    []
-    (decode [_ ^ByteBuf in ^List out]
-            ;(info "read metadata response")
-            (try
-             (let [resp (read-metadata-response in)]
-			         (.add out resp))
-             (catch Exception e (error e e))))))
-			        
-			        
-
 
 (defn read-int [^DataInputStream in]
   (.readInt in))

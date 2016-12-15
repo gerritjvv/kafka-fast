@@ -16,36 +16,64 @@
 
     "}
   kafka-clj.tcp
-  (:require [clojure.tools.logging :refer [error info debug enabled?]]
+  (:require
+            [clojure.tools.logging :refer [error info debug enabled?]]
             [kafka-clj.pool.keyed :as pool-keyed]
             [kafka-clj.pool.api :as pool-api]
+            [kafka-clj.jaas :as jaas]
             [clj-tuple :refer [tuple]])
   (:import (java.net Socket SocketException)
            (java.io InputStream OutputStream BufferedInputStream BufferedOutputStream DataInputStream)
            (io.netty.buffer ByteBuf Unpooled)
-           (kafka_clj.util IOUtil)))
+           (kafka_clj.util IOUtil)
+           (javax.security.auth.login LoginContext)
+           (javax.security.sasl SaslClient)))
+
+(defrecord SASLCtx [^LoginContext login-ctx ^SaslClient sasl-client])
+
+(defrecord TCPClient [host port conf socket ^BufferedInputStream input ^BufferedOutputStream output sasl-ctx])
 
 
-(defrecord TCPClient [host port conf socket ^BufferedInputStream input ^BufferedOutputStream output])
 
-(defprotocol TCPWritable (-write! [obj tcp-client] "Write obj to the tcp client"))
+(defn closed? [{:keys [^Socket socket sasl-ctx]}]
+  (if sasl-ctx
+    (or (.isClosed socket)
+        ;;check sasl-ctx tickets
+        (jaas/jaas-expired? (:login-ctx sasl-ctx)))
+    (.isClosed socket)))
 
-
-(defn closed? [{:keys [^Socket socket]}]
-  (.isClosed socket))
-
-(defn tcp-client
-  "Creates a tcp client from host port and conf
-   InputStream is DataInputStream(BufferedInputStream) and output is BufferedOutputStream"
-  [host port & conf]
-  {:pre [(string? host) (number? port)]}
+(defn open-socket ^Socket [host port]
   (let [socket (Socket. (str host) (int port))]
     (.setSendBufferSize socket (int (* 1048576 2)))
     (.setReceiveBufferSize socket (int (* 1048576 2)))
 
-    (->TCPClient host port conf socket
-                 (DataInputStream. (BufferedInputStream. (.getInputStream socket)))
-                 (BufferedOutputStream. (.getOutputStream socket)))))
+    socket))
+
+(defn tcp-client
+  "Creates a tcp client from host port and conf
+   InputStream is DataInputStream(BufferedInputStream) and output is BufferedOutputStream"
+  [host port & {:keys [jaas] :as conf}]
+  {:pre [(string? host) (number? port)]}
+  (let [socket (open-socket host port)
+
+        tcp-client (->TCPClient host port conf socket
+                                (DataInputStream. (BufferedInputStream. (.getInputStream socket)))
+                                (BufferedOutputStream. (.getOutputStream socket))
+                                nil)
+
+        fqdn (.getCanonicalHostName
+               (.getInetAddress socket))
+
+        sasl-ctx (when jaas
+                   (let [c (jaas/jaas-login jaas)
+
+                         sasl-client (jaas/sasl-client c fqdn)]
+
+                     (jaas/with-auth c                      ;;need to run handshake inside the subject doAs method
+                                     #(jaas/sasl-handshake! tcp-client sasl-client 30000))
+                     (->SASLCtx c sasl-client)))]
+
+    (assoc tcp-client :sasl-ctx sasl-ctx)))
 
 (defn ^ByteBuf wrap-bts
   "Wrap a byte array in a ByteBuf"
@@ -58,16 +86,8 @@
 (defn read-bts ^"[B" [^DataInputStream input ^long timeout ^long cnt]
   (IOUtil/readBytes input (int cnt) timeout))
 
-(defn ^"[B" read-response
-  "Read a single response from the DataInputStream of type [int length][message bytes]
-   The message bytes are returned as a byte array
-   Throws SocketException, Exception"
-  ([k]
-   (read-response {} k 30000))
-  ([wu {:keys [^DataInputStream input]} ^long timeout]
-   (let [len (read-int input timeout)
-         bts (read-bts input timeout len)]
-     bts)))
+
+(def ^"[B" read-response kafka-clj.tcp-api/read-response)
 
 (defn closed-exception?
   "Return true if the exception contains the word closed, otherwise nil"
@@ -89,11 +109,7 @@
             (debug "Timeout while reading response from producer broker " e))))
       (catch SocketException e nil))))
 
-(defn write! [tcp-client obj & {:keys [flush] :or {flush false}}]
-  (when obj
-    (-write! obj tcp-client)
-    (if flush
-      (.flush ^BufferedOutputStream (:output tcp-client)))))
+(def write! kafka-clj.tcp-api/write!)
 
 (defn wrap-exception [f & args]
   (try
@@ -104,14 +120,16 @@
         (error (str "Ignored Exception " e) e)
         nil))))
 
-(defn close! [{:keys [^Socket socket ^InputStream input ^OutputStream output]}]
+(defn close! [{:keys [^Socket socket ^InputStream input ^OutputStream output sasl-ctx]}]
   {:pre [socket]}
   (try
     (when (not (.isClosed socket))
       (wrap-exception #(.flush output))
       (wrap-exception #(.close output))
       (wrap-exception #(.close input))
-      (wrap-exception #(.close socket)))
+      (wrap-exception #(.close socket))
+      (when sasl-ctx
+        (.dispose ^SaslClient (:sasl-client sasl-ctx))))
     (catch Throwable t
       (error (str "Ignored exception " t) t))))
 
@@ -124,12 +142,12 @@
    need to use pool-obj-val"
   [conf]
   (pool-keyed/create-keyed-obj-pool conf
-                                    (fn [conf [host port]] (wrap-exception tcp-client host port (flatten (seq conf)))) ;;create-f
+                                    (fn [conf [host port]] (wrap-exception #(apply tcp-client host port (flatten (seq conf))))) ;;create-f
                                     (fn [_ _ v] (try
-                                                      (not (closed? (pool-api/pool-obj-val v)))
-                                                      (catch Exception e (do
-                                                                           (error (str "Ignored Exception " e) e)
-                                                                           false)))) ;;validate-f
+                                                  (not (closed? (pool-api/pool-obj-val v)))
+                                                  (catch Exception e (do
+                                                                       (error (str "Ignored Exception " e) e)
+                                                                       false)))) ;;validate-f
                                     (fn [_ _ v]
                                       (wrap-exception close! (pool-api/pool-obj-val v))) ;;destroy-f
                                     ))
@@ -160,16 +178,18 @@
 (defn ^ByteBuf empty-byte-buff []
   (Unpooled/buffer))
 
-(extend-protocol TCPWritable
+(extend-protocol kafka-clj.tcp-api/TCPWritable
+
   (Class/forName "[B")
   (-write! [obj tcp-client]
     (_write-bytes tcp-client obj))
+
   ByteBuf
   (-write! [obj tcp-client]
     (let [^ByteBuf buff obj
           readable-bytes (.readableBytes buff)]
-
       (.readBytes buff ^OutputStream (:output tcp-client) (int readable-bytes))))
+
   String
   (-write! [obj tcp-client]
     (_write-bytes tcp-client (.getBytes ^String obj "UTF-8"))))

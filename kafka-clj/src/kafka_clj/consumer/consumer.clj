@@ -354,6 +354,10 @@
    The actual consume! function returns inmediately
 
     reporting: if (get :consumer-reporting conf) is true then messages consumed metrics will be written every 10 seconds to stdout
+
+    :jaas if set the jaas authentication will be used with each tcp connection
+          this value should point to the jaas config file.
+          for more information see http://docs.oracle.com/javase/7/docs/technotes/guides/security/jgss/tutorials/AcnOnly.html
   "
   [{:keys [conf msg-ch work-unit-event-ch] :as state}]
   {:pre [conf work-unit-event-ch msg-ch

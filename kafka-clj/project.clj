@@ -1,4 +1,4 @@
-(defproject kafka-clj "3.6.8-SNAPSHOT"
+(defproject kafka-clj "3.6.9-SNAPSHOT"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -11,8 +11,15 @@
 
   :scm {:name "git"
          :url "https://github.com/gerritjvv/kafka-fast.git"}
+
   :java-source-paths ["java"]
-  :jvm-opts ["-Xmx3g" "-server"]
+
+  :jvm-opts ["-Xmx1g" "-server"
+             ;"-Dsun.security.krb5.debug=true"
+             ;"-Djava.security.debug=gssloginconfig,configfile,configparser,logincontext"
+             "-Djava.security.auth.login.config=/vagrant/vagrant/config/kafka_client_jaas.conf"
+             "-Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf"]
+
   :plugins [[lein-midje "3.1.1"]
             [lein-kibit "0.0.8"]]
   :test-paths ["test" "test-java"]
@@ -28,14 +35,12 @@
 
                  [net.jpountz.lz4/lz4 "1.3.0"]
                  [org.clojure/tools.logging "0.3.1"]
-                 [clj-tcp "1.0.1"
-                  :exclusions [com.taoensso/nippy
-                               com.taoensso/truss
-                               org.clojure/tools.reader
-                               com.taoensso/encore]]
 
                  [fun-utils "0.6.1" :exclusions [org.clojure/tools.logging]]
                  [clj-tuple "0.2.2"]
+
+                 [io.netty/netty-buffer "4.1.6.Final"]
+                 [io.netty/netty-common "4.1.6.Final"]
 
                  [com.codahale.metrics/metrics-core "3.0.2"]
 
