@@ -230,7 +230,6 @@
 (defn send-metadata-request
   "Writes out a metadata request to the producer's client"
   [{:keys [client]} conf]
-  (prn ">>>>>>>>>>>> METADATA_REQUEST: " client)
   (let [buff (Unpooled/buffer)
         _ (do (with-size buff write-metadata-request conf))]
     (tcp/write! client buff :flush true)))
