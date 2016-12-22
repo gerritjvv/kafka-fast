@@ -15,10 +15,13 @@
   :java-source-paths ["java"]
 
   :jvm-opts ["-Xmx1g" "-server"
+
+             ;;------- Properties for kerberos authentication
              ;"-Dsun.security.krb5.debug=true"
              ;"-Djava.security.debug=gssloginconfig,configfile,configparser,logincontext"
-             "-Djava.security.auth.login.config=/vagrant/vagrant/config/kafka_client_jaas.conf"
-             "-Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf"]
+             ;"-Djava.security.auth.login.config=/vagrant/vagrant/config/kafka_client_jaas.conf"
+             ;"-Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf"
+             ]
 
   :plugins [[lein-midje "3.1.1"]
             [lein-kibit "0.0.8"]]

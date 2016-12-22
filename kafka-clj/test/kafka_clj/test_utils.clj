@@ -38,8 +38,8 @@
   (.shutdown ^EmbeddedZookeeper zk))
 
 (defn startup-redis []
-  (let [redis (doto (RedisServer. (int 6379)) .start)]
-    {:server redis :port 6379}))
+  (let [redis (doto (RedisServer. (int 6389)) .start)]
+    {:server redis :port 6389}))
 
 (defn start-redis-cluster []
   ;;see https://github.com/kstyrc/embedded-redis
