@@ -98,17 +98,22 @@
   {:pre [(vector (:host redis-conf))]}
 
   (let [hosts (:host redis-conf)
-        ^Config conf (.setCodec (Config.) (codec))]
-    (let [^ClusterServersConfig config (.useClusterServers conf)]
-      (.setScanInterval config (int 2000))
-      (.setSlaveConnectionPoolSize config (clojure.core/get redis-conf :slave-connection-pool-size 100))
-      (.setMasterConnectionPoolSize config (clojure.core/get redis-conf :master-connection-pool-size 100))
-      (.setSlaveSubscriptionConnectionPoolSize config (clojure.core/get redis-conf :slave-subscription-connection-pool-size 500))
+        ^Config conf (.setCodec (Config.) (codec))
+        ^ClusterServersConfig config (.useClusterServers conf)
+        password (:password redis-conf)]
 
-      ;;we need read from slaves to be false, this otherwise produces connection issues
-      (.setReadFromSlaves config false)
-      (.addNodeAddress config (into-array String (mapv #(Util/correctURI (str %)) hosts)))
-      conf)))
+    (when password
+      (.setPassword config (str password)))
+
+    (.setScanInterval config (int 2000))
+    (.setSlaveConnectionPoolSize config (clojure.core/get redis-conf :slave-connection-pool-size 100))
+    (.setMasterConnectionPoolSize config (clojure.core/get redis-conf :master-connection-pool-size 100))
+    (.setSlaveSubscriptionConnectionPoolSize config (clojure.core/get redis-conf :slave-subscription-connection-pool-size 500))
+
+    ;;we need read from slaves to be false, this otherwise produces connection issues
+    (.setReadFromSlaves config false)
+    (.addNodeAddress config (into-array String (mapv #(Util/correctURI (str %)) hosts)))
+    conf))
 
 (defn connect
   ([redis-conf]
