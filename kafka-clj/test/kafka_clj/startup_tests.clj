@@ -79,13 +79,15 @@
          (let [brokers (conj (get-in resources [:kafka :brokers]) {:host "bla" :port 111})
                node (create-node brokers)]
 
-           (send-test-data brokers 1000)
+           (send-test-data brokers 10)
 
            (Thread/sleep 1000)
            (node/shutdown-node! node)
 
            ;dummy check, if no exception is thrown its ok
-           1 => 1)))
+           1 => 1))
+
+  )
 
 (let [resources (startup-resources 1 "test")]
   (try

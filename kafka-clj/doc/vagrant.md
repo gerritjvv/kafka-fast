@@ -23,6 +23,12 @@ This does mean extra time is required to download java etc and run update on the
 ```vagrant plugin install vagrant-vbguest```
 ```vagrant plugin install vagrant-hostmanager```
 
+## Kerberos
+
+The Kafka brokers are configured to use Kerberos authentication.
+This allows the kafka client to be easily tested in a Kerberos setup, but also means
+it is
+
 ## Machines/Boxes
 
 The boxes launched are:
