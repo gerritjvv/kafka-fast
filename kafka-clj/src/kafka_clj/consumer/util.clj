@@ -2,10 +2,9 @@
   (:require
     [kafka-clj.fetch :refer [create-offset-producer] :as fetch]
     [clojure.core.async :refer [timeout alts!!]]
-    [clojure.tools.logging :refer [info error]]
+    [clojure.tools.logging :refer [info error debug]]
     [kafka-clj.metadata :as meta]
-    [kafka-clj.tcp :as tcp])
-  (:import (io.netty.buffer Unpooled)))
+    [kafka-clj.tcp :as tcp]))
 
 
 (defn get-create-offset-producer [offset-producers-ref broker conf]
