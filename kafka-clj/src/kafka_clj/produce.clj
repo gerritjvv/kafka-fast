@@ -1,7 +1,7 @@
 (ns kafka-clj.produce
   (:require [kafka-clj.codec :refer [crc32-int compress]]
             [kafka-clj.response :as kafka-resp]
-            [clojure.tools.logging :refer [error info]]
+            [clojure.tools.logging :refer [error info debug]]
             [kafka-clj.buff-utils :refer [write-short-string with-size compression-code-mask]]
             [clj-tuple :refer [tuple]]
             [kafka-clj.msg-persist :refer [cache-sent-messages create-send-cache]]
@@ -98,7 +98,7 @@
       (let [_ (write-message-set msg-buff correlation-id 0 msgs) ;write msgs to msg-buff
             arr (byte-array (- (.writerIndex msg-buff) (.readerIndex msg-buff)))]
         (.readBytes msg-buff arr)
-        ;(prn "Compress out " (String. (compress codec arr)))
+
         (-> buff
             (.writeLong 0)                                  ;offset
             (with-size write-message codec
@@ -198,7 +198,7 @@
     (producer host port {}))
   ([host port conf]
     (try
-      (let [c (apply tcp/tcp-client host port  (flatten (seq conf)))]
+      (let [c (tcp/tcp-client host port conf)]
 
         (info "Creating client instance " host ":" port)
         (->Producer c host port))
@@ -241,8 +241,8 @@
   (if (not host)
     (throw (RuntimeException. (str "Nill host is not allowed here"))))
 
-  (let [c (apply tcp/tcp-client host port (flatten (seq conf)))]
+  (let [c (tcp/tcp-client host port conf)]
 
-    (prn ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> creating conn " c)
+    (debug ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> creating conn " c)
     (->Producer c host port)))
       

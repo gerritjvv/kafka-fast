@@ -23,12 +23,20 @@
              ;"-Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf"
              ]
 
+  :profiles {:repl {:jvm-opts [
+                               "-Xmx512m"
+                               "-Dsun.security.krb5.debug=true"
+                               "-Djava.security.debug=gssloginconfig,configfile,configparser,logincontext"
+                               "-Djava.security.auth.login.config=/vagrant/vagrant/config/kafka_client_jaas.conf"
+                               "-Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf"
+                               ]}}
+
   :plugins [[lein-midje "3.1.1"]
             [lein-kibit "0.0.8"]]
   :test-paths ["test" "test-java"]
   :dependencies [
-                 [com.taoensso/carmine "2.12.2" :exclusions [org.clojure/clojure]]
-                 [org.redisson/redisson "2.2.16" :exclusions [io.netty/netty-buffer]]
+                 [com.taoensso/carmine "2.15.0" :exclusions [org.clojure/clojure]]
+                 [org.redisson/redisson "3.2.2" :exclusions [io.netty/netty-buffer]]
 
                  [com.alexkasko.unsafe/unsafe-tools "1.4.4"]
 
@@ -50,7 +58,7 @@
                  [org.clojure/core.async "0.2.374"
                   :exclusions [org.clojure/tools.reader]]
 
-                 [com.stuartsierra/component "0.3.1"]
+                 [com.stuartsierra/component "0.3.2"]
 
                  [org.openjdk.jol/jol-core "0.5"]
 

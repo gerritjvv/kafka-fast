@@ -183,7 +183,7 @@
    on the InputStream and read responses.
    "
   [^ProducerState state host port]
-  (let [producer (produce/producer host port)]
+  (let [producer (produce/producer host port (:conf state))]
     (tcp/read-async-loop! (:client producer)
                           (fn [^"[B" bts]
                             (when (> (count bts) 4)
@@ -232,16 +232,20 @@
           (produce/send-messages prod (:conf state) msgs)
           (assoc state :producers-cache-ref producers-cache-ref))
         (catch Exception e
-          (do
-            (if (instance? IOException e)
-              (try
-                (doseq [prod prods] (produce/shutdown prod))
-                (dosync (alter producers-cache-ref dissoc-in [(:host partition-rc) (:port partition-rc)]))
-                (catch Exception e (error e e)))
-              (error e e))
+          (.printStackTrace e)
+          (comment
+            (do
+              (if (instance? IOException e)
+                (try
+                  (doseq [prod prods] (produce/shutdown prod))
+                  (dosync (alter producers-cache-ref dissoc-in [(:host partition-rc) (:port partition-rc)]))
+                  (catch Exception e (error e e)))
+                (error e e))
 
-            (Thread/sleep PRODUCER_ERROR_BACKOFF_DEFAULT)
-            (handle-async-topic-messages (assoc state :blacklisted-producers-ref (blacklist! (:blacklisted-producers-ref state) partition-rc)) topic msgs))))
+              (Thread/sleep PRODUCER_ERROR_BACKOFF_DEFAULT)
+              (handle-async-topic-messages (assoc state :blacklisted-producers-ref (blacklist! (:blacklisted-producers-ref state) partition-rc)) topic msgs)))
+
+          ))
       (handle-async-topic-messages (assoc state :blacklisted-producers-ref (blacklist! (:blacklisted-producers-ref state) partition-rc)) topic msgs))))
 
 

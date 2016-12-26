@@ -105,12 +105,12 @@
     (with-auth ctx (fn []
                      (Sasl/createSaslClient MECHS
                                             (principal-name ctx)
-                                            (str (kafka-service-name conf))   ;;the sasl client will construct kafka/{host}@{REALM}
+                                            (str (kafka-service-name conf)) ;;the sasl client will construct kafka/{host}@{REALM}
                                             (str host)
                                             {}
                                             (reify CallbackHandler
                                               (handle [_ callbacks]
-                                                (prn "Callback " callbacks))))))))
+                                                (debug "Callback " callbacks))))))))
 
 (defn as-hex [^"[B" bts]
   (when bts
@@ -153,9 +153,9 @@
                                   (.evaluateChallenge sasl-client server-resp)) ;otherwise eval and send response back
                     ]
 
-               (if client-resp                              ;;if any client-resp data, send, but only if sasl-client is not complete
-                 (recur (send-read-data client client-resp (not (.isComplete sasl-client))) false)
-                 (recur server-resp false)))))))
+                (if client-resp                             ;;if any client-resp data, send, but only if sasl-client is not complete
+                  (recur (send-read-data client client-resp (not (.isComplete sasl-client))) false)
+                  (recur server-resp false)))))))
 
 
 (defn handshake-request!
@@ -170,17 +170,17 @@
   "
   [client]
   (let [corr-id (protocol/unique-corrid!)]
-    (prn "Write request: " (short protocol/API_KEY_SASL_HANDSHAKE)
-         " version " (int protocol/API_VERSION)
-         " mechs " (str (first MECHS))
-         " corr-id " corr-id)
+    (debug "Write request: " (short protocol/API_KEY_SASL_HANDSHAKE)
+           " version " (int protocol/API_VERSION)
+           " mechs " (str (first MECHS))
+           " corr-id " corr-id)
 
     (tcp-api/write! client
                     (buff-utils/with-size (Unpooled/buffer)
                                           (fn [^ByteBuf buff]
                                             (.writeShort buff (short protocol/API_KEY_SASL_HANDSHAKE))
                                             (.writeShort buff (short protocol/API_VERSION))
-                                            (.writeInt   buff (int corr-id))
+                                            (.writeInt buff (int corr-id))
                                             (buff-utils/write-short-string buff nil)
                                             (buff-utils/write-short-string buff (str (first MECHS)))))
                     :flush true)))
@@ -195,11 +195,11 @@
   [client]
   (let [buff (Unpooled/wrappedBuffer (tcp-api/read-response client))
 
-        corr-id  (.readInt buff)
+        corr-id (.readInt buff)
         error-code (.readShort buff)
 
         mechs (buff-utils/read-string-array buff)]
-    (prn "handshake-response: error-code: " error-code " mechs " mechs " corr-id " corr-id)
+    (debug "handshake-response: error-code: " error-code " mechs " mechs " corr-id " corr-id)
     (if (zero? error-code)
       true
       (throw (RuntimeException. (str "Handshake error: " error-code " mechanims: " mechs))))))

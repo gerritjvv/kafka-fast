@@ -73,9 +73,12 @@
                                ;throw exception if the offset-producer is nil
                                _ (if (not offset-producer) (throw (RuntimeException. (str "No producer found or bad producer connection for " broker))))
 
-                               offsets-response (get-offsets offset-producer topic (map first v))]
+                               offsets-response (get-offsets offset-producer topic (map first v))
+                               transformed-offsets (transform-offsets topic offsets-response conf)]
 
-                           [broker (transform-offsets topic offsets-response conf)])
+                           (debug "offet-response: " [broker transformed-offsets])
+
+                           [broker transformed-offsets])
                          (catch Exception e (do
                                               (error e e)
                                               (meta/black-list-producer! blacklisted-offsets-producers-ref {:host (:host broker) :port (:port broker)} e)

@@ -162,7 +162,7 @@
   ([{:keys [host port]} conf]
    (create-offset-producer host port conf))
   ([host port conf]
-   (let [c (apply tcp/tcp-client host port (flatten (seq conf)))]
+   (let [c (tcp/tcp-client host port conf)]
      {:client c :conf conf :broker {:host host :port port}})))
 
 (defn send-fetch

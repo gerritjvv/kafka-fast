@@ -205,7 +205,6 @@
   (-get [_ k]
     (car/get k))
   (-set   [_ k v]
-    (prn "set : " k " v " v)
     (car/set k v))
   (-lrange [_ q n limit]
     (car/lrange q n limit))

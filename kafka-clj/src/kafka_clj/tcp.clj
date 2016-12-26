@@ -17,12 +17,12 @@
     "}
   kafka-clj.tcp
   (:require
-            [clojure.tools.logging :refer [error info debug enabled?]]
-            [kafka-clj.pool.keyed :as pool-keyed]
-            [kafka-clj.pool.api :as pool-api]
-            [kafka-clj.jaas :as jaas]
-            [clj-tuple :refer [tuple]])
-  (:import (java.net Socket SocketException)
+    [clojure.tools.logging :refer [error info debug enabled?]]
+    [kafka-clj.pool.keyed :as pool-keyed]
+    [kafka-clj.pool.api :as pool-api]
+    [kafka-clj.jaas :as jaas]
+    [clj-tuple :refer [tuple]])
+  (:import (java.net Socket SocketException InetSocketAddress)
            (java.io InputStream OutputStream BufferedInputStream BufferedOutputStream DataInputStream)
            (io.netty.buffer ByteBuf Unpooled)
            (kafka_clj.util IOUtil)
@@ -40,10 +40,12 @@
         (jaas/jaas-expired? (:login-ctx sasl-ctx)))
     (.isClosed socket)))
 
-(defn open-socket ^Socket [host port]
-  (let [socket (Socket. (str host) (int port))]
+(defn open-socket ^Socket [host port {:keys [timeout-ms] :or {timeout-ms 10000}}]
+  (let [socket (Socket.)]
     (.setSendBufferSize socket (int (* 1048576 2)))
     (.setReceiveBufferSize socket (int (* 1048576 2)))
+
+    (.connect socket (InetSocketAddress. (str host) (int port)) (long timeout-ms))
 
     socket))
 
@@ -55,9 +57,9 @@
    -Djava.security.auth.login.config=/vagrant/vagrant/config/kafka_client_jaas.conf
    -Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf
    "
-  [host port & {:keys [jaas] :as conf}]
+  [host port {:keys [jaas] :as conf}]
   {:pre [(string? host) (number? port)]}
-  (let [socket (open-socket host port)
+  (let [socket (open-socket host port conf)
 
         tcp-client (->TCPClient host port conf socket
                                 (DataInputStream. (BufferedInputStream. (.getInputStream socket)))
@@ -145,7 +147,7 @@
    need to use pool-obj-val"
   [conf]
   (pool-keyed/create-keyed-obj-pool conf
-                                    (fn [conf [host port]] (wrap-exception #(apply tcp-client host port (flatten (seq conf))))) ;;create-f
+                                    (fn [conf [host port]] (wrap-exception #(tcp-client host port conf))) ;;create-f
                                     (fn [_ _ v] (try
                                                   (not (closed? (pool-api/pool-obj-val v)))
                                                   (catch Exception e (do
