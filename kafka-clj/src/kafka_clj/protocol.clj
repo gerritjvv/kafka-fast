@@ -1,4 +1,5 @@
 (ns kafka-clj.protocol
+  ^{:doc "http://kafka.apache.org/protocol.html"}
   (:import (java.util.concurrent.atomic AtomicInteger)))
 
 (defonce ^:constant API_KEY_PRODUCE_REQUEST (short 0))
@@ -7,6 +8,7 @@
 (defonce ^:constant API_KEY_METADATA_REQUEST (short 3))
 (defonce ^:constant API_KEY_SASL_HANDSHAKE (short 17))
 
+(defonce ^:constant API_CREATE_TOPICS (short 19))
 
 (defonce ^:constant API_VERSION (short 0))
 

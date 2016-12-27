@@ -34,6 +34,7 @@
 (defrecord TCPClient [host port conf socket ^BufferedInputStream input ^BufferedOutputStream output sasl-ctx])
 
 (defn closed? [{:keys [^Socket socket sasl-ctx]}]
+  (info "TCP-CLOSED? " socket sasl-ctx " : .isclosed " (.isClosed socket) " expired: " (jaas/jaas-expired? (:login-ctx sasl-ctx)))
   (if sasl-ctx
     (or (.isClosed socket)
         ;;check sasl-ctx tickets

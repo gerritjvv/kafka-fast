@@ -24,14 +24,14 @@
              ]
 
   :profiles {:repl {:jvm-opts [
-                               "-Xmx512m"
-                               "-Dsun.security.krb5.debug=true"
-                               "-Djava.security.debug=gssloginconfig,configfile,configparser,logincontext"
-                               "-Djava.security.auth.login.config=/vagrant/vagrant/config/kafka_client_jaas.conf"
-                               "-Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf"
+                               ;"-Xmx512m"
+                               ;"-Dsun.security.krb5.debug=true"
+                               ;"-Djava.security.debug=gssloginconfig,configfile,configparser,logincontext"
+                               ;"-Djava.security.auth.login.config=/vagrant/vagrant/config/kafka_client_jaas.conf"
+                               ;"-Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf"
                                ]}}
 
-  :plugins [[lein-midje "3.1.1"]
+  :plugins [[lein-midje "3.2.1"]
             [lein-kibit "0.0.8"]]
   :test-paths ["test" "test-java"]
   :dependencies [

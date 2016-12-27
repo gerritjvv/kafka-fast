@@ -46,6 +46,7 @@
 
 
 (defonce ^AtomicInteger correlation-id-counter (AtomicInteger.))
+
 (defn get-unique-corr-id []
   (let [v (.getAndIncrement correlation-id-counter)]
     (if (= v (Integer/MAX_VALUE)) ;check overflow

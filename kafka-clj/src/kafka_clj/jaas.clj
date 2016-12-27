@@ -74,15 +74,16 @@
   (apply
     min
     (map
-      #(.getTime (.getAuthTime ^KerberosTicket %))
+      #(.getTime (.getEndTime ^KerberosTicket %))
       (.getPrivateCredentials (.getSubject ctx) KerberosTicket))))
 
 (defn jaas-expired?
   "True if the expire time is withing 30 seconds of the current time"
   [^LoginContext ctx]
-  (>
-    (- (System/currentTimeMillis)
-       (long (jaas-expire-time ctx)))
+  (info "jaas-expired: expire-time " (long (jaas-expire-time ctx))  " curr-time " (System/currentTimeMillis))
+  (<
+    (- (long (jaas-expire-time ctx))
+       (System/currentTimeMillis))
 
     HALF-MINUTE-MS))
 
@@ -170,7 +171,7 @@
   "
   [client]
   (let [corr-id (protocol/unique-corrid!)]
-    (debug "Write request: " (short protocol/API_KEY_SASL_HANDSHAKE)
+    (info "Write request: " (short protocol/API_KEY_SASL_HANDSHAKE)
            " version " (int protocol/API_VERSION)
            " mechs " (str (first MECHS))
            " corr-id " corr-id)
@@ -199,7 +200,7 @@
         error-code (.readShort buff)
 
         mechs (buff-utils/read-string-array buff)]
-    (debug "handshake-response: error-code: " error-code " mechs " mechs " corr-id " corr-id)
+    (info "handshake-response: error-code: " error-code " mechs " mechs " corr-id " corr-id)
     (if (zero? error-code)
       true
       (throw (RuntimeException. (str "Handshake error: " error-code " mechanims: " mechs))))))

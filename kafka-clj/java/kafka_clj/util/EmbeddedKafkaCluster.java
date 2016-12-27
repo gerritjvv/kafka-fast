@@ -7,6 +7,9 @@ import kafka.server.KafkaServer;
 import kafka.utils.ZkUtils;
 import org.I0Itec.zkclient.ZkClient;
 import scala.Option$;
+import scala.collection.immutable.Seq;
+import scala.collection.mutable.ArraySeq;
+import scala.collection.mutable.ArraySeq$;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -96,6 +99,16 @@ public class EmbeddedKafkaCluster {
     }
 
     /**
+     * True if the topic exists, false it otherwise
+     * @param topic
+     * @return
+     */
+    public boolean topicExists(String topic)
+    {
+        return AdminUtils.topicExists(getZkUtils(), topic);
+    }
+
+    /**
      * For each port if -1 a randomly available port is selected.
      * @param ports
      * @return
@@ -158,7 +171,7 @@ public class EmbeddedKafkaCluster {
 
 
     private KafkaServer startBroker(Properties props) {
-        KafkaServer server = new KafkaServer(new KafkaConfig(props), new SystemTime(), Option$.MODULE$.<String>empty());
+        KafkaServer server = new KafkaServer(new KafkaConfig(props), new SystemTime(), Option$.MODULE$.<String>empty(), ArraySeq.empty());
         server.startup();
         return server;
     }

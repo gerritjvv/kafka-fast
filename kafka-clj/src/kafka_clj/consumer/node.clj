@@ -24,6 +24,7 @@
   "Closes the consumer node"
   [{:keys [org consumer msg-ch calc-work-thread redis-conn] :as node}]
   {:pre [org consumer msg-ch calc-work-thread redis-conn]}
+
   (stop-fixdelay calc-work-thread)
   (safe-call close-consumer! consumer)
   (safe-call close-organiser! org :close-redis false)
@@ -100,6 +101,7 @@
   :conf {:work-calculate-freq     ;;the frequency in millis at which new work is calculated, default 10000ms
          :use-earliest ;;if the topic information is not saved to redis the earliest available offset is used and saved,
                        ;;otherwise the most recent offset is used.
+         :pool-limit 20 ;;the tcp pool limit for the consumer
          :max-offsets ;;default 10, if use-earliest is true the earliest offset is used looking back up to max-offsets
          :jaas if set the jaas authentication will be used with each tcp connection
                 this value should point to the jaas config file.

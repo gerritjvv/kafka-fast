@@ -190,6 +190,11 @@ For HA Redis (Cluster Redis) see:
 https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/redis-cluster.md
 
 
+## Connection Pooling
+
+All consumer tcp connections are pooled.
+The default is set to 20 which might be quite high for some application, to change set the ```:pool-limit <num>``` 
+in the consumer config.
 
 ## Load balancing
 

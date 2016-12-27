@@ -1,9 +1,7 @@
 (ns kafka-clj.buff-utils
   (:import [io.netty.buffer ByteBuf]))
 
-
 (defonce ^:constant compression-code-mask 0x03)
-
 
 (defn ^ByteBuf inc-capacity [^ByteBuf bytebuf l]
   (let [len (+ (.capacity bytebuf) (int l))]

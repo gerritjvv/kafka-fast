@@ -14,7 +14,7 @@
       (.flush ^BufferedOutputStream (:output tcp-client)))))
 
 (defn write-request!
-  "Helper function that writes [int size in bytes][bytes] to the client and flus the request"
+  "Helper function that writes [int size in bytes][bytes] to the client and flush the request"
   [{:keys [^OutputStream output] :as client} bts]
   {:pre [output (instance? OutputStream output) bts]}
   (let [cnt (count bts)]
