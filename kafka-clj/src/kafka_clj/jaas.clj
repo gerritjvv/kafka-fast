@@ -80,7 +80,7 @@
 (defn jaas-expired?
   "True if the expire time is withing 30 seconds of the current time"
   [^LoginContext ctx]
-  (info "jaas-expired: expire-time " (long (jaas-expire-time ctx))  " curr-time " (System/currentTimeMillis))
+  (debug "jaas-expired: expire-time " (long (jaas-expire-time ctx))  " curr-time " (System/currentTimeMillis))
   (<
     (- (long (jaas-expire-time ctx))
        (System/currentTimeMillis))

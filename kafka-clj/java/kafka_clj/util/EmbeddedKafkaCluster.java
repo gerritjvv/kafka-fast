@@ -2,6 +2,7 @@ package kafka_clj.util;
 
 import kafka.admin.AdminUtils;
 import kafka.admin.RackAwareMode;
+import kafka.metrics.KafkaMetricsReporter;
 import kafka.server.KafkaConfig;
 import kafka.server.KafkaServer;
 import kafka.utils.ZkUtils;
@@ -9,7 +10,6 @@ import org.I0Itec.zkclient.ZkClient;
 import scala.Option$;
 import scala.collection.immutable.Seq;
 import scala.collection.mutable.ArraySeq;
-import scala.collection.mutable.ArraySeq$;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -171,7 +171,7 @@ public class EmbeddedKafkaCluster {
 
 
     private KafkaServer startBroker(Properties props) {
-        KafkaServer server = new KafkaServer(new KafkaConfig(props), new SystemTime(), Option$.MODULE$.<String>empty(), ArraySeq.empty());
+        KafkaServer server = new KafkaServer(new KafkaConfig(props), new SystemTime(), Option$.MODULE$.empty(), new ArraySeq<>(0));
         server.startup();
         return server;
     }

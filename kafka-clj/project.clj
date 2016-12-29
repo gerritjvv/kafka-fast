@@ -74,7 +74,7 @@
 
                  [org.apache.zookeeper/zookeeper "3.4.8" :scope "test"
                   :exclusions [io.netty/netty]]
-                 [org.apache.kafka/kafka_2.10 "0.10.0.0" :scope "test"
+                 [org.apache.kafka/kafka_2.10 "0.10.1.0" :scope "test"
                   :exclusions [io.netty/netty
                                log4j
                                org.slf4j/slf4j-api
