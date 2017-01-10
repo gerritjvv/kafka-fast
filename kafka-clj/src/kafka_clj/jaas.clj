@@ -71,11 +71,14 @@
 (defn jaas-expire-time
   "For all KerberosTicket(s) in the LoginContext the min auth time value is returned"
   [^LoginContext ctx]
-  (apply
-    min
-    (map
-      #(.getTime (.getEndTime ^KerberosTicket %))
-      (.getPrivateCredentials (.getSubject ctx) KerberosTicket))))
+  (let [^Subject subject (.getSubject ctx)]
+    (if subject
+      (apply
+        min
+        (map
+          #(.getTime (.getEndTime ^KerberosTicket %))
+          (.getPrivateCredentials subject KerberosTicket)))
+      Long/MAX_VALUE)))
 
 (defn jaas-expired?
   "True if the expire time is withing 30 seconds of the current time"
