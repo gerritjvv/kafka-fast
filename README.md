@@ -20,6 +20,7 @@ See https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/vagrant.md
 *  0.8.2.x
 *  0.9.0.x
 *  0.10.0.0
+*  0.10.1.0
 
 #Usage
 
@@ -42,6 +43,10 @@ See https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/vagrant.md
   </repository>
 </repositories>
 ```
+
+## Kerberos
+
+For Kerberos support see: https://github.com/gerritjvv/kafka-fast#jaas-sasl
 
 ## Creating Topics
 
