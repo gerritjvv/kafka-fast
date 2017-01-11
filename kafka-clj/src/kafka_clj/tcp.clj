@@ -58,8 +58,10 @@
    if jaas is specified it must point to a configuration section on the jaas and kerberos files defined as env properties
    -Djava.security.auth.login.config=/vagrant/vagrant/config/kafka_client_jaas.conf
    -Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf
+
+   if jaas is specified and kafka 0.9.0 is used add :kafka-version \"0.9.0\" to the conf
    "
-  [host port {:keys [jaas] :as conf}]
+  [host port {:keys [jaas kafka-version] :as conf}]
   {:pre [(string? host) (number? port)]}
   (let [socket (open-socket host port conf)
 
@@ -77,7 +79,7 @@
                          sasl-client (jaas/sasl-client conf c fqdn)]
 
                      (jaas/with-auth c                      ;;need to run handshake inside the subject doAs method
-                                     #(jaas/sasl-handshake! tcp-client sasl-client 30000 :kafka-version (:kafka-version conf)))
+                                     #(jaas/sasl-handshake! tcp-client sasl-client 30000 :kafka-version kafka-version))
                      (->SASLCtx c sasl-client)))]
 
     (assoc tcp-client :sasl-ctx sasl-ctx)))

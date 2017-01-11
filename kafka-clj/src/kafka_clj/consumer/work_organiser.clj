@@ -246,15 +246,16 @@
     (doseq [{:keys [offset partition saved-offset all-offsets]} offset-data2]
       (swap! work-assigned-flag inc)
 
-      (when-let [work-units (calculate-work-units broker topic partition offset saved-offset consume-step2)]
+      ;;avoid calculating hundreds of thousands of workunits potentially at a time, limit to 10K
+      (when-let [work-units (take 10000
+                                  (calculate-work-units broker topic partition offset saved-offset consume-step2))]
         (let [max-offset (apply max (map #(+ ^Long (:offset %) ^Long (:len %)) work-units))
               ts (System/currentTimeMillis)]
 
           (redis/wcar redis-conn
                       ;we must use sorted-map here otherwise removing the wu will not be possible due to serialization with arbritary order of keys
                       (redis/lpush* redis-conn work-queue (map #(assoc (into (sorted-map) %) :producer broker :ts ts) work-units))
-                      (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) max-offset))
-          )))))
+                      (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) max-offset)))))))
 
 (defn get-offset-from-meta [{:keys [conf] :as state} topic partition]
   (let [meta (meta/get-metadata! state conf)

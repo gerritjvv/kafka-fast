@@ -35,22 +35,28 @@ The Kafka brokers are configured to use Kerberos authentication.
 This allows the kafka client to be easily tested in a Kerberos setup, but also means some more
 setup from the client side before using the vagrant setup.
 
-
+Clients must sign in via keytabs generated in ```vagrant/keytabs```, these keytabs are generated
+via the ```vagrant/scripts/kerberos.sh``` script as part of the kerberos vagrant box.
 
 ## Machines/Boxes
 
 The boxes launched are:
 
+*Kerberos*
+  * kerberos kerberos.kafkafast 192.168.4.60
+
 *Brokers*
-  * broker1 192.168.4.40:9092
-  * broker2 192.168.4.41:9092
-  * broker3 192.168.4.42:9092
+  * broker1 broker1.kafkafast 192.168.4.40:9092
+  * broker2 broker2.kafkafast 192.168.4.41:9092
+  * broker3 broker3.kafkafast 192.168.4.42:9092
   
 *Zookeeper*
-  * zookeeper1 192.168.4.2:2181
+  * zookeeper1 zookeeper1.kafkafast 192.168.4.2:2181
 
 
 *Services* -- Redis
+
+services1 services1.kafkafast 192.168.4.10
 
   * redis 192.168.4.10:6379
   * redis 192.168.4.10:6380
@@ -58,7 +64,6 @@ The boxes launched are:
   * redis 192.168.4.10:6382
   * redis 192.168.4.10:6383
 
-  
 The services box is there to not only run the redis instance but any other instances such as a mysql db etc that  
 is required for a particular usecase.
 
@@ -112,6 +117,10 @@ Check that the kerberos options are enabled in the ```project.clj```
 Ssh into the broker1 box and cd to ```/vagrant```, this is important, running it outside of broker1 will not work
 with the defined jaas and krb5 config.
 
+Note: when you run the repl on broker1 it might be necessary to configure the ram used on the box.  The easiest root
+is first to set the ram for the repl profile to a lower value see ```project.clj``` ```:profiles {:repl {:jvm-opts [ ```
+
+
 ```
 vagrant ssh broker1
 cd /vagrant
@@ -129,6 +138,8 @@ lein repl
 
 ;;use flush-on-write true for testing, this will flush the message on write to kafka
 ;;set to false for performance in production
+;;:jaas "KafkaClient" refers to the section in the jaas file passed in using the environment
+;;variable -Djava.security.auth.login.config, see project.clj
 (def c (create-connector [{:host "192.168.4.41" :port 9092}]  {:flush-on-write true :jaas "KafkaClient" :kafka-version ""0.9"}))
 
 (send-msg c "my-topic" msg1kb)
