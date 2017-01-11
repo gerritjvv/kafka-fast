@@ -37,6 +37,13 @@
   (.shutdown ^EmbeddedKafkaCluster kafka)
   (.shutdown ^EmbeddedZookeeper zk))
 
+(defn kafka-topic-exists
+  "Requires the kafka object returned from startup-kafka
+   true if the topic exists"
+  [{:keys [kafka]} topic]
+  (.topicExists ^EmbeddedKafkaCluster kafka (str topic)))
+
+
 (defn startup-redis []
   (let [redis (doto (RedisServer. (int 6379)) .start)]
     {:server redis :port 6379}))

@@ -5,18 +5,14 @@
   kafka-clj.fetch
   (:require [clojure.tools.logging :refer [error info debug]]
             [clj-tuple :refer [tuple]]
-            [clj-tcp.codec :refer [default-encoder]]
             [kafka-clj.tcp :as tcp]
-            [clj-tcp.client :refer [write! client close-all]]
             [fun-utils.core :refer [fixdelay apply-get-create]]
             [kafka-clj.codec :refer [uncompress crc32-int]]
             [kafka-clj.buff-utils :refer [write-short-string with-size read-short-string read-byte-array codec-from-attributes]]
             [kafka-clj.produce :refer [API_KEY_FETCH_REQUEST API_KEY_OFFSET_REQUEST API_VERSION MAGIC_BYTE]]
             [clojure.core.async :refer [go >! <! chan >!! <!! alts!! put! timeout]])
-  (:import [io.netty.buffer ByteBuf]
-           [io.netty.handler.codec ReplayingDecoder]
-           [java.util.concurrent.atomic AtomicInteger]
-           [java.util List]))
+  (:import [io.netty.buffer ByteBuf Unpooled]
+           [java.util.concurrent.atomic AtomicInteger]))
 
 
 (defn ^ByteBuf write-fecth-request-message [^ByteBuf buff {:keys [max-wait-time min-bytes topics max-bytes]
@@ -50,6 +46,7 @@
 
 
 (defonce ^AtomicInteger correlation-id-counter (AtomicInteger.))
+
 (defn get-unique-corr-id []
   (let [v (.getAndIncrement correlation-id-counter)]
     (if (= v (Integer/MAX_VALUE)) ;check overflow
@@ -114,9 +111,9 @@
       (write-offset-request-message state)))
 
 
-(defn read-offset-response [^ByteBuf in]
+(defn _read-offset-response [^ByteBuf in]
   "
-  RequestOrResponse => Size (RequestMessage | ResponseMessage)
+  RequestOrResponse => Size (RequestMessage | ResponseMessage) ;;should be read by the calling message
     Size => int32
 
    Response => CorrelationId ResponseMessage
@@ -129,7 +126,7 @@
 	  ErrorCode => int16
 	  Offset => int64
   "
-  (let [_ (.readInt in)                                ;request size int
+  (let [                                                    ;_ (.readInt in)                                ;request size int
         _ (.readInt in)                      ;correlation id int
         topic-count (.readInt in)]                        ;topic array count int
     (doall ;we must force the operation here
@@ -148,45 +145,25 @@
                                     (.readLong in))))}))  )     ;read offset long
            })))))
 
-(defn offset-response-decoder []
-  "
-   A handler that reads offset request responses
 
-   "
-  (proxy [ReplayingDecoder]
-         ;decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out)
-         []
-    (decode [_ ^ByteBuf in ^List out]
-      (try (.add out
-                 (read-offset-response in))
-           (catch Exception e (do
-                                (.printStackTrace e)
-                                (throw e)
-                                )))
-      )))
+(defn read-offset-response
+  "Should be called after a send-offset-request, and reads the response from the kafka servers
+   then returns a offset map from _read-offset-response"
+  [{:keys [client]}]
+  (let [bts (tcp/read-response client)]
+    (_read-offset-response (Unpooled/wrappedBuffer bts))))
 
 (defn send-offset-request [{:keys [client conf]} topics]
   "topics must have format [[topic [{:partition 0} {:partition 1}...]] ... ]"
-  (write! client (fn [^ByteBuf buff]
-                   (with-size buff write-offset-request (merge conf {:topics topics})))))
+  (let [buff (Unpooled/buffer)
+        _ (do (with-size buff write-offset-request (merge conf {:topics topics})))]
+    (tcp/write! client buff :flush true)))
 
 (defn create-offset-producer
   ([{:keys [host port]} conf]
    (create-offset-producer host port conf))
   ([host port conf]
-   (let [c (client host port (merge
-                               ;;parameters that can be over written
-                               {
-                                :reuse-client true
-                                :read-buff 100
-                                }
-                               conf
-                               ;parameters tha cannot be overwritten
-                               {
-                                :handlers [
-                                           offset-response-decoder
-                                           default-encoder
-                                           ]}))]
+   (let [c (tcp/tcp-client host port conf)]
      {:client c :conf conf :broker {:host host :port port}})))
 
 (defn send-fetch

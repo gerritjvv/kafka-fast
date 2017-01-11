@@ -1,9 +1,10 @@
 (ns kafka-clj.consumer.util
   (:require
-    [kafka-clj.fetch :refer [create-offset-producer send-offset-request] :as fetch]
+    [kafka-clj.fetch :refer [create-offset-producer] :as fetch]
     [clojure.core.async :refer [timeout alts!!]]
-    [clojure.tools.logging :refer [info error]]
-    [kafka-clj.metadata :as meta]))
+    [clojure.tools.logging :refer [info error debug]]
+    [kafka-clj.metadata :as meta]
+    [kafka-clj.tcp :as tcp]))
 
 
 (defn get-create-offset-producer [offset-producers-ref broker conf]
@@ -38,18 +39,8 @@
   "returns [{:topic topic :partitions {:partition :error-code :offsets}}]"
   ;we should send format [[topic [{:partition 0} {:partition 1}...]] ... ]
 
-  (send-offset-request offset-producer [[topic (map (fn [x] {:partition x}) partitions)]] )
-
-  (let [{:keys [offset-timeout] :or {offset-timeout 10000}} (:conf offset-producer)
-        {:keys [read-ch error-ch]} (:client offset-producer)
-        [v c] (alts!! [read-ch error-ch (timeout offset-timeout)])
-        ]
-
-    (if v
-      (if (= c read-ch)
-        v
-        (throw (RuntimeException. (str "Error reading offsets from " offset-producer " for topic " topic " error: " v))))
-      (throw (RuntimeException. (str "Timeout while reading offsets from " offset-producer " for topic " topic))))))
+  (fetch/send-offset-request offset-producer [[topic (map (fn [x] {:partition x}) partitions)]] )
+  (fetch/read-offset-response offset-producer))
 
 (defn transform-offsets [topic offsets-response {:keys [use-earliest] :or {use-earliest true}}]
   "Transforms [{:topic topic :partitions {:partition :error-code :offsets}}]
@@ -81,9 +72,12 @@
                                ;throw exception if the offset-producer is nil
                                _ (if (not offset-producer) (throw (RuntimeException. (str "No producer found or bad producer connection for " broker))))
 
-                               offsets-response (get-offsets offset-producer topic (map first v))]
+                               offsets-response (get-offsets offset-producer topic (map first v))
+                               transformed-offsets (transform-offsets topic offsets-response conf)]
 
-                           [broker (transform-offsets topic offsets-response conf)])
+                           (debug "offet-response: " [broker transformed-offsets])
+
+                           [broker transformed-offsets])
                          (catch Exception e (do
                                               (error e e)
                                               (meta/black-list-producer! blacklisted-offsets-producers-ref {:host (:host broker) :port (:port broker)} e)

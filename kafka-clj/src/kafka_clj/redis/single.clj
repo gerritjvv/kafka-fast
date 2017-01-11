@@ -17,12 +17,15 @@
 (defn nil-safe [v default]
   (if (nil? v) default v))
 
-(defn- make-connection-factory [{:keys [host port timeout]}]
+(defn- make-connection-factory [{:keys [host port timeout password]}]
   (reify PooledObjectFactory
     (makeObject      [_ ]
-      (DefaultPooledObject. (conns/make-new-connection {:host (nil-safe host "localhost")
-                                                        :port (nil-safe port 6379)
-                                                        :timeout (nil-safe timeout 300)})))
+      (DefaultPooledObject. (conns/make-new-connection (merge
+                                                         {:host (nil-safe host "localhost")
+                                                          :port (nil-safe port 6379)
+                                                          :timeout (nil-safe timeout 300)}
+                                                         (when password
+                                                           {:password password})))))
     (activateObject  [_ pooled-obj])
     (validateObject  [_ pooled-obj] (let [conn (.getObject pooled-obj)]
                                       (conns/conn-alive? conn)))

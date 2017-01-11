@@ -4,8 +4,9 @@
             [kafka-clj.redis.protocol :refer [IRedis]]
             [clojure.tools.logging :refer [info error]])
   (:import [kafka_clj.util Util]
-           [org.redisson.core RBucket RLock RScript$Mode RScript$ReturnType]
-           [org.redisson Redisson Config ClusterServersConfig SingleServerConfig]
+           [org.redisson.api RedissonClient RBucket RLock RScript$Mode RScript$ReturnType]
+           [org.redisson.config ClusterServersConfig Config]
+           [org.redisson Redisson]
            [java.nio ByteBuffer]
            (java.util Queue List)
            (java.util.concurrent TimeUnit)
@@ -98,47 +99,52 @@
   {:pre [(vector (:host redis-conf))]}
 
   (let [hosts (:host redis-conf)
-        ^Config conf (.setCodec (Config.) (codec))]
-    (let [^ClusterServersConfig config (.useClusterServers conf)]
-      (.setScanInterval config (int 2000))
-      (.setSlaveConnectionPoolSize config (clojure.core/get redis-conf :slave-connection-pool-size 100))
-      (.setMasterConnectionPoolSize config (clojure.core/get redis-conf :master-connection-pool-size 100))
-      (.setSlaveSubscriptionConnectionPoolSize config (clojure.core/get redis-conf :slave-subscription-connection-pool-size 500))
+        ^Config conf (.setCodec (Config.) (codec))
+        ^ClusterServersConfig config (.useClusterServers conf)
+        password (:password redis-conf)]
 
-      ;;we need read from slaves to be false, this otherwise produces connection issues
-      (.setReadFromSlaves config false)
-      (.addNodeAddress config (into-array String (mapv #(Util/correctURI (str %)) hosts)))
-      conf)))
+    (when password
+      (.setPassword config (str password)))
 
-(defn connect
+    (.setScanInterval config (int 2000))
+    (.setSlaveConnectionPoolSize config (clojure.core/get redis-conf :slave-connection-pool-size 100))
+    (.setMasterConnectionPoolSize config (clojure.core/get redis-conf :master-connection-pool-size 100))
+    (.setSlaveSubscriptionConnectionPoolSize config (clojure.core/get redis-conf :slave-subscription-connection-pool-size 500))
+
+    ;;we need read from slaves to be false, this otherwise produces connection issues
+    (.setReadFromSlaves config false)
+    (.addNodeAddress config (into-array String (mapv #(Util/correctURI (str %)) hosts)))
+    conf))
+
+(defn ^RedissonClient connect
   ([redis-conf]
     (Redisson/create (create-config redis-conf))))
 
-(defn set [^Redisson cmd ^String k v]
+(defn set [^RedissonClient cmd ^String k v]
   (->
     cmd
     ^RBucket (.getBucket k)
     (.set v)))
 
-(defn get [^Redisson cmd ^String k]
+(defn get [^RedissonClient cmd ^String k]
   (->
     cmd
     ^RBucket (.getBucket k)
     .get))
 
-(defn lpush [^Redisson cmd ^String queue v]
+(defn lpush [^RedissonClient cmd ^String queue v]
   (->
     cmd
     ^Queue (.getQueue queue)
     (.offer v)))
 
-(defn llen [^Redisson cmd ^String queue]
+(defn llen [^RedissonClient cmd ^String queue]
   (-> cmd ^Queue (.getQueue queue) .size))
 
-(defn lrem [^Redisson cmd ^String queue n v]
+(defn lrem [^RedissonClient cmd ^String queue n v]
   (-> cmd ^List (.getList queue) (.remove v)))
 
-(defn lrange [^Redisson cmd ^String queue ^long n ^long limit]
+(defn lrange [^RedissonClient cmd ^String queue ^long n ^long limit]
   (let [^List ls (.getList cmd queue)
         size (.size ls)]
 
@@ -162,33 +168,33 @@
           (when-not (timeout? (long start-time) (long timeout))
             (recur (.poll cmd))))))))
 
-(defn brpoplpush [^Redisson cmd ^String queue1 ^String queue2 ^long timeout]
+(defn brpoplpush [^RedissonClient cmd ^String queue1 ^String queue2 ^long timeout]
   (let [q (.getQueue cmd queue1)]
     (when-let [v (pop-retry q timeout)]
       (.add ^Queue (.getQueue cmd queue2) v)
       v)))
 
-(defn flushall [^Redisson cmd] )
-(defn close! [^Redisson cmd] (.shutdown cmd))
+(defn flushall [^RedissonClient cmd] )
+(defn close! [^RedissonClient cmd] (.shutdown cmd))
 
 
-(defn acquire-lock [^Redisson cmd ^String lock-name ^long timeout-ms ^long wait-ms]
+(defn acquire-lock [^RedissonClient cmd ^String lock-name ^long timeout-ms ^long wait-ms]
   (let [^RLock lock (.getLock cmd lock-name)]
 
     (try
       (if (.tryLock lock wait-ms timeout-ms TimeUnit/MILLISECONDS) lock)
       (catch Exception e (error e e)))))
 
-(defn release-lock [^Redisson cmd ^String lock-name ^RLock lock]
+(defn release-lock [^RedissonClient cmd ^String lock-name ^RLock lock]
   (when lock
     (.unlock lock))
   true)
 
-(defn have-lock? [^Redisson cmd ^String lock-name lock]
+(defn have-lock? [^RedissonClient cmd ^String lock-name lock]
   (and lock (.isLocked ^RLock lock)))
 
 
-(defn lua [^Redisson cmd ^String script-str]
+(defn lua [^RedissonClient cmd ^String script-str]
   (.eval (.getScript cmd) RScript$Mode/READ_WRITE script-str RScript$ReturnType/VALUE))
 
 (defrecord RedissonObj [pool]

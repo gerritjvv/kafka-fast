@@ -21,21 +21,42 @@ This does mean extra time is required to download java etc and run update on the
 
 
 ```vagrant plugin install vagrant-vbguest```
+```vagrant plugin install vagrant-hostmanager```
+
+
+### Shared folders
+
+The Vagrantfile uses nfs for shared folders, this is faster and more sane than the current alternatives.
+You might be asked for you're password when starting the machines.
+
+## Kerberos
+
+The Kafka brokers are configured to use Kerberos authentication.
+This allows the kafka client to be easily tested in a Kerberos setup, but also means some more
+setup from the client side before using the vagrant setup.
+
+Clients must sign in via keytabs generated in ```vagrant/keytabs```, these keytabs are generated
+via the ```vagrant/scripts/kerberos.sh``` script as part of the kerberos vagrant box.
 
 ## Machines/Boxes
 
 The boxes launched are:
 
+*Kerberos*
+  * kerberos kerberos.kafkafast 192.168.4.60
+
 *Brokers*
-  * broker1 192.168.4.40:9092
-  * broker2 192.168.4.41:9092
-  * broker3 192.168.4.42:9092
+  * broker1 broker1.kafkafast 192.168.4.40:9092
+  * broker2 broker2.kafkafast 192.168.4.41:9092
+  * broker3 broker3.kafkafast 192.168.4.42:9092
   
 *Zookeeper*
-  * zookeeper1 192.168.4.2:2181
+  * zookeeper1 zookeeper1.kafkafast 192.168.4.2:2181
 
 
 *Services* -- Redis
+
+services1 services1.kafkafast 192.168.4.10
 
   * redis 192.168.4.10:6379
   * redis 192.168.4.10:6380
@@ -43,15 +64,29 @@ The boxes launched are:
   * redis 192.168.4.10:6382
   * redis 192.168.4.10:6383
 
-  
 The services box is there to not only run the redis instance but any other instances such as a mysql db etc that  
 is required for a particular usecase.
 
 ## Startup
 
+Startup order is important:
+
 To run type:
 
-```vagrant up```
+```vagrant up --provision kerberos```
+
+```vagrant up --provision services1```
+
+```vagrant up --provision zookeeper1```
+
+
+```vagrant up --provision broker1```
+```vagrant up --provision broker2```
+```vagrant up --provision broker3```
+
+Note: ssh into all the machines checking that each instance is running,
+check for errors in their logs, use ps uax etc.
+
 
 To destroy all boxes run:
 
@@ -68,16 +103,44 @@ But first test that the cluster is up and running by running ping on each of the
 
 Remember to create the topic first using vagrant/scripts/create_topic_remote.sh "my-topic"
 
+*Do first*
+
+Check that the kerberos options are enabled in the ```project.clj```
+
+```
+"-Dsun.security.krb5.debug=true"
+"-Djava.security.debug=gssloginconfig,configfile,configparser,logincontext"
+"-Djava.security.auth.login.config=/vagrant/vagrant/config/kafka_client_jaas.conf"
+"-Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf"
+```
+
+Ssh into the broker1 box and cd to ```/vagrant```, this is important, running it outside of broker1 will not work
+with the defined jaas and krb5 config.
+
+Note: when you run the repl on broker1 it might be necessary to configure the ram used on the box.  The easiest root
+is first to set the ram for the repl profile to a lower value see ```project.clj``` ```:profiles {:repl {:jvm-opts [ ```
+
+
+```
+vagrant ssh broker1
+cd /vagrant
+
+lein repl
+```
+
+
 *Clojure*
 
 ```clojure
 (use 'kafka-clj.client :reload)
 
-(def msg1kb (.getBytes (clojure.string/join "," (range 278))))
+(def msg1kb (.getBytes (clojure.string/join "," (range 10))))
 
 ;;use flush-on-write true for testing, this will flush the message on write to kafka
 ;;set to false for performance in production
-(def c (create-connector [{:host "192.168.4.40" :port 9092}]  {:flush-on-write true}))
+;;:jaas "KafkaClient" refers to the section in the jaas file passed in using the environment
+;;variable -Djava.security.auth.login.config, see project.clj
+(def c (create-connector [{:host "192.168.4.41" :port 9092}]  {:flush-on-write true :jaas "KafkaClient" :kafka-version ""0.9"}))
 
 (send-msg c "my-topic" msg1kb)
 ```
@@ -87,7 +150,11 @@ Remember to create the topic first using vagrant/scripts/create_topic_remote.sh 
 ```java
 import kakfa_clj.core.*;
 
-Producer producer = Producer.connect(new BrokerConf("192.168.4.40", 9092));
+KafkaConf conf = new KafkaConf();
+conf.setJaas("KafkaClient");
+conf.setKafkaVersion("0.9"); //do for kafka 0.9 version only
+
+Producer producer = Producer.connect(conf, new BrokerConf("192.168.4.40", 9092));
 producer.sendMsg("my-topic", "Hi".getBytes("UTF-8"));
 producer.close();
 ```
@@ -110,7 +177,9 @@ For this reason we add sending messages just before calling read-msg in this tes
 (use 'kafka-clj.consumer.node :reload)
 (use 'kafka-clj.client :reload)
 
-(def consumer-conf {:bootstrap-brokers [{:host "192.168.4.40" :port 9092}]
+(def consumer-conf {:bootstrap-brokers [{:host "192.168.4.41" :port 9092}]
+                    :jaas "KafkaClient"
+                    :kafka-version "0.9"
                     :redis-conf {:host ["192.168.4.10:6379" "192.168.4.10:6380" "192.168.4.10:6381"
                                         "192.168.4.10:6382" "192.168.4.10:6383" ]
                                         :slave-connection-pool-size 500
@@ -124,7 +193,7 @@ For this reason we add sending messages just before calling read-msg in this tes
 
 ;; important, wait till you see something like  work-organiser:288 - Set initial offsets [ my-topic / 0 ]:  42336
 
-(def c (create-connector [{:host "192.168.4.40" :port 9092}]  {:flush-on-write true}))
+(def c (create-connector [{:host "192.168.4.41" :port 9092}]  {:flush-on-write true :jaas "KafkaClient" :kafka-version "0.9"}))
 
 (dotimes [i 1000] (send-msg c "my-topic" (.getBytes "MyTestMessage-12121212121212121212")))
 
@@ -139,7 +208,12 @@ For this reason we add sending messages just before calling read-msg in this tes
 ```java
 import kakfa_clj.core.*;
 
-Consumer consumer = Consumer.connect(new KafkaConf(), new BrokerConf[]{new BrokerConf("192.168.4.40", 9092)}, new RedisConf("192.168.4.10", 6379, "test-group"), "my-topic");
+
+KafkaConf conf = new KafkaConf();
+conf.setJaas("KafkaClient");
+conf.setKafkaVersion("0.9"); //do for kafka 0.9 version only
+
+Consumer consumer = Consumer.connect(conf, new BrokerConf[]{new BrokerConf("192.168.4.41", 9092)}, new RedisConf("192.168.4.10", 6379, "test-group"), "my-topic");
 Message msg = consumer.readMsg();
 
 String topic = msg.getTopic();

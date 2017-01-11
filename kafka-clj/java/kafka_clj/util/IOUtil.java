@@ -2,12 +2,20 @@ package kafka_clj.util;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.concurrent.TimeoutException;
 
 /**
  * Mutable IO Utility functions used in clojure code.
  */
 public class IOUtil {
+
+    public static final void writeInt(OutputStream out, int v) throws IOException {
+        out.write((v >>> 24) & 0xFF);
+        out.write((v >>> 16) & 0xFF);
+        out.write((v >>>  8) & 0xFF);
+        out.write((v >>>  0) & 0xFF);
+    }
 
     /**
      * Read 4 bytes and return an int

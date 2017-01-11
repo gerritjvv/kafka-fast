@@ -11,6 +11,11 @@ class SystemTime implements Time {
         return System.nanoTime();
     }
 
+    @Override
+    public long hiResClockMs() {
+        return 0;
+    }
+
     public void sleep(long ms) {
         try {
             Thread.sleep(ms);

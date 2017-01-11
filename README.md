@@ -47,7 +47,6 @@ See https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/vagrant.md
 
 In production and for testing its best practice to create the topics manually (or via an automated script) rather than try and use the Kafka Producer to "auto-create" it. Care should be taken and some thought given to the number of partitions and the replication factor. Although this library in particular is not bounded by the number of partitions it is still a means by which the Kafka Brokers split data internally and affects data deletion and replication.
 
-
 ## Producer
 
 The ```kafka-client.client``` namespace contains a ```create-connector``` function that returns a async multi threaded thread safe connector.
@@ -190,6 +189,11 @@ For HA Redis (Cluster Redis) see:
 https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/redis-cluster.md
 
 
+## Connection Pooling
+
+All consumer tcp connections are pooled.
+The default is set to 20 which might be quite high for some application, to change set the ```:pool-limit <num>``` 
+in the consumer config.
 
 ## Load balancing
 
@@ -366,6 +370,12 @@ The event format is:
 
 See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for writing events to disk
 
+# JAAS SASL
+
+This connector supports SASL_PLAINTEXT. To activate specify ```:conf :jaas``` e.g ```:conf :jaas "KafkaClient"```.
+
+Note that the SASL mechanism in kafka 0.9.0 is not compatible with that of 0.10.0. When using 0.9.0 specify 
+```:conf :kafka-version "0.9.0" ```
 
 #Configuration
 
@@ -401,6 +411,8 @@ See https://github.com/gerritjvv/kafka-fast/tree/master/kafka-events-disk for wr
 |:conf :consumer-conn-max-total-per-key | 40 | The maximum number of connections that should be created per broker |
 |:conf :msg-ch-buff-size | 100 | The buffer size between the background fetching threads and the calling consumer api |
 |:conf :work-unit-event-ch-buff-size | The buffer (sliding window) of work unit events |
+|:conf :jaas | The name to use inside the jaas file configuration |
+|:conf :kafka-version | The kafka version used e.g 0.9.0 will indicate that the SASL 0.9.0 compatible handshake should be used |
 
 ### Performance configuration for consuming
 

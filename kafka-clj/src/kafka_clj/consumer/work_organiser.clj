@@ -34,7 +34,7 @@
   kafka-clj.consumer.work-organiser
   (:require
     [kafka-clj.consumer.util :as cutil]
-    [clojure.tools.logging :refer [info debug error]]
+    [clojure.tools.logging :refer [info debug error warn]]
     [kafka-clj.redis.core :as redis]
     [kafka-clj.metadata :as meta]
     [fun-utils.cache :as cache]
@@ -184,6 +184,20 @@
         (lazy-seq
           (calculate-work-units producer topic partition max-offset (+ start-offset l) step))))))
 
+(defn check-offset-in-range
+  "Check that the saved-offset still exists on the brokers and if not
+   get the earliest offset and start from there"
+  [state topic partition saved-offset]
+
+  (let [earliest-offset  (get-offset-from-meta
+                           (update state :conf #(assoc % :use-earliest true)) topic partition)]
+
+    (if (> earliest-offset saved-offset)
+      (do
+        (warn "for " topic ":" partition " offset saved " saved-offset " does not exist and the earliest offset available is " earliest-offset)
+        earliest-offset)
+      saved-offset)))
+
 (defn ^Long get-saved-offset
   "Returns the last saved offset for a topic partition combination
    If the partition is not found for what ever reason the latest offset will be taken from the kafka meta data
@@ -193,7 +207,7 @@
   (let [offset (io!
                  (let [saved-offset (redis/wcar redis-conn (redis/get redis-conn (str "/" group-name "/offsets/" topic "/" partition)))]
                    (cond
-                     (not (nil? saved-offset)) (to-int saved-offset)
+                     (not (nil? saved-offset)) (check-offset-in-range state topic partition (to-int saved-offset))
                      :else (let [meta-offset (get-offset-from-meta state topic partition)]
                              (info "Set initial offsets [" topic "/" partition "]: " meta-offset)
                              (redis/wcar redis-conn (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) meta-offset))
@@ -232,15 +246,16 @@
     (doseq [{:keys [offset partition saved-offset all-offsets]} offset-data2]
       (swap! work-assigned-flag inc)
 
-      (when-let [work-units (calculate-work-units broker topic partition offset saved-offset consume-step2)]
+      ;;avoid calculating hundreds of thousands of workunits potentially at a time, limit to 10K
+      (when-let [work-units (take 10000
+                                  (calculate-work-units broker topic partition offset saved-offset consume-step2))]
         (let [max-offset (apply max (map #(+ ^Long (:offset %) ^Long (:len %)) work-units))
               ts (System/currentTimeMillis)]
 
           (redis/wcar redis-conn
                       ;we must use sorted-map here otherwise removing the wu will not be possible due to serialization with arbritary order of keys
                       (redis/lpush* redis-conn work-queue (map #(assoc (into (sorted-map) %) :producer broker :ts ts) work-units))
-                      (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) max-offset))
-          )))))
+                      (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) max-offset)))))))
 
 (defn get-offset-from-meta [{:keys [conf] :as state} topic partition]
   (let [meta (meta/get-metadata! state conf)

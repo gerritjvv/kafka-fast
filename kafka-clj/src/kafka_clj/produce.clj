@@ -1,13 +1,12 @@
 (ns kafka-clj.produce
   (:require [kafka-clj.codec :refer [crc32-int compress]]
-            [kafka-clj.response :as kafka-resp :refer [metadata-response-decoder]]
-            [clj-tcp.client :refer [client write! read! close-all ALLOCATOR RCVBUF-ALLOCATOR WRITE-BUFFER-HIGH-WATER-MARK closed?]]
-            [clj-tcp.codec :refer [default-encoder]]
-            [clojure.tools.logging :refer [error info]]
+            [kafka-clj.response :as kafka-resp]
+            [clojure.tools.logging :refer [error info debug]]
             [kafka-clj.buff-utils :refer [write-short-string with-size compression-code-mask]]
             [clj-tuple :refer [tuple]]
             [kafka-clj.msg-persist :refer [cache-sent-messages create-send-cache]]
-            [kafka-clj.tcp :as tcp])
+            [kafka-clj.tcp :as tcp]
+            [kafka-clj.protocol :as protocol])
   (:import
     (java.net Socket SocketException)
            [java.util.concurrent.atomic AtomicLong AtomicInteger]
@@ -15,22 +14,21 @@
            [kafka_clj.util Util]
            (java.io ByteArrayInputStream DataInputStream)))
 
+(defonce ^:constant API_KEY_PRODUCE_REQUEST protocol/API_KEY_PRODUCE_REQUEST)
+(defonce ^:constant API_KEY_FETCH_REQUEST protocol/API_KEY_FETCH_REQUEST)
+(defonce ^:constant API_KEY_OFFSET_REQUEST protocol/API_KEY_OFFSET_REQUEST)
+(defonce ^:constant API_KEY_METADATA_REQUEST protocol/API_KEY_METADATA_REQUEST)
+(defonce ^:constant API_KEY_SASL_HANDSHAKE protocol/API_KEY_SASL_HANDSHAKE)
+
+
+(defonce ^:constant API_VERSION protocol/API_VERSION)
+
+(defonce ^:constant MAGIC_BYTE protocol/MAGIC_BYTE)
 
 
 (defrecord Producer [client host port])
 (defrecord Message [topic partition ^bytes bts])
 
-(defonce ^:constant API_KEY_PRODUCE_REQUEST (short 0))
-(defonce ^:constant API_KEY_FETCH_REQUEST (short 1))
-(defonce ^:constant API_KEY_OFFSET_REQUEST (short 2))
-(defonce ^:constant API_KEY_METADATA_REQUEST (short 3))
-
-
-(defonce ^:constant API_VERSION (short 0))
-
-(defonce ^:constant MAGIC_BYTE (int 0))
-
-(defonce ^AtomicInteger corr-counter (AtomicInteger.))
 
 (defn flush-on-byte->fn
   "Returns a check-f for buffered-chan that will flush if the accumulated byte count is bigger than that of byte-limit"
@@ -43,20 +41,10 @@
          (tuple true 0)
          (tuple false total-cnt))))))
 
-(defn ^Long unique-corrid! []
-  (let [v (.getAndIncrement corr-counter)]
-    (if (= v Integer/MAX_VALUE)
-      (do
-        (.set corr-counter 0)
-        v)
-      v)))
-
 (defn shutdown [{:keys [client]}]
   (when client
     (try
-      (if (:socket client)
-        (tcp/close! client)
-        (close-all client))
+      (tcp/close! client)
       (catch Exception e (error e "Error while shutting down producer")))))
 
 (defn message [topic partition ^bytes bts]
@@ -110,7 +98,7 @@
       (let [_ (write-message-set msg-buff correlation-id 0 msgs) ;write msgs to msg-buff
             arr (byte-array (- (.writerIndex msg-buff) (.readerIndex msg-buff)))]
         (.readBytes msg-buff arr)
-        ;(prn "Compress out " (String. (compress codec arr)))
+
         (-> buff
             (.writeLong 0)                                  ;offset
             (with-size write-message codec
@@ -127,7 +115,7 @@
   For compressed messages this is the uncompressed message, and allows us to retry message sending."
   [^ByteBuf buff {:keys [client-id codec acks timeout] :or {client-id "1" codec 0 acks 1 timeout 1000} :as conf}
    msgs]
-  (let [correlation-id (unique-corrid!)]
+  (let [correlation-id (protocol/unique-corrid!)]
     (-> buff
         (.writeShort (short API_KEY_PRODUCE_REQUEST))       ;api-key
         (.writeShort (short API_VERSION))                   ;version api
@@ -201,9 +189,8 @@
         (tcp/write! client byte-buff :flush true)
         (tcp/write! client byte-buff)))))
 
-
 (defn producer-closed? [producer]
-  (closed? (:client producer)))
+  (tcp/closed? (:client producer)))
 
 (defn producer
   "returns a producer for sending messages, the decoder is a producer-response-decoder"
@@ -211,7 +198,7 @@
     (producer host port {}))
   ([host port conf]
     (try
-      (let [c (tcp/tcp-client host port)]
+      (let [c (tcp/tcp-client host port conf)]
 
         (info "Creating client instance " host ":" port)
         (->Producer c host port))
@@ -243,24 +230,19 @@
 (defn send-metadata-request
   "Writes out a metadata request to the producer's client"
   [{:keys [client]} conf]
-  (write! client (fn [^ByteBuf buff]
-                   (with-size buff write-metadata-request conf))))
+  (let [buff (Unpooled/buffer)
+        _ (do (with-size buff write-metadata-request conf))]
+    (tcp/write! client buff :flush true)))
+
 
 (defn metadata-request-producer
   "Returns a producer with a metadata-response-decoder set"
   [host port conf]
   (if (not host)
     (throw (RuntimeException. (str "Nill host is not allowed here"))))
-  (let [c (client host port (merge conf
-                                   {:reuse-client true
-                                    :retry-limit  0
-                                    ;:channel-options [[ALLOCATOR (KafkaAllocator.)]]
-                                    :handlers     [
-                                                   metadata-response-decoder
-                                                   default-encoder
-                                                   ]}))]
-    (if-not (record? c)
-      (throw (SocketException. (str "Could not connect to " host ":" port))))
 
+  (let [c (tcp/tcp-client host port conf)]
+
+    (debug ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> creating conn " c)
     (->Producer c host port)))
       

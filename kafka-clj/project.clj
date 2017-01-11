@@ -1,4 +1,4 @@
-(defproject kafka-clj "3.6.8-SNAPSHOT"
+(defproject kafka-clj "4.0.0-SNAPSHOT"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -11,14 +11,32 @@
 
   :scm {:name "git"
          :url "https://github.com/gerritjvv/kafka-fast.git"}
+
   :java-source-paths ["java"]
-  :jvm-opts ["-Xmx3g" "-server"]
-  :plugins [[lein-midje "3.1.1"]
+
+  :jvm-opts ["-Xmx1g" "-server"
+
+             ;;------- Properties for kerberos authentication
+             ;"-Dsun.security.krb5.debug=true"
+             ;"-Djava.security.debug=gssloginconfig,configfile,configparser,logincontext"
+             ;"-Djava.security.auth.login.config=/vagrant/vagrant/config/kafka_client_jaas.conf"
+             ;"-Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf"
+             ]
+
+  :profiles {:repl {:jvm-opts [
+                               "-Xmx512m"
+                               "-Dsun.security.krb5.debug=true"
+                               "-Djava.security.debug=gssloginconfig,configfile,configparser,logincontext"
+                               "-Djava.security.auth.login.config=/vagrant/vagrant/config/kafka_client_jaas.conf"
+                               "-Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf"
+                               ]}}
+
+  :plugins [[lein-midje "3.2.1"]
             [lein-kibit "0.0.8"]]
   :test-paths ["test" "test-java"]
   :dependencies [
-                 [com.taoensso/carmine "2.12.2" :exclusions [org.clojure/clojure]]
-                 [org.redisson/redisson "2.2.16" :exclusions [io.netty/netty-buffer]]
+                 [com.taoensso/carmine "2.15.0" :exclusions [org.clojure/clojure]]
+                 [org.redisson/redisson "3.2.2" :exclusions [io.netty/netty-buffer]]
 
                  [com.alexkasko.unsafe/unsafe-tools "1.4.4"]
 
@@ -28,21 +46,19 @@
 
                  [net.jpountz.lz4/lz4 "1.3.0"]
                  [org.clojure/tools.logging "0.3.1"]
-                 [clj-tcp "1.0.1"
-                  :exclusions [com.taoensso/nippy
-                               com.taoensso/truss
-                               org.clojure/tools.reader
-                               com.taoensso/encore]]
 
                  [fun-utils "0.6.1" :exclusions [org.clojure/tools.logging]]
                  [clj-tuple "0.2.2"]
+
+                 [io.netty/netty-buffer "4.1.6.Final"]
+                 [io.netty/netty-common "4.1.6.Final"]
 
                  [com.codahale.metrics/metrics-core "3.0.2"]
 
                  [org.clojure/core.async "0.2.374"
                   :exclusions [org.clojure/tools.reader]]
 
-                 [com.stuartsierra/component "0.3.1"]
+                 [com.stuartsierra/component "0.3.2"]
 
                  [org.openjdk.jol/jol-core "0.5"]
 
@@ -58,7 +74,7 @@
 
                  [org.apache.zookeeper/zookeeper "3.4.8" :scope "test"
                   :exclusions [io.netty/netty]]
-                 [org.apache.kafka/kafka_2.10 "0.10.0.0" :scope "test"
+                 [org.apache.kafka/kafka_2.10 "0.10.1.0" :scope "test"
                   :exclusions [io.netty/netty
                                log4j
                                org.slf4j/slf4j-api

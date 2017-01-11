@@ -5,11 +5,14 @@
   (:require
     [clj-tuple :refer [tuple]]
     [kafka-clj.produce :refer [metadata-request-producer send-metadata-request shutdown]]
+    [kafka-clj.response :as kafka-resp]
     [fun-utils.core :refer [fixdelay]]
     [clojure.tools.logging :refer [info error warn]]
     [clojure.core.async :refer [go <! <!! >!! alts!! timeout thread]]
-    [kafka-clj.produce :as produce])
-  (:import (clojure.lang IDeref)))
+    [kafka-clj.produce :as produce]
+    [kafka-clj.tcp :as tcp])
+  (:import (clojure.lang IDeref)
+           (io.netty.buffer Unpooled)))
 
 (declare get-metadata-recreate!)
 
@@ -56,17 +59,11 @@
    (convert-metadata-response resp) is returned.
    "
    (let [producer metadata-producer
-         read-ch  (-> producer :client :read-ch)
-         error-ch (-> producer :client :error-ch)]
-	      (send-update-metadata producer conf)
-	          ;wait for response or timeout
-	          (let [[v c] (alts!! [read-ch error-ch (timeout metadata-timeout)])]
-	             (if v
-	               (if (= c read-ch)  (convert-metadata-response v)
-	                 (throw (Exception. (str "Error reading metadata from producer " metadata-producer  " error " v))))
-	               (do
-                   (shutdown producer)
-                   (throw (Exception. (str "timeout reading from producer " (vals metadata-producer)))))))))
+         _ (do (send-update-metadata producer conf))
+         bts (tcp/read-response (:client producer))
+         resp (kafka-resp/read-metadata-response (Unpooled/wrappedBuffer bts))]
+
+     (convert-metadata-response resp)))
 
 (defn blacklisted?
   "
@@ -112,7 +109,7 @@
   (try
     (apply f args)
     (catch Exception e (do
-                         (error "ERROR Blacklisting")
+                         (error e "ERROR Blacklisting")
                          (black-list-producer! blacklisted-metadata-producers-ref k e)
                          nil))))
 

@@ -113,6 +113,7 @@
 (defn- write-fetch-req!
   "Write a fetch request to the connection based on wu"
   [{:keys [conf]} conn {:keys [topic partition offset]}]
+  (debug "write-fetch-request topic: " topic " partition: " partition " offset: " offset)
   (fetch/send-fetch {:client conn :conf conf} [[topic [{:partition partition :offset offset}]]]))
 
 (defn- start-wu-publisher! [state publish-exec-service exec-service handler-f]
@@ -168,7 +169,7 @@
   [state conn-pool delegate-f wu]
   {:pre [conn-pool (get-in wu [:producer :host]) [get-in wu [:producer :port]]]}
   (try
-
+    (debug "process-wu! " wu)
     (let [{:keys [host port]} (:producer wu)
           pooled-conn (tcp/borrow conn-pool host port)
           conn (tcp/pool-obj-val pooled-conn)]
@@ -184,6 +185,7 @@
                 _ (tcp/release conn-pool host port pooled-conn)     ;release the connection early
                 [status offset maxoffset discarded minbts maxbts offsets-read :as v] (read-process-resp! delegate-f wu bts)]
 
+            (debug "got fetch response: static: " status " offset: " offset " offsets-read:" v)
             (if (= :ok status)
               (do
                 (if (zero? (long offsets-read))
@@ -354,6 +356,12 @@
    The actual consume! function returns inmediately
 
     reporting: if (get :consumer-reporting conf) is true then messages consumed metrics will be written every 10 seconds to stdout
+
+    :pool-limit 20 ; number of tcp pool connections to create
+
+    :jaas if set the jaas authentication will be used with each tcp connection
+          this value should point to the jaas config file.
+          for more information see http://docs.oracle.com/javase/7/docs/technotes/guides/security/jgss/tutorials/AcnOnly.html
   "
   [{:keys [conf msg-ch work-unit-event-ch] :as state}]
   {:pre [conf work-unit-event-ch msg-ch

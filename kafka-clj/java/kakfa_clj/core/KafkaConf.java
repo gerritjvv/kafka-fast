@@ -20,9 +20,19 @@ public class KafkaConf {
     private static final Keyword KW_MIN_BTS = Keyword.intern("min-bytes");
     private static final Keyword KW_MAX_BTS = Keyword.intern("max-bytes");
     private static final Keyword KW_MAX_WAIT_TIME = Keyword.intern("max-wait-time");
+    private static final Keyword KW_JAAS = Keyword.intern("jaas");
+    private static final Keyword KW_KAFKA_VERSION = Keyword.intern("kafka-version");
 
 
     IPersistentMap conf = PersistentArrayMap.EMPTY;
+
+    public void setJaas(String jaas){
+        conf = conf.assoc(KW_JAAS, jaas);
+    }
+
+    public void setKafkaVersion(String version){
+        conf = conf.assoc(KW_KAFKA_VERSION, version);
+    }
 
     public void setMaxWaitTime(long maxWaitTime){
         conf = conf.assoc(KW_MAX_WAIT_TIME, maxWaitTime);
