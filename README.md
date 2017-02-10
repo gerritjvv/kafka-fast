@@ -20,6 +20,7 @@ See https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/vagrant.md
 *  0.8.2.x
 *  0.9.0.x
 *  0.10.0.0
+*  0.10.1.0
 
 #Usage
 
@@ -43,6 +44,10 @@ See https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/vagrant.md
 </repositories>
 ```
 
+## Kerberos		
+ 		
+ For Kerberos support see: https://github.com/gerritjvv/kafka-fast#jaas-sasl		
+ 
 ## Creating Topics
 
 In production and for testing its best practice to create the topics manually (or via an automated script) rather than try and use the Kafka Producer to "auto-create" it. Care should be taken and some thought given to the number of partitions and the replication factor. Although this library in particular is not bounded by the number of partitions it is still a means by which the Kafka Brokers split data internally and affects data deletion and replication.
