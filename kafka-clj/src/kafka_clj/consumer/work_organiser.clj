@@ -301,6 +301,11 @@
   (redis/wcar redis-conn
               (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) offset)))
 
+(defn safe-max
+  ([a] a)
+  ([a b] (max a b))
+  ([a b & xs] (max a b xs)))
+
 (defn check-invalid-offsets!
   "Check for https://github.com/gerritjvv/kafka-fast/issues/10
    if a saved-offset > max-offset the redis offset is reset
@@ -319,7 +324,7 @@
         (doseq [{:keys [partition all-offsets]} offset-data]
           (let [k {:topic topic :partition partition}]
             (.put m k (_max-offset (.get m k) [(saved-offset-f state topic partition)
-                                               (apply max all-offsets)]))))))
+                                               (apply safe-max all-offsets)]))))))
 
     (doseq [[{:keys [topic partition]} [saved-offset max-offset]] m]
       (when (> saved-offset max-offset)

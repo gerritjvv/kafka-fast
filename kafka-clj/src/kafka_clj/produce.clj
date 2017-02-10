@@ -9,10 +9,11 @@
             [kafka-clj.protocol :as protocol])
   (:import
     (java.net Socket SocketException)
-           [java.util.concurrent.atomic AtomicLong AtomicInteger]
-           [io.netty.buffer ByteBuf Unpooled ByteBufAllocator UnpooledByteBufAllocator PooledByteBufAllocator]
-           [kafka_clj.util Util]
-           (java.io ByteArrayInputStream DataInputStream)))
+    [java.util.concurrent.atomic AtomicLong AtomicInteger]
+    [io.netty.buffer ByteBuf Unpooled ByteBufAllocator UnpooledByteBufAllocator PooledByteBufAllocator]
+    [kafka_clj.util Util]
+    (java.io ByteArrayInputStream DataInputStream)
+    (java.util Arrays)))
 
 (defonce ^:constant API_KEY_PRODUCE_REQUEST protocol/API_KEY_PRODUCE_REQUEST)
 (defonce ^:constant API_KEY_FETCH_REQUEST protocol/API_KEY_FETCH_REQUEST)
@@ -144,6 +145,7 @@
 
 
 (defn read-response [{:keys [client]} timeout]
+  (prn "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!READ RESPONSE")
   (let [{:keys [^Socket socket ^DataInputStream input]} client]
     (when (not (.isClosed socket))
       (loop [start-ts (System/currentTimeMillis)]
@@ -152,6 +154,7 @@
                 bts (byte-array size)
                 _ (.read input bts)
                 btsIn (DataInputStream. (ByteArrayInputStream. bts))]
+            (prn "resp " (Arrays/toString bts))
             (try
               (flatten (kafka-resp/in->kafkarespseq btsIn))
               (finally
