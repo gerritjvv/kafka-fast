@@ -12,9 +12,7 @@
     [clojure.tools.logging :refer [error info debug warn]]
     [com.stuartsierra.component :as component]
     [clj-tuple :refer [tuple]]
-    [clojure.core.async :as async]
-    [kafka-clj.pool.keyed :as pool-keyed]
-    [kafka-clj.pool.api :as pool-api])
+    [clojure.core.async :as async])
   (:import [java.util.concurrent.atomic AtomicLong AtomicBoolean]
            (java.util.concurrent Executors ScheduledExecutorService TimeUnit ThreadFactory ExecutorService CountDownLatch)
            (java.io IOException ByteArrayInputStream DataInputStream)))
@@ -239,19 +237,6 @@
                                     (.close in)))))))
     producer))
 
-(defn- create-pooled-producer [^ProducerState state host port]
-  {:pool (pool-keyed/create-keyed-obj-pool (assoc state :pool-limit 2)
-                                           (fn [state [host port]] (tcp/wrap-exception #(create-producer state host port))) ;;create-f
-                                           (fn [_ _ v] (try
-                                                         (not (produce/producer-closed? (pool-api/pool-obj-val v)))
-                                                         (catch Exception e (do
-                                                                              (error (str "Ignored Exception " e) e)
-                                                                              false)))) ;;validate-f
-                                           (fn [_ _ v]
-                                             (tcp/wrap-exception produce/shutdown (pool-api/pool-obj-val v))) ;;destroy-f
-                                           )
-   :producer-key [host port]})
-
 (defn- get-or-create-producers!
   "If a producer is not present use dosync and commute to create a delayed producer
    returns [producers-cache-ref producer]  note producer can be nil"
@@ -269,7 +254,7 @@
                   (assoc-in prod-cache [host port] (delay
                                                      (do
                                                        (info "Creating producer " host " " port)
-                                                       [(create-pooled-producer state host port)])))
+                                                       [(create-producer state host port) (create-producer state host port)])))
                   prod-cache))))
           [producers-cache-ref (null-safe-deref (-> producers-cache-ref deref (get host) (get port)))]))
       (catch Exception e
@@ -279,15 +264,6 @@
           (error e e)
           [producers-cache-ref nil])))))
 
-(defn- send-messages [{:keys [pool producer-key]} state msgs]
-  (let [pooled-obj (pool-api/poll pool producer-key 30000)
-        producer (pool-api/pool-obj-val pooled-obj)]
-
-    (try
-      (produce/send-messages producer (:conf state) msgs)
-      (finally
-        (pool-api/return pool producer-key pooled-obj)))))
-
 (defn- send-data [^ProducerState state partition-rc topic msgs]
   (let [[producers-cache-ref prods] (get-or-create-producers! state partition-rc)
         prod (rand-nth prods)]
@@ -295,7 +271,7 @@
       (try
         (do
           (.incrementAndGet ^AtomicLong (:activity-counter state))
-          (send-messages prod state msgs)
+          (produce/send-messages prod (:conf state) msgs)
           (assoc state :producers-cache-ref producers-cache-ref))
         (catch Exception e
           (.printStackTrace e)
