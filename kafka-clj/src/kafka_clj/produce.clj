@@ -238,8 +238,7 @@
                                   (tcp/close! client)
                                   (throw so))))))
 
-(defn metadata-request
-  -producer
+(defn metadata-request-producer
   "Returns a producer with a metadata-response-decoder set"
   [host port conf]
   (if (not host)
