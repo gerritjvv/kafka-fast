@@ -232,10 +232,14 @@
   [{:keys [client]} conf]
   (let [buff (Unpooled/buffer)
         _ (do (with-size buff write-metadata-request conf))]
-    (tcp/write! client buff :flush true)))
+    (try
+      (tcp/write! client buff :flush true)
+      (catch SocketException so (do
+                                  (tcp/close! client)
+                                  (throw so))))))
 
-
-(defn metadata-request-producer
+(defn metadata-request
+  -producer
   "Returns a producer with a metadata-response-decoder set"
   [host port conf]
   (if (not host)
