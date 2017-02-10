@@ -407,7 +407,7 @@ Note that the SASL mechanism in kafka 0.9.0 is not compatible with that of 0.10.
 |:conf :send-cache-expire-after-write | 5 | seconds to expire an entry after write |
 |:conf :send-cache-expire-after-access | 5 | seconds to expire an entry after read |
 |:conf :consume-step | 100000 | The max number of messages to consume in a single work unit |
-|:conf:redis-conf | ```:redis-conf {:host "localhost" :max-active 10 :timeout 500}``` | The redis configuration for the consumer |
+|:conf:redis-conf | ```:redis-conf {:host "localhost" :max-active 10 :timeout 500}``` | The redis configuration for the consumer, to use sentinel do {:master-name "sentinel-master" :sentinel-addresses ["host1" "host2"]} |
 |:conf :reset-ahead-offsets | ```:reset-ahead-offsets true``` default is false | If the brokers during restarts report a lower offset than is saved, we reset the read offset to that of the max reported broker offset for a topic/partition see https://github.com/gerritjvv/kafka-fast/issues/10 |
 |:conf :consumer-threads | 2 | number of background threads doing fetching from kafka |
 |:conf :redis-fetch-threads | 1 | number of background threads that fetch workunits from redis parallel |
