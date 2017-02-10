@@ -99,7 +99,7 @@
   (cond
     (nil? v) (into-array String [])
     (string? v) (into-array String [v])
-    (into-array String v)))
+    :else (into-array String v)))
 
 (defn ^Config create-sentinal-config [redis-conf]
   {:pre [(vector (:sentinel-addresses redis-conf)) (:master-name redis-conf)]}
