@@ -23,7 +23,9 @@
              ;"-Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf"
              ]
 
-  :profiles {:repl {:jvm-opts [
+  :profiles {:uberjar {:aot :all}
+
+             :repl {:jvm-opts [
                                "-Xmx512m"
                                "-Dsun.security.krb5.debug=true"
                                "-Djava.security.debug=gssloginconfig,configfile,configparser,logincontext"
@@ -31,6 +33,7 @@
                                "-Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf"
                                ]}}
 
+  :main kafka-clj.kafkafast-main
   :plugins [[lein-midje "3.2.1"]
             [lein-kibit "0.0.8"]]
   :test-paths ["test" "test-java"]
