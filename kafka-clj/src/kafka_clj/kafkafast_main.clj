@@ -4,9 +4,9 @@
   (:gen-class))
 
 
-(defn read-redis-queue [[host from limit & _]]
+(defn read-redis-queue [[host from limit & {:strs [password] :or {password nil}}]]
 
-  (let [redis-conn (redis-core/create {:host host})
+  (let [redis-conn (redis-core/create {:host host :password password})
         data (redis-core/wcar redis-conn (redis-api/-lrange redis-conn "etl-kafka-work-queue" from limit))]
 
     (doseq [item data]
