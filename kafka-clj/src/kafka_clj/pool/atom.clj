@@ -97,6 +97,7 @@
   "arg: AtomPool
    return a PoolObj"
   [{:keys [ctx queue create-f ^Semaphore sem closed-atom]} timeout-ms]
+
   (if (atom-closed? closed-atom)
     (throw (RuntimeException. "Pool is closed"))
     (if

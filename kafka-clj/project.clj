@@ -1,4 +1,4 @@
-(defproject kafka-clj "4.0.0"
+(defproject kafka-clj "4.0.2-SNAPSHOT"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -14,16 +14,16 @@
 
   :java-source-paths ["java"]
 
-  :jvm-opts ["-Xmx1g" "-server"
+  :profiles {:test {:jvm-opts ["-Xmx1g" "-server"
 
-             ;;------- Properties for kerberos authentication
-             ;"-Dsun.security.krb5.debug=true"
-             ;"-Djava.security.debug=gssloginconfig,configfile,configparser,logincontext"
-             ;"-Djava.security.auth.login.config=/vagrant/vagrant/config/kafka_client_jaas.conf"
-             ;"-Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf"
-             ]
+                               ;;------- Properties for kerberos authentication
+                               ;"-Dsun.security.krb5.debug=true"
+                               ;"-Djava.security.debug=gssloginconfig,configfile,configparser,logincontext"
+                               ;"-Djava.security.auth.login.config=/vagrant/vagrant/config/kafka_client_jaas.conf"
+                               ;"-Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf"
+                               ]}
 
-  :profiles {:uberjar {:aot :all}
+             :uberjar {:aot :all}
 
              :repl {:jvm-opts [
                                "-Xmx512m"
@@ -31,19 +31,36 @@
                                "-Djava.security.debug=gssloginconfig,configfile,configparser,logincontext"
                                "-Djava.security.auth.login.config=/vagrant/vagrant/config/kafka_client_jaas.conf"
                                "-Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf"
-                               ]}}
+                               ]}
 
-  :main kafka-clj.kafkafast-main
+             :vagrant-digital {
+                               :jvm-opts [
+                                          ;"-Dcom.sun.management.jmxremote.port=8855"
+                                          "-Dcom.sun.management.jmxremote.authenticate=false"
+                                          "-Dcom.sun.management.jmxremote.ssl=false"
+                                          "-server" "-Xms8g" "-Xmx8g"]
+                               :main kafka-clj.app
+                               }
+             }
+
+  :main kafka-clj.app
+
   :plugins [[lein-midje "3.2.1"]
             [lein-kibit "0.0.8"]]
+
   :test-paths ["test" "test-java"]
+
   :dependencies [
+                 [tcp-driver "0.1.2-SNAPSHOT"]
+
                  [com.taoensso/carmine "2.15.0" :exclusions [org.clojure/clojure]]
                  [org.redisson/redisson "3.2.2" :exclusions [io.netty/netty-buffer]]
 
                  [com.alexkasko.unsafe/unsafe-tools "1.4.4"]
 
                  [criterium "0.4.4" :scope "test"]
+
+                 [prismatic/schema "1.1.3"]
                  [org.mapdb/mapdb "1.0.9"]
                  [org.xerial.snappy/snappy-java "1.1.2.4"]
 

@@ -6,19 +6,19 @@
             [clj-tuple :refer [tuple]]
             [kafka-clj.msg-persist :refer [cache-sent-messages create-send-cache]]
             [kafka-clj.tcp :as tcp]
-            [kafka-clj.protocol :as protocol])
+            [kafka-clj.protocol :as protocol]
+            [tcp-driver.io.stream :as driver-io]
+            [tcp-driver.io.stream :as tcp-stream]
+            [tcp-driver.driver :as tcp-driver]
+            [kafka-clj.msg-persist :as persist])
   (:import
-    (java.net Socket SocketException)
-           [java.util.concurrent.atomic AtomicLong AtomicInteger]
-           [io.netty.buffer ByteBuf Unpooled ByteBufAllocator UnpooledByteBufAllocator PooledByteBufAllocator]
-           [kafka_clj.util Util]
-           (java.io ByteArrayInputStream DataInputStream)))
+    [io.netty.buffer ByteBuf ByteBufAllocator]
+    [kafka_clj.util Util]
+    (java.util Map)))
 
 (defonce ^:constant API_KEY_PRODUCE_REQUEST protocol/API_KEY_PRODUCE_REQUEST)
 (defonce ^:constant API_KEY_FETCH_REQUEST protocol/API_KEY_FETCH_REQUEST)
 (defonce ^:constant API_KEY_OFFSET_REQUEST protocol/API_KEY_OFFSET_REQUEST)
-(defonce ^:constant API_KEY_METADATA_REQUEST protocol/API_KEY_METADATA_REQUEST)
-(defonce ^:constant API_KEY_SASL_HANDSHAKE protocol/API_KEY_SASL_HANDSHAKE)
 
 
 (defonce ^:constant API_VERSION protocol/API_VERSION)
@@ -136,116 +136,16 @@
                      (for [[partition partition-msgs] partition-group]
                        (do (.writeInt buff (int partition)) ;partition
 
-                           ;TODO we have duplicate messages here
-
                            (if (= codec 0)
                              (with-size buff write-message-set correlation-id codec msgs)
                              (with-size buff write-compressed-message-set correlation-id codec msgs))))))))))))
 
-
-(defn read-response [{:keys [client]} timeout]
-  (let [{:keys [^Socket socket ^DataInputStream input]} client]
-    (when (not (.isClosed socket))
-      (loop [start-ts (System/currentTimeMillis)]
-        (if (> (.available input) 4)
-          (let [size (.readInt input)
-                bts (byte-array size)
-                _ (.read input bts)
-                btsIn (DataInputStream. (ByteArrayInputStream. bts))]
-            (try
-              (flatten (kafka-resp/in->kafkarespseq btsIn))
-              (finally
-                (.close btsIn))))
-          (when (<= (- (System/currentTimeMillis) start-ts) timeout)
-            (recur start-ts)))))))
-
-(defn- write-message-for-ack
+(defn write-message-for-ack
   "Writes the messages to the buff and send the results of [[offset msgs] ...] to the cache.
    This function always returns the msgs"
-  [connector conf msgs ^ByteBuf buff]
-  (if buff (cache-sent-messages connector (with-size buff write-request conf msgs)))
+  [cache-ctx conf msgs ^ByteBuf buff]
+  (when buff
+    (cache-sent-messages cache-ctx (with-size buff write-request conf msgs)))
   msgs)
 
-;this is only used with the single message producer api where ack > 0
-(def global-message-ack-cache (delay (create-send-cache {})))
 
-(defn send-messages
-  "Send messages by writing them to the tcp client.
-  The write is async.
-  If the conf properties acks is > 0 the messages will also be written to an inmemory cache,
-  the cache expires and has a maximum size, but it allows us to retry failed messages."
-  ([producer conf msgs]
-    (send-messages {:send-cache @global-message-ack-cache} producer conf msgs))
-  ([connector
-    {:keys [client]}
-    {:keys [acks] :or {acks 0} :as conf}
-    msgs]
-    (let [byte-buff (Unpooled/buffer)]
-      (if (> acks 0)
-        (write-message-for-ack connector conf msgs byte-buff)
-        (with-size byte-buff write-request conf msgs))
-
-      (if (:flush-on-write conf)
-        (tcp/write! client byte-buff :flush true)
-        (tcp/write! client byte-buff)))))
-
-(defn producer-closed? [producer]
-  (tcp/closed? (:client producer)))
-
-(defn producer
-  "returns a producer for sending messages, the decoder is a producer-response-decoder"
-  ([host port]
-    (producer host port {}))
-  ([host port conf]
-    (try
-      (let [c (tcp/tcp-client host port conf)]
-
-        (info "Creating client instance " host ":" port)
-        (->Producer c host port))
-      (catch Exception e (.printStackTrace e)))))
-
-
-
-;; ------- METADATA REQUEST API
-
-(defn write-metadata-request
-  "
-   RequestMessage => ApiKey ApiVersion CorrelationId ClientId RequestMessage
-    ApiKey => int16
-    ApiVersion => int16
-    CorrelationId => int32
-    ClientId => string
-    MetadataRequest => [TopicName]
-       TopicName => string
-   "
-  [^ByteBuf buff {:keys [correlation-id client-id] :or {correlation-id 1 client-id "1"}}]
-  (-> buff
-      (.writeShort (short API_KEY_METADATA_REQUEST))        ;api-key
-      (.writeShort (short API_VERSION))                     ;version api
-      (.writeInt (int correlation-id))                      ;correlation id
-      (write-short-string client-id)                        ;short + client-id bytes
-      (.writeInt (int 0))))                                 ;write empty topic, dont use -1 (this means nil), list to receive metadata on all topics
-
-
-(defn send-metadata-request
-  "Writes out a metadata request to the producer's client"
-  [{:keys [client]} conf]
-  (let [buff (Unpooled/buffer)
-        _ (do (with-size buff write-metadata-request conf))]
-    (try
-      (tcp/write! client buff :flush true)
-      (catch SocketException so (do
-                                  (tcp/close! client)
-                                  (throw so))))))
-
-(defn metadata-request-producer
-  "Returns a producer with a metadata-response-decoder set"
-  [host port conf]
-  (if (not host)
-    (throw (RuntimeException. (str "Nill host is not allowed here"))))
-
-  (let [c (tcp/tcp-client host port conf)]
-
-    (debug ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> creating conn " c)
-    (->Producer c host port)))
-      

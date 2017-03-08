@@ -1,0 +1,99 @@
+# encoding: utf-8
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+#### Provisions the following on digital ocean #################
+#### Total cost per hour 0.478 USD e.g 48 hours == 22.944 USD ##
+#| |Machine  || no || CPU || RAM ||
+#  | Brokers  | 3  |   2   | 4   |
+#  | ZK       | 1  |   2   | 2   |
+#  | Redis    | 1  |   2   | 2   |
+#  | Client   | 1  |   8   | 16  |
+#
+require 'yaml'
+
+configs        = YAML.load_file("#{Dir.home}/.vagrant.d/config.yaml")
+vagrant_config = configs['configs'][configs['configs']['use']]
+
+
+Vagrant.configure('2') do |config|
+
+  config.vm.define "client" do |config|
+
+      config.vm.synced_folder "../", "/vagrant",  type: "rsync", rsync__verbose: true, rsync__args: ["--compress", "--recursive", "--progress"], rsync__exclude: ["target/", "rpm/"]
+
+
+      config.vm.provision "shell", path: "scripts/init.sh"
+
+      config.vm.provision "shell", path: "scripts/client.sh"
+
+      config.vm.provider :digital_ocean do |provider, override|
+        override.ssh.private_key_path = '~/.ssh/id_rsa'
+        override.vm.box = 'digital_ocean'
+        override.vm.box_url = "https://github.com/devopsgroup-io/vagrant-digitalocean/raw/master/box/digital_ocean.box"
+        provider.token = vagrant_config['provider_token']
+        provider.image = 'ubuntu-16-10-x64'
+        provider.region = vagrant_config['region']
+        provider.size = '16gb'
+      end
+  end
+
+  config.vm.define "zookeeper" do |config|
+        config.vm.synced_folder ".", "/vagrant"
+        config.vm.provision "shell", path: "scripts/init.sh"
+
+        config.vm.provision "shell", path: "scripts/zookeeper.sh", args:"1"
+
+
+        config.vm.provider :digital_ocean do |provider, override|
+          override.ssh.private_key_path = '~/.ssh/id_rsa'
+          override.vm.box = 'digital_ocean'
+          override.vm.box_url = "https://github.com/devopsgroup-io/vagrant-digitalocean/raw/master/box/digital_ocean.box"
+          provider.token = vagrant_config['provider_token']
+          provider.image = 'ubuntu-16-10-x64'
+          provider.region = vagrant_config['region']
+          provider.size = '2gb'
+        end
+  end
+
+  # configure brokers
+    (1..3).each do |i|
+      config.vm.define "broker#{i}" do |s|
+        s.vm.provision "shell", path: "scripts/init.sh"
+
+        ## send the zookeeper address to the broker config
+        s.vm.provision "shell", path: "scripts/broker.sh", args: ["#{i}", "#{`vagrant ssh-config zookeeper | grep 'HostName' | awk '{print $2}' | tr '\n' ' '`}"]
+
+        s.vm.synced_folder ".", "/vagrant"
+
+        s.vm.provider :digital_ocean do |provider, override|
+            override.ssh.private_key_path = '~/.ssh/id_rsa'
+            override.vm.box = 'digital_ocean'
+            override.vm.box_url = "https://github.com/devopsgroup-io/vagrant-digitalocean/raw/master/box/digital_ocean.box"
+            provider.token = vagrant_config['provider_token']
+            provider.image = 'ubuntu-16-10-x64'
+            provider.region = vagrant_config['region']
+            provider.size = '4gb'
+        end
+      end
+  end
+
+  config.vm.define "services1" do |s|
+
+      #cluster will start redis cluster, any other value will start a single redis
+      s.vm.provision "shell", path: "scripts/services.sh", args:"single"
+      s.vm.synced_folder ".", "/vagrant"
+
+      s.vm.provider :digital_ocean do |provider, override|
+                  override.ssh.private_key_path = '~/.ssh/id_rsa'
+                  override.vm.box = 'digital_ocean'
+                  override.vm.box_url = "https://github.com/devopsgroup-io/vagrant-digitalocean/raw/master/box/digital_ocean.box"
+                  provider.token = vagrant_config['provider_token']
+                  provider.image = 'ubuntu-16-10-x64'
+                  provider.region = vagrant_config['region']
+                  provider.size = '2gb'
+      end
+  end
+
+
+end

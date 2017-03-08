@@ -1,46 +1,11 @@
 (ns kafka-clj.consumer.util
   (:require
-    [kafka-clj.fetch :refer [create-offset-producer] :as fetch]
-    [clojure.core.async :refer [timeout alts!!]]
+    [kafka-clj.fetch :as fetch]
     [clojure.tools.logging :refer [info error debug]]
-    [kafka-clj.metadata :as meta]
-    [kafka-clj.tcp :as tcp]))
+    [kafka-clj.metadata :as kafka-metadata]
+    [schema.core :as s]
+    [kafka-clj.schemas :as schemas]))
 
-
-(defn get-create-offset-producer [offset-producers-ref broker conf]
-  (if-let [producer (get @offset-producers-ref broker)]
-    producer
-    (get
-      (dosync
-        (alter offset-producers-ref
-               (fn [m]
-                 (if-let [producer (get m broker)]
-                   m
-                   (assoc m broker (create-offset-producer broker conf))))))
-      broker)))
-
-(defn get-offset-producer!
-  "Get a producer, if closed we remove the broker from the offset-producers-ref
-   and shutdown the producer associated and return nil,
-   this will allow the producer to be blacklisted first, and then
-   at a later timeout to recreate the producer, this behaviour avoids
-   bursts of close/create sequences which could make the application unstable."
-  [offset-producers-ref broker conf]
-  (let [producer (get-create-offset-producer offset-producers-ref broker conf)]
-    (if (fetch/offset-producer-closed? producer)
-      (do                                                   ;check for closed
-        (dosync                                             ;if so remove broker and close producer
-          (alter offset-producers-ref dissoc broker))
-        (fetch/shutdown-offset-producer producer)
-        nil)
-      producer)))
-
-(defn get-offsets [offset-producer topic partitions]
-  "returns [{:topic topic :partitions {:partition :error-code :offsets}}]"
-  ;we should send format [[topic [{:partition 0} {:partition 1}...]] ... ]
-
-  (fetch/send-offset-request offset-producer [[topic (map (fn [x] {:partition x}) partitions)]] )
-  (fetch/read-offset-response offset-producer))
 
 (defn transform-offsets [topic offsets-response {:keys [use-earliest] :or {use-earliest true}}]
   "Transforms [{:topic topic :partitions {:partition :error-code :offsets}}]
@@ -55,30 +20,62 @@
                 :locked false
                 :partition partition}))}))
 
-(defn get-broker-offsets [{:keys [offset-producers blacklisted-offsets-producers-ref]} metadata topics conf]
+
+(defn get-offsets [metadata-connector host-address topic partitions]
+  {:pre [metadata-connector
+         (s/validate schemas/TOPIC-SCHEMA topic)
+         (s/validate [schemas/PARITION-SEGMENT] partitions)]}
+  "returns [{:topic topic :partitions {:partition :error-code :offsets}}]"
+  ;we should send format [[topic [{:partition 0} {:partition 1}...]] ... ]
+
+  (transform-offsets topic
+                     (fetch/send-recv-offset-request
+                       metadata-connector
+                       host-address
+                       [[topic partitions]])
+                     (:conf metadata-connector)))
+
+(defn get-broker-offsets
+  "
+   metadata  {\"abc\" [{:host \"localhost\", :port 50738, :isr [{:host \"localhost\", :port 50738}], :id 0, :error-code 0}]}
+  "
+  [{:keys [metadata-connector]} metadata topics conf]
+  {:pre [metadata-connector
+         (s/validate (s/either [s/Str] #{s/Str}) topics)
+         (s/validate kafka-metadata/META-RESP-SCHEMA metadata)]}
   "Builds the datastructure {broker {topic [{:offset o :partition p} ...] }}"
-  (apply merge-with merge
-         (for [topic topics]
-           (let [topic-data (get metadata topic)
-                 by-broker (group-by second (map-indexed vector topic-data))]
-             (into {}
-                   (for [[broker v] by-broker :when (:host broker)]
-                     ;here we have data {{:host "localhost", :port 1} [[0 {:host "localhost", :port 1}] [1 {:host "localhost", :port 1}]], {:host "abc", :port 1} [[2 {:host "abc", :port 1}]]}
-                     ;doing map first v gives the partitions for a broker
-                     (do
-                       (try
-                         (let [offset-producer (get-create-offset-producer offset-producers broker conf)
 
-                               ;throw exception if the offset-producer is nil
-                               _ (if (not offset-producer) (throw (RuntimeException. (str "No producer found or bad producer connection for " broker))))
+  (let [topics-set (into #{} topics)
+        offset-fn (fn [topic partition-info]
+                    (let [
+                          ;;produce {broker [[broker {:partition 0}] [broker {:partition 1}]]}
+                          broker-partition-pairs (group-by first (map-indexed (fn [i host-info]
+                                                                                [host-info {:partition i}]) partition-info))
 
-                               offsets-response (get-offsets offset-producer topic (map first v))
-                               transformed-offsets (transform-offsets topic offsets-response conf)]
-
-                           (debug "offet-response: " [broker transformed-offsets])
-
-                           [broker transformed-offsets])
-                         (catch Exception e (do
-                                              (error e e)
-                                              (meta/black-list-producer! blacklisted-offsets-producers-ref {:host (:host broker) :port (:port broker)} e)
-                                              [broker nil]))))))))))
+                          ;;produce -> {broker {topic [{:offset offset :partition partition}]}} for the speficic topic
+                          offset-maps (reduce-kv (fn [m broker broker-partition-pairs]
+                                                   ;; broker-partition-pairs
+                                                   ;; [
+                                                   ;; [
+                                                   ;;  {:host "localhost", :port 51718, :isr [{:host "localhost", :port 51718}], :id 0, :error-code 0} {:partition 0}
+                                                   ;; ]
+                                                   ;; ]
+                                                   (assoc m
+                                                     broker
+                                                     (get-offsets metadata-connector
+                                                                  broker
+                                                                  topic ;;produce [{:partition N} ...]
+                                                                  (map second broker-partition-pairs))))
+                                                 {}
+                                                 broker-partition-pairs)]
+                      offset-maps))]
+    (reduce-kv
+      (fn [m topic partition-info]
+        (if (topics-set topic)                              ;;filter out any topics not in the topics-set
+          (merge-with
+            merge
+            m
+            (offset-fn topic partition-info))
+          m))
+      {}
+      metadata)))

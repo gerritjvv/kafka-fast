@@ -110,4 +110,19 @@ public class FetchState {
         return maxOffset;
     }
 
+    @Override
+    public String toString() {
+        return "FetchState{" +
+                "topic='" + topic + '\'' +
+                ", status=" + status +
+                ", partition=" + partition +
+                ", initOffset=" + initOffset +
+                ", offset=" + offset +
+                ", maxOffset=" + maxOffset +
+                ", delegate=" + delegate +
+                ", discarded=" + discarded +
+                ", minByteSize=" + minByteSize +
+                ", maxByteSize=" + maxByteSize +
+                '}';
+    }
 }
