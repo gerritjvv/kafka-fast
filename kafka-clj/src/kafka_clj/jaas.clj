@@ -212,7 +212,7 @@
     4. enabled_mechanisms => [STRING]"
   [conn timeout-ms]
   (let [len  (tcp-stream/read-int conn timeout-ms)
-        buff (Unpooled/wrappedBuffer (tcp-stream/read-bytes conn len timeout-ms))
+        ^ByteBuf buff (Unpooled/wrappedBuffer ^"[B" (tcp-stream/read-bytes conn len timeout-ms))
 
         corr-id (.readInt buff)
         error-code (.readShort buff)

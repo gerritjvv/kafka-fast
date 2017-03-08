@@ -102,7 +102,7 @@
 
   (doseq [[corr-id msgs] offsets]
     (let [{:keys [topic partition]} (first msgs)]
-      (.put (:cache send-cache) (str corr-id ":" topic ":" partition) msgs))))
+      (.put ^Map (:cache send-cache) (str corr-id ":" topic ":" partition) msgs))))
 
 (defn get-sent-message [{:keys [send-cache]} topic partition corr-id]
   "Return the messages from the cache if any, the key is also removed from the cache."

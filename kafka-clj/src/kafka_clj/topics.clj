@@ -109,4 +109,4 @@
       (tcp-stream/write-bytes conn bts)
 
       (let [len (tcp-stream/read-int conn timeout-ms)]
-            (read-create-topics-response (Unpooled/wrappedBuffer (tcp-stream/read-bytes conn len timeout-ms)))))))
+            (read-create-topics-response (Unpooled/wrappedBuffer ^"[B" (tcp-stream/read-bytes conn len timeout-ms)))))))
