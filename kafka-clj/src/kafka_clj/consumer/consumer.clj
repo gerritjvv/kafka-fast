@@ -1,21 +1,27 @@
 (ns
   ^{:author "gerritjvv"
-    :doc "Internal consumer code, for consumer public api see kafka-clj.node"}
+    :doc    "Internal consumer code, for consumer public api see kafka-clj.node"}
   kafka-clj.consumer.consumer
   (:require [kafka-clj.tcp :as tcp]
+            [kafka-clj.schemas :as schemas]
             [fun-utils.threads :as threads]
             [clojure.tools.logging :refer [error info warn debug]]
             [kafka-clj.fetch :as fetch]
             [clj-tuple :refer [tuple]]
             [kafka-clj.consumer.workunits :as wu-api]
-            [clojure.core.async :as async])
+            [clojure.core.async :as async]
+            [kafka-clj.metadata :as kafka-metadata]
+            [tcp-driver.driver :as tcp-driver]
+            [tcp-driver.io.stream :as tcp-stream]
+            [schema.core :as s])
   (:import (java.util.concurrent TimeUnit ExecutorService ThreadPoolExecutor ConcurrentHashMap)
-           (kafka_clj.util FetchState Fetch Fetch$Message Fetch$FetchError)
+           (kafka_clj.util FetchState Fetch Fetch$Message Fetch$FetchError Util)
            (clojure.core.async.impl.channels ManyToManyChannel)
            (java.net SocketException)
            (java.util.concurrent.atomic AtomicBoolean)
            (com.codahale.metrics MetricRegistry Meter ConsoleReporter)
-           (java.util ArrayList Map)))
+           (java.util Map)
+           (io.netty.buffer ByteBuf Unpooled)))
 
 ;;;;;;;;;;;;;;;
 ;;;;; Metrics
@@ -43,10 +49,12 @@
 (defn ^FetchState fetch-state
   "Creates a mutable initial state"
   [delegate-f {:keys [topic partition max-offset] :as m}]
-  (FetchState. delegate-f topic :ok (long partition) -1 (long max-offset)))
+  (let [state (FetchState. delegate-f topic :ok (long partition) -1 (long max-offset))]
+    (debug "fetch-state start with " m " return state " state)
+    state))
 
 (defn- update-offset! [^FetchState state ^long offset]
-      (doto state (.setOffset offset)))
+  (doto state (.setOffset offset)))
 
 (defn- print-discarded [^FetchState state]
   (when state
@@ -57,16 +65,18 @@
       state)))
 
 (defn- fetchstate->state-tuple
-      "Converts a FetchState into (tuple status offset maxoffset discarded min max processed-count)"
-      [^FetchState state]
-      (when (print-discarded state)
-        (tuple (.getStatus state)
-               (.getOffset state)
-               (.getMaxOffset state)
-               (.getDiscarded state)
-               (.getMinByteSize state)
-               (.getMaxByteSize state)
-               (- (.getOffset state) (.getInitOffset state)))))
+  "Converts a FetchState into (tuple status offset maxoffset discarded min max processed-count)"
+
+  ;[:ok offset: 3160955437 maxoffset: 3160955438 discarded: 128633 min: 512 max: 826 processed-count: 3160955438]
+  [^FetchState state]
+  (when (print-discarded state)
+    (tuple (.getStatus state)
+           (.getOffset state)
+           (.getMaxOffset state)
+           (.getDiscarded state)
+           (.getMinByteSize state)
+           (.getMaxByteSize state)
+           (- (.getOffset state) (.getInitOffset state)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;; Message Protocols
@@ -79,7 +89,7 @@
   (-msg-event [msg state] "Must return FetchState status can be :ok or :error"))
 
 (extend-protocol IMsgEvent
-  Fetch$Message                                           ;topic partition offset bts
+  Fetch$Message                                             ;topic partition offset bts
   (-msg-event [{:keys [^long offset ^"[B" bts] :as msg} ^FetchState state]
 
     (if (and (< offset (.getMaxOffset state)) (> offset (.getOffset state)))
@@ -104,17 +114,12 @@
    currently only ThreadPoolExecutor is supported"
   [^ExecutorService exec]
   (if (instance? ThreadPoolExecutor exec)
-    {:active-count (.getActiveCount ^ThreadPoolExecutor exec)
-     :core-pool-size (.getCorePoolSize ^ThreadPoolExecutor exec)
-     :pool-size (.getPoolSize ^ThreadPoolExecutor exec)
+    {:active-count             (.getActiveCount ^ThreadPoolExecutor exec)
+     :core-pool-size           (.getCorePoolSize ^ThreadPoolExecutor exec)
+     :pool-size                (.getPoolSize ^ThreadPoolExecutor exec)
      :queue-remaining-capacity (-> exec .getQueue .remainingCapacity)}
     {}))
 
-(defn- write-fetch-req!
-  "Write a fetch request to the connection based on wu"
-  [{:keys [conf]} conn {:keys [topic partition offset]}]
-  (debug "write-fetch-request topic: " topic " partition: " partition " offset: " offset)
-  (fetch/send-fetch {:client conn :conf conf} [[topic [{:partition partition :offset offset}]]]))
 
 (defn- start-wu-publisher! [state publish-exec-service exec-service handler-f]
   (let [^AtomicBoolean shutdown-flag (:shutdown-flag state)]
@@ -158,64 +163,62 @@
     (fetchstate->state-tuple                                ;convert FetchState to [status offset discarded min max]
       (Fetch/readFetchResponse
         (tcp/wrap-bts bts)
-        (fetch-state delegate-f wu)         ;mutable FetchState
+        (fetch-state delegate-f wu)                         ;mutable FetchState
         handle-msg-event))))
+
+(defn write-rcv-fetch-req! [state delegate-f {:keys [partition topic offset] :as wu} conn]
+  {:pre [(s/validate schemas/WORK-UNIT-SCHEMA wu)]}
+  (locking conn
+    (let [timeout-ms 60000
+          ^ByteBuf buff (Unpooled/buffer)
+          _ (do (fetch/write-fetch-request buff [[topic [{:partition partition :offset offset}]]] state))
+
+          _ (tcp-stream/write-bytes conn (Util/toBytes buff))
+
+          _ (tcp-stream/flush-out conn)
+
+          msg-len (tcp-stream/read-int conn timeout-ms)
+
+          resp (tcp-stream/read-bytes conn msg-len timeout-ms)]
+
+      (read-process-resp! delegate-f wu ^"[B" resp))))
 
 (defn process-wu!
   " Borrow a connection
     Write a fetch request
     Process the fetch request sending all messages to delegate-f
     Publish the wu as consumed to redis, or on error as error"
-  [state conn-pool delegate-f wu]
-  {:pre [conn-pool (get-in wu [:producer :host]) [get-in wu [:producer :port]]]}
+  [state metadata-connector delegate-f wu]
+  {:pre [(:driver metadata-connector)
+         (s/validate schemas/WORK-UNIT-SCHEMA, wu)]}
   (try
-    (debug "process-wu! " wu)
-    (let [{:keys [host port]} (:producer wu)
-          pooled-conn (tcp/borrow conn-pool host port)
-          conn (tcp/pool-obj-val pooled-conn)]
 
-      (when (nil? conn)
-        (throw (RuntimeException. (str "Now connection could be retreived from the connection pool for " host ":" port))))
+    (debug "processing-wu " wu)
 
-      (try
+    (let [timeout-ms 60000
+
+          ;;[status offset maxoffset discarded minbts maxbts offsets-read :as v]
+          [status offset _ _ _ _ offsets-read :as v] (tcp-driver/send-f (:driver metadata-connector)
+                                                                        (:producer wu) ;;send specifically to the producer :host :port for the work unit
+                                                                        (partial write-rcv-fetch-req! state delegate-f wu)
+                                                                        timeout-ms)]
+
+      (debug "got fetch response: static: " status " offset: " offset " offsets-read:" v)
+
+      (if (= :ok status)
         (do
-          (write-fetch-req! state conn wu)
-
-          (let [bts (tcp/read-response wu conn 60000)
-                _ (tcp/release conn-pool host port pooled-conn)     ;release the connection early
-                [status offset maxoffset discarded minbts maxbts offsets-read :as v] (read-process-resp! delegate-f wu bts)]
-
-            (debug "got fetch response: static: " status " offset: " offset " offsets-read:" v)
-            (if (= :ok status)
-              (do
-                (if (zero? (long offsets-read))
-                  (wu-api/publish-zero-consumed-wu! state wu) ;of no offsets were read, we need to mark the wu as zero consumed
-                  (wu-api/publish-consumed-wu! state wu (if (pos? offset) offset (:offset wu))))
-                v)
-              (do
-                (wu-api/publish-error-wu! state wu status offset)
-                nil))))
-        (catch SocketException _ (do
-                                   ;socket exceptions are common when brokers fall down, the best we can do is repush the work unit so that a new broker is found for it depending
-                                   ;on the metadata
-                                   (tcp/close! conn)
-                                   (tcp/invalidate! conn-pool host port pooled-conn)
-
-                                   (Thread/sleep 10)        ;sleep to avoid bursts
-                                   (error "Work unit " wu " refers to a broker " host port " that is down, pushing back for reconfiguration")
-                                   (wu-api/publish-error-consumed-wu! state wu)
-                                   nil))
-        (catch Throwable e (do (.printStackTrace e)
-                               (error e e)
-                               (tcp/release conn-pool host port pooled-conn)
-
-                               (wu-api/publish-error-consumed-wu! state wu)
-                               nil))))
+          (if (zero? (long offsets-read))
+            (wu-api/publish-zero-consumed-wu! state wu)     ;of no offsets were read, we need to mark the wu as zero consumed
+            (wu-api/publish-consumed-wu! state wu (if (pos? offset) offset (:offset wu))))
+          v)
+        (do
+          (wu-api/publish-error-wu! state wu status offset)
+          nil)))
     (catch Throwable ne (do
-                                       (.printStackTrace ne)
-                                       (error ne ne)
-                                       (wu-api/publish-zero-consumed-wu! state wu)
-                                       nil))))
+                          (.printStackTrace ne)
+                          (error ne ne)
+                          (wu-api/publish-zero-consumed-wu! state wu)
+                          nil))))
 
 
 (defonce ^Long TWENTY-MEGS 20971520)
@@ -228,18 +231,6 @@
   (if (and max-bytes (pos? max-bytes))
     (assoc-in state [:conf :max-bytes] max-bytes)
     state))
-
-(defn nil-safe-add [a b]
-  (cond
-    (and a b) (+ (long a) (long b))
-    a a
-    :else b))
-
-(defn nil-safe-sub [a b]
-  (cond
-    (and a b) (- (long a) (long b))
-    a a
-    :else b))
 
 (defn over-seconds-ago? [^long time-ms ^long seconds]
   (> (- (System/currentTimeMillis) time-ms) (* seconds 1000)))
@@ -293,8 +284,8 @@
 (defn auto-tune-fetch
   "Wraps around the process-wu! function and use the return state to calculate what the max-bytes in up comming fetch requests should be.
    "
-  [max-bytes-at state conn-pool delegate-f wu]
-  {:pre [(not (nil? conn-pool))]}
+  [max-bytes-at state metadata-connector delegate-f wu]
+  {:pre [metadata-connector]}
 
   (try
     (let [topic (:topic wu)
@@ -302,25 +293,26 @@
 
           [rem-max-bts _ _] (get-in @max-bytes-at [topic partition] DEFAULT-MAX-BTS-REM)
 
-          [_ offset maxoffset discarded minbts maxbts total-processed] (process-wu!
-                                                                         (update-state-max-bytes state
-                                                                                                 rem-max-bts)
-                                                                         conn-pool
-                                                                         delegate-f
-                                                                         wu)]
+          [_ offset maxoffset discarded minbts maxbts _] (process-wu!
+                                                           (update-state-max-bytes state rem-max-bts) ;;here we add :conf :max-bytes to state
+                                                           metadata-connector
+                                                           delegate-f
+                                                           wu)]
       (when discarded                                       ;test that any of the items exist and that nil wasn't returned from process-wu!
         (mark-min-bytes! topic minbts)
         (mark-max-bytes! topic maxbts)
 
-        (let [update-f  (cond
-                          (> (long discarded) 5)
-                          (do
-                            (debug "Adjusting dec " topic` " " partition "  max-bytes discarded " discarded " minbts " minbts " maxbts " maxbts " maxoffset " maxoffset " offset " offset)
+        (debug "max-bytes-at " @max-bytes-at)
+
+        (let [update-f (cond
+                         (> (long discarded) 5)
+                         (do
+                           (debug "Adjusting dec " topic `" " partition "  max-bytes discarded " discarded " minbts " minbts " maxbts " maxbts " maxoffset " maxoffset " offset " offset)
                            update-dec-rem)
-                          (> (- maxoffset offset) 5)
-                          (do
-                            (debug "Adjusting inc " topic " " partition "  max-bytes discarded " discarded " minbts " minbts " maxbts " maxbts)
-                            update-inc-rem))]
+                         (> (- maxoffset offset) 5)
+                         (do
+                           (debug "Adjusting inc " topic " " partition "  max-bytes discarded " discarded " minbts " minbts " maxbts " maxbts)
+                           update-inc-rem))]
 
           (when update-f
             (swap! max-bytes-at #(update-in % [topic partition] (with-default update-f DEFAULT-MAX-BTS-REM)))))))
@@ -344,9 +336,9 @@
 (defn update-work-unit-thread-stats!
   "Update the map work-unit-thread-stats with key=<thread-name> value={:ts <timestamp> wu: <work-unit> :duration <ts-ms>}"
   [^Map work-unit-thread-stats start-ts end-ts wu]
-  (.put work-unit-thread-stats (.getName (Thread/currentThread)) {:ts start-ts
+  (.put work-unit-thread-stats (.getName (Thread/currentThread)) {:ts       start-ts
                                                                   :duration (- (long end-ts) (long start-ts))
-                                                                  :wu wu})
+                                                                  :wu       wu})
   work-unit-thread-stats)
 
 (defn consume!
@@ -363,8 +355,11 @@
           this value should point to the jaas config file.
           for more information see http://docs.oracle.com/javase/7/docs/technotes/guides/security/jgss/tutorials/AcnOnly.html
   "
-  [{:keys [conf msg-ch work-unit-event-ch] :as state}]
-  {:pre [conf work-unit-event-ch msg-ch
+  [{:keys [conf msg-ch work-unit-event-ch metadata-connector] :as state}]
+  {:pre [metadata-connector
+         conf
+         work-unit-event-ch
+         msg-ch
          (instance? ManyToManyChannel msg-ch)
          (instance? ManyToManyChannel work-unit-event-ch)]}
 
@@ -381,7 +376,6 @@
 
           publish-exec-service (threads/create-exec-service redis-fetch-threads)
           shutdown-flag (AtomicBoolean. false)
-          conn-pool (tcp/tcp-pool conf)
 
           exec-service (threads/create-exec-service consumer-threads)
           delegate-f (if (get conf :consumer-reporting)
@@ -396,7 +390,7 @@
           ;;call update work-unit-stats and return the value of auto-tune-fetch
           wu-processor (fn [wu]
                          (let [start-ts (System/currentTimeMillis)
-                               v (auto-tune-fetch max-bytes-at state conn-pool delegate-f wu)]
+                               v (auto-tune-fetch max-bytes-at state metadata-connector delegate-f wu)]
 
                            ;;update stats!
                            (update-work-unit-thread-stats! work-unit-thread-stats start-ts (System/currentTimeMillis) wu)
@@ -406,12 +400,12 @@
 
       ;;for each fetch thread we start a fetcher on the publish-exec-service
       (dotimes [_ redis-fetch-threads]
-        (start-wu-publisher! (assoc state :shutdown-flag shutdown-flag)  publish-exec-service exec-service wu-processor))
+        (start-wu-publisher! (assoc state :shutdown-flag shutdown-flag) publish-exec-service exec-service wu-processor))
 
       (assoc state
         :publish-exec-service publish-exec-service
         :exec-service exec-service
-        :conn-pool conn-pool
+        :metadata-connector metadata-connector
         :shutdown-flag shutdown-flag
         :work-unit-thread-stats work-unit-thread-stats))))
 
@@ -425,17 +419,17 @@
 
 (defn consumer-pool-stats
   "Return a stats map for instances returned from the consume! function"
-  [{:keys [^ExecutorService exec-service conn-pool] :as conn}]
+  [{:keys [^ExecutorService exec-service] :as conn}]
   {:exec-service (thread-pool-stats exec-service)
-   :conn-pool (kafka-clj.pool.api/pool-stats conn-pool)
-   :fetch-stats (show-work-unit-thread-stats conn)})
 
-(defn close-consumer! [{:keys [publish-exec-service exec-service conn-pool ^AtomicBoolean shutdown-flag]}]
+   :fetch-stats  (show-work-unit-thread-stats conn)})
+
+(defn close-consumer! [{:keys [publish-exec-service exec-service metadata-connector ^AtomicBoolean shutdown-flag]}]
   (.set shutdown-flag true)
   (info "closing publish-exec-serivce")
   (threads/close! {:executor publish-exec-service} :timeout-ms 30000)
   (info "closing exec-serivce")
   (threads/close! {:executor exec-service} :timeout-ms 30000)
-  (info "closing conn-pool")
-  (tcp/close-pool! conn-pool)
+  (info "closing metadata-connector")
+  (kafka-metadata/close metadata-connector)
   (info "all consumer resources closed"))

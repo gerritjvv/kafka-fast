@@ -10,7 +10,7 @@
 ;;;;;;; Pool Object types
 
 ;;;; All pools must return objects of this type
-;;;; gen-ts the timestamp of thwne the PoolObj was first created
+;;;; gen-ts the timestamp of the the PoolObj was first created
 ;;;; ts is the timestamp when the PoolObj was created/or returned to the pool
 
 ;;;; v is untyped and is the actual type of the object pooled

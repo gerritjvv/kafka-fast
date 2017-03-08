@@ -1,0 +1,6 @@
+Getting zk ip
+Got zk ip 188.166.43.180 
+Creating topic 
+Exiting due to interrupt.
+Running lein run send on client 188.166.36.218,128.199.57.129,188.166.31.224 mytopic 8 1000000
+done

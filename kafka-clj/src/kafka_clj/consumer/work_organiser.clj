@@ -36,17 +36,17 @@
     [kafka-clj.consumer.util :as cutil]
     [clojure.tools.logging :refer [info debug error warn]]
     [kafka-clj.redis.core :as redis]
-    [kafka-clj.metadata :as meta]
+    [kafka-clj.metadata :as kafka-metadata]
     [fun-utils.cache :as cache]
-    [kafka-clj.produce :refer [metadata-request-producer] :as produce]
-    [kafka-clj.consumer.workunits :refer [wait-on-work-unit!]])
+    [kafka-clj.consumer.workunits :refer [wait-on-work-unit!]]
+    [schema.core :as s]
+    [kafka-clj.schemas :as schemas])
   (:import [java.util.concurrent Executors ExecutorService CountDownLatch TimeUnit]
            (java.util.concurrent.atomic AtomicBoolean)
            (java.util HashMap Map Date)))
 
 
 (declare get-offset-from-meta)
-(declare get-broker-from-meta)
 (declare close-organiser!)
 (declare add-offsets!)
 (declare calculate-work-units)
@@ -69,27 +69,25 @@
   "
    Deletes the work unit by doing nothing i.e the work unit will not get pushed to the work queue again"
   [{:keys [redis-conn error-queue]} wu]
-  (error "delete workunit error-code:1 " + wu)
+  (error "delete workunit error-code:1 " wu)
   (redis/lpush redis-conn error-queue (into (sorted-map) wu)))
 
 (defn- work-complete-fail!
   "
    Tries to recalcualte the broker
    Side effects: Send data to redis work-queue"
-  [{:keys [work-queue redis-conn] :as state} w-unit]
+  [{:keys [metadata-connector work-queue redis-conn conf] :as state} w-unit]
   (try
+    (kafka-metadata/update-metadata! metadata-connector conf)
+
     ;we try to recalculate the broker, if any exception we reput the w-unit on the queue
     (let [sorted-wu (into (sorted-map) w-unit)
-          broker (get-broker-from-meta state (:topic w-unit) (:partition w-unit))]
+          broker (kafka-metadata/get-cached-metadata metadata-connector (:topic w-unit) (:partition w-unit))]
       (redis/lpush redis-conn work-queue (assoc sorted-wu :producer broker))
       state)
     (catch Exception e (do
                          (error e e)
                          (redis/lpush redis-conn work-queue (into (sorted-map) w-unit))))))
-
-(defn- ensure-unique-id [w-unit]
-  ;function for debug purposes
-  w-unit)
 
 (defn- work-complete-ok!
   "If the work complete queue w-unit :status is ok
@@ -155,22 +153,6 @@
   (doto (Executors/newSingleThreadExecutor)
     (.submit (work-complete-loop state))))
 
-(defn start-metadata-unblacklist-processor!
-  "Creates a ExecutorService and starts the unblacklist metada producerrunning in a background thread
-   Returns the ExecutorService"
-  [metadata-producers-ref blacklisted-metadata-producers-ref conf]
-  (doto
-    (Executors/newSingleThreadScheduledExecutor)
-    (.scheduleWithFixedDelay
-      (fn []
-        (try
-          (meta/try-unblacklist! metadata-producers-ref blacklisted-metadata-producers-ref conf)
-          (catch InterruptedException _ nil)
-          (catch Exception e (error e e))))
-      10000
-      10000
-      TimeUnit/MILLISECONDS)))
-
 (defn calculate-work-units
   "Returns '({:topic :partition :offset :len :max-offset}) Len is exclusive"
   [producer topic partition ^Long max-offset ^Long start-offset ^Long step]
@@ -187,10 +169,9 @@
 (defn check-offset-in-range
   "Check that the saved-offset still exists on the brokers and if not
    get the earliest offset and start from there"
-  [state topic partition saved-offset]
+  [state min-kafka-offset topic partition saved-offset]
 
-  (let [earliest-offset  (get-offset-from-meta
-                           (update state :conf #(assoc % :use-earliest true)) topic partition)]
+  (let [earliest-offset  min-kafka-offset]
 
     (if (> earliest-offset saved-offset)
       (do
@@ -202,21 +183,25 @@
   "Returns the last saved offset for a topic partition combination
    If the partition is not found for what ever reason the latest offset will be taken from the kafka meta data
    this value is saved to redis and then returned"
-  [{:keys [group-name redis-conn] :as state} topic partition]
-  {:pre [group-name redis-conn topic partition]}
+  [{:keys [group-name redis-conn] :as state} [min-kafka-offset max-kafka-offset] topic partition]
+  {:pre [group-name redis-conn (:metadata-connector state) topic partition]}
+
   (let [offset (io!
                  (let [saved-offset (redis/wcar redis-conn (redis/get redis-conn (str "/" group-name "/offsets/" topic "/" partition)))]
                    (cond
-                     (not (nil? saved-offset)) (check-offset-in-range state topic partition (to-int saved-offset))
-                     :else (let [meta-offset (get-offset-from-meta state topic partition)]
+                     (not (nil? saved-offset)) (check-offset-in-range state min-kafka-offset topic partition (to-int saved-offset))
+                     :else (let [meta-offset (if (get-in state [:conf :use-earliest]) min-kafka-offset max-kafka-offset)]
+
                              (info "Set initial offsets [" topic "/" partition "]: " meta-offset)
                              (redis/wcar redis-conn (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) meta-offset))
                              meta-offset))))]
     offset))
 
-(defn add-offsets! [state topic offset-datum]
+(defn add-offsets! [state topic min-max-kafka-offsets offset-datum]
+  {:pre [(s/validate [s/Int] min-max-kafka-offsets)
+         (s/validate schemas/PARTITION-OFFSET-DATA offset-datum)]}
   (try
-    (assoc offset-datum :saved-offset (get-saved-offset state topic (:partition offset-datum)))
+    (assoc offset-datum :saved-offset (get-saved-offset state min-max-kafka-offsets topic (:partition offset-datum)))
     (catch Throwable t (do (.printStackTrace t) (error t t) nil))))
 
 (defn max-value
@@ -239,7 +224,8 @@
         ;here we add offsets as saved-offset via the add-offset function
         ;note that this function will also write to redis
         (filter (fn [x] (and x (:saved-offset x) (:offset x) (< ^Long (:saved-offset x) ^Long (:offset x))))
-                (map (partial add-offsets! state topic) offset-data))
+                (map #(do
+                        (add-offsets! state topic [(apply (fnil min 0) (:all-offsets %)) (:offset %)] %)) offset-data))
 
         consume-step2 (if consume-step consume-step (get conf :consume-step 100000))]
 
@@ -257,33 +243,19 @@
                       (redis/lpush* redis-conn work-queue (map #(assoc (into (sorted-map) %) :producer broker :ts ts) work-units))
                       (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) max-offset)))))))
 
-(defn get-offset-from-meta [{:keys [conf] :as state} topic partition]
-  (let [meta (meta/get-metadata! state conf)
-        offsets (cutil/get-broker-offsets state meta [topic] conf)
-        partition-offsets (->> offsets vals (mapcat #(get % topic)) (filter #(= (:partition %) partition)) first :all-offsets)]
-
-    (if (empty? partition-offsets)
-      (throw (ex-info "No offset data found" {:topic topic :partition partition :offsets offsets})))
-
-    (debug "get-offset-from-meta: conf: " (keys conf) " use-earliest: " (:use-earliest conf) " partition-offsets " partition-offsets)
-
-    (if (= true (:use-earliest conf)) (apply min partition-offsets) (apply max partition-offsets))))
+;(defn get-offset-from-meta [{:keys [metadata-connector conf]} topic partition]
+;  {:pre [metadata-connector conf (string? topic) (number? partition)]}
+;
+;  (let [partition-offsets (:all-offsets (kafka-metadata/get-cached-metadata metadata-connector topic partition))]
+;
+;    (if (empty? partition-offsets)
+;      (throw (ex-info "No offset data found" {:topic topic :partition partition :offsets partition-offsets})))
+;
+;    (debug "get-offset-from-meta: conf: " (keys conf) " use-earliest: " (:use-earliest conf) " partition-offsets " partition-offsets)
+;
+;    (if (= true (:use-earliest conf)) (apply min partition-offsets) (apply max partition-offsets))))
 
 (defn- topic-partition? [m topic partition] (filter (fn [[t partition-data]] (and (= topic t) (not-empty (filter #(= (:partition %) partition) partition-data)))) m))
-
-(defn get-broker-from-meta [{:keys [conf blacklisted-metadata-producers-ref blacklisted-offsets-producers-ref] :as state} topic partition & {:keys [retry-count] :or {retry-count 0}}]
-  (let [meta (meta/get-metadata! state conf)
-        offsets (cutil/get-broker-offsets state meta [topic] conf)
-        ;;all this to get the broker ;;{{:host "gvanvuuren-compile", :port 9092} {"test" ({:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 0} {:offset 7, :all-offsets (7 0), :error-code 0, :locked false, :partition 1})}}
-        brokers (filter #(not (nil? %)) (map (fn [[broker data]] (if (not-empty (topic-partition? data topic partition)) broker nil)) offsets))]
-
-    (if (empty? brokers)
-      (if (> retry-count 2)
-        (throw (ex-info "No broker data found" {:topic topic :partition partition :offsets offsets}))
-        (get-broker-from-meta state topic partition :retry-count (inc retry-count)))
-      ;; no blacklisting methods work here, rember to remove blacklisted-offsets-producers-ref
-      ;; we can only try rand-nth and hope for the best.
-      (rand-nth brokers))))
 
 (defn _max-offset
   "
@@ -301,17 +273,12 @@
   (redis/wcar redis-conn
               (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) offset)))
 
-(defn safe-max
-  ([a] a)
-  ([a b] (max a b))
-  ([a b & xs] (max a b xs)))
-
 (defn check-invalid-offsets!
   "Check for https://github.com/gerritjvv/kafka-fast/issues/10
    if a saved-offset > max-offset the redis offset is reset
    optional args
       redis-f (fn [redis-conn group-name topic partition offset] ) used to save the offset, the default impl is used to save to redis
-      get-saved-offset (fn [state topic partition] ) get the last saved offset, default impl is get-saved-offset
+      get-saved-offset (fn [state max-kafka-offset topic partition] ) get the last saved offset, default impl is get-saved-offset
 
       stats-atom (atom (map usefullstats))"
   [{:keys [group-name redis-conn stats-atom] :as state} read-ahead-offsets offsets & {:keys [redis-f saved-offset-f] :or {redis-f redis-offset-save saved-offset-f get-saved-offset}}]
@@ -321,10 +288,17 @@
     ;;conflicting data by multiple brokers
     (doseq [[_ topic-data] offsets]
       (doseq [[topic offset-data] topic-data]
+
         (doseq [{:keys [partition all-offsets]} offset-data]
-          (let [k {:topic topic :partition partition}]
-            (.put m k (_max-offset (.get m k) [(saved-offset-f state topic partition)
-                                               (apply safe-max all-offsets)]))))))
+          (let [k {:topic topic :partition partition}
+                max-kafka-offset (apply (fnil max 0) all-offsets)
+                min-kafka-offset (apply (fnil min 0) all-offsets)]
+
+            (.put m k (_max-offset (.get m k) [(saved-offset-f state
+                                                               [min-kafka-offset max-kafka-offset]
+                                                               topic
+                                                               partition)
+                                               max-kafka-offset]))))))
 
     (doseq [[{:keys [topic partition]} [saved-offset max-offset]] m]
       (when (> saved-offset max-offset)
@@ -339,34 +313,50 @@
    For topics new work is calculated depending on the metadata returned from the producers
 
    stats is an atom that contains a map of adhoc stats which might be of interest to the user"
-  [{:keys [metadata-producers-ref conf error-handler stats-atom] :as state} topics]
-  {:pre [metadata-producers-ref conf stats-atom]}
+  [{:keys [metadata-connector conf error-handler stats-atom] :as state} topics]
+  {:pre [metadata-connector conf stats-atom]}
   (try
 
-    (let [meta (meta/get-metadata! state conf)
-          offsets (cutil/get-broker-offsets state meta topics conf)]
+    (let [meta (kafka-metadata/update-metadata! metadata-connector conf)
+
+          offsets (cutil/get-broker-offsets state meta topics conf)
+
+          offset-send-f (fn [broker topic offset-data]
+                          (try
+                            ;we map :offset to max of :offset and :all-offets
+                            (send-offsets-if-any! state broker topic (map #(assoc % :offset (apply max (:offset %) (:all-offsets %))) offset-data))
+                            (catch Exception e (do (error e e) (.printStackTrace e) (if error-handler (error-handler :meta state e))))))]
+
+
+      ;; meta
+      ;;{
+      ;; {:host "localhost", :port 52031, :isr [{:host "localhost", :port 52031}], :id 0, :error-code 0}
+      ;; {"1487198655207"
+      ;;  ({:offset 0, :all-offsets (10000 0), :error-code 0, :locked false, :partition 0})}}
+
+
+      ;;offsets
+      ;;{
+      ;; {:host "localhost", :port 52031, :isr [{:host "localhost", :port 52031}], :id 0, :error-code 0}
+      ;; {"1487198655207"
+      ;;   ({:offset 0, :all-offsets (10000 0), :error-code 0, :locked false, :partition 0})
+      ;; }
+      ;;}
+
 
       ;;check for inconsistent offsets https://github.com/gerritjvv/kafka-fast/issues/10
       (check-invalid-offsets! state (get conf :reset-ahead-offsets false) offsets)
 
+      (reduce-kv (fn [_ broker topic-data]
+                   (reduce-kv (fn [_ topic offset-data]
+                                (offset-send-f broker topic offset-data)) nil topic-data)) nil offsets)
 
-      (doseq [[broker topic-data] offsets]
 
-        (doseq [[topic offset-data] topic-data]
-          (try
-            ;we map :offset to max of :offset and :all-offets
-            (send-offsets-if-any! state broker topic (map #(assoc % :offset (apply max (:offset %) (:all-offsets %))) offset-data))
-            (catch Exception e (do (error e e) (.printStackTrace e) (if error-handler (error-handler :meta state e)))))))
       state)
     (catch Exception e (do
                          (.printStackTrace e)
                          (error e e)
                          state))))
-
-(defn create-meta-producers!
-  "For each boostrap broker a metadata-request-producer is created"
-  [bootstrap-brokers conf]
-  (meta/bootstrap->producermap bootstrap-brokers conf))
 
 (defn create-organiser!
   "Create a organiser state that should be passed to all the functions were state is required in this namespace"
@@ -376,27 +366,32 @@
 
   (let [shutdown-flag (AtomicBoolean. false)
         shutdown-confirm (CountDownLatch. 1)
-        metadata-producers-ref (ref (create-meta-producers! bootstrap-brokers conf))
-        blacklisted-metadata-producers-ref (ref (cache/create-cache :expire-after-write (get conf :blacklisted-expire 10000)))
-        blacklisted-offsets-producers-ref (ref (cache/create-cache :expire-after-write (get conf :blacklisted-expire 10000)))
+
+        metadata-connector (kafka-metadata/connector bootstrap-brokers conf)
+
+        meta (kafka-metadata/update-metadata! metadata-connector conf)
+
         redis-conn (redis-factory redis-conf)
-        intermediate-state (assoc state :metadata-producers-ref metadata-producers-ref
-                                        :blacklisted-metadata-producers-ref blacklisted-metadata-producers-ref
-                                        :blacklisted-offsets-producers-ref blacklisted-offsets-producers-ref
-                                        :redis-conn redis-conn :offset-producers (ref {}) :shutdown-flag shutdown-flag :shutdown-confirm shutdown-confirm)
+        intermediate-state (assoc state :metadata-connector metadata-connector
+
+                                        :redis-conn redis-conn
+                                        :offset-producers (ref {})
+                                        :shutdown-flag shutdown-flag
+                                        :shutdown-confirm shutdown-confirm)
+
         work-complete-processor-future (start-work-complete-processor! intermediate-state)
-        unblack-list-processor-future (start-metadata-unblacklist-processor! metadata-producers-ref blacklisted-metadata-producers-ref conf)
+
         state (assoc intermediate-state
-                :unblack-list-processor-future unblack-list-processor-future
                 :work-assigned-flag (atom 0)
-                :work-complete-processor-future work-complete-processor-future)]
+                :work-complete-processor-future
+                work-complete-processor-future)]
 
     ;;if no metadata throw an exception and close the organiser
-    (when (nil? (meta/get-metadata! state conf))
+    (when (nil? meta)
       (try
         (close-organiser! state)
         (catch Exception e (error e e)))
-      (throw (ex-info (str "No metadata could be found from any of the bootstrap brokers provided " bootstrap-brokers) {:type              :metadata-exception
+      (throw (ex-info (str "No metadata could be found from any of the bootstrap brokers provided " bootstrap-brokers) {:type :metadata-exception
                                                                                                                         :bootstrap-brokers bootstrap-brokers})))
     state))
 
@@ -408,26 +403,23 @@
       (if (>= (- (System/currentTimeMillis) ts) timeout-ms)
         -1
         (do
-          ;(prn "waiting on work-assigned-flag: " @work-assigned-flag)
           (Thread/sleep 1000)
 
           (recur (System/currentTimeMillis)))))))
 
 (defn close-organiser!
   "Closes the organiser passed in"
-  [{:keys [metadata-producers-ref work-complete-processor-future unblack-list-processor-future
+  [{:keys [metadata-connector
+           work-complete-processor-future
            redis-conn ^AtomicBoolean shutdown-flag ^CountDownLatch shutdown-confirm]} & {:keys [close-redis] :or {close-redis true}}]
-  {:pre [metadata-producers-ref redis-conn
-         (instance? ExecutorService work-complete-processor-future)
-         (instance? ExecutorService unblack-list-processor-future)]}
+  {:pre [metadata-connector
+         redis-conn
+         (instance? ExecutorService work-complete-processor-future)]}
   (.set shutdown-flag true)
   (.await shutdown-confirm 10000 TimeUnit/MILLISECONDS)
-  (.shutdownNow ^ExecutorService unblack-list-processor-future)
   (.shutdown ^ExecutorService work-complete-processor-future)
 
-  (doseq [[_ producer] @metadata-producers-ref]
-    (when (realized? producer)                              ;only close a producer if it was realised
-      (produce/shutdown @producer)))
+  (kafka-metadata/close metadata-connector)
 
   (when close-redis
     (redis/close! redis-conn)))

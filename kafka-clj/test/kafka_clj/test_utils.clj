@@ -4,7 +4,8 @@
            [kafka_clj.util EmbeddedKafkaCluster EmbeddedZookeeper]
            [java.util Properties]
            (org.apache.log4j BasicConfigurator)
-           (redis.embedded.util JedisUtil)))
+           (redis.embedded.util JedisUtil)
+           (kafka.server KafkaServer)))
 
 ;;USAGE
 ;; (def state (start-up-resources))
@@ -70,8 +71,21 @@
    {:pre (coll? topics) (number? partition) (number? replication)}
    (.createTopics ^EmbeddedKafkaCluster (get-in resources [:kafka :kafka]) topics (int partition) (int replication))))
 
-(defn shutdown-random-kafka [resources]
-  (.shutdownRandom ^EmbeddedKafkaCluster (get-in resources [:kafka :kafka])))
+
+(defn startup-broker
+  "Use with shutdown-random-kafka to startup a KafkaServer that was shutdown"
+  [^KafkaServer broker]
+  (.startup broker))
+
+(defn ^KafkaServer shutdown-random-kafka [resources]
+  (let [^KafkaServer server (.shutdownRandom ^EmbeddedKafkaCluster (get-in resources [:kafka :kafka]))]
+    (.awaitShutdown server)
+    server))
+
+
+(defn add-kafka-node [resources]
+  (.addBroker ^EmbeddedKafkaCluster (get-in resources [:kafka :kafka])))
+
 
 (defn startup-resources
   "
@@ -105,7 +119,7 @@
    res {:kafka {:brokers [{:host <broker> :port <port>}]}}
    returns [{:host <broker> :port <port>}]"
   [res]
-  (get-in res [:kafka :brokers]))
+  (brokers-as-map (.getBrokerList ^EmbeddedKafkaCluster (:kafka (:kafka res)))))
 
 
 (defn with-resources

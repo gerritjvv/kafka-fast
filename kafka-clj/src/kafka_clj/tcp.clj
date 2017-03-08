@@ -21,13 +21,21 @@
     [kafka-clj.pool.keyed :as pool-keyed]
     [kafka-clj.pool.api :as pool-api]
     [kafka-clj.jaas :as jaas]
-    [clj-tuple :refer [tuple]])
+    [clj-tuple :refer [tuple]]
+    [tcp-driver.io.pool :as tcp-pool]
+    [tcp-driver.driver :as tcp-driver]
+    [tcp-driver.routing.retry :as retry]
+    [tcp-driver.routing.policy :as routing]
+    [tcp-driver.io.conn :as tcp-conn])
   (:import (java.net Socket SocketException InetSocketAddress)
            (java.io InputStream OutputStream BufferedInputStream BufferedOutputStream DataInputStream)
            (io.netty.buffer ByteBuf Unpooled)
            (kafka_clj.util IOUtil)
            (javax.security.auth.login LoginContext)
-           (javax.security.sasl SaslClient)))
+           (javax.security.sasl SaslClient)
+           (tcp_driver.io.pool IPool)
+           (kafka_clj.pool.api PoolObj)
+           (java.util.concurrent.atomic AtomicInteger)))
 
 (defrecord SASLCtx [^LoginContext login-ctx ^SaslClient sasl-client])
 
@@ -51,6 +59,20 @@
 
     socket))
 
+(defn check-sasl
+  "Returns c assoc :sasl-ctx where sasl-ctx contains or not the connected sasl connection if jaas is specified"
+  [{:keys [jaas kafka-version] :as conf} fqdn conn]
+  (let [sasl-ctx (when jaas
+                   (let [c (jaas/jaas-login jaas)
+
+                         sasl-client (jaas/sasl-client conf c fqdn)]
+
+                     (jaas/with-auth c                      ;;need to run handshake inside the subject doAs method
+                                     #(jaas/sasl-handshake! conn sasl-client 30000 :kafka-version kafka-version))
+                     (->SASLCtx c sasl-client)))]
+    (assoc conn :sasl-ctx sasl-ctx)))
+
+
 (defn tcp-client
   "Creates a tcp client from host port and conf
    InputStream is DataInputStream(BufferedInputStream) and output is BufferedOutputStream
@@ -61,7 +83,7 @@
 
    if jaas is specified and kafka 0.9.0 is used add :kafka-version \"0.9.0\" to the conf
    "
-  [host port {:keys [jaas kafka-version] :as conf}]
+  [host port conf]
   {:pre [(string? host) (number? port)]}
   (let [socket (open-socket host port conf)
 
@@ -71,18 +93,9 @@
                                 nil)
 
         fqdn (.getCanonicalHostName
-               (.getInetAddress socket))
+               (.getInetAddress socket)) ]
 
-        sasl-ctx (when jaas
-                   (let [c (jaas/jaas-login jaas)
-
-                         sasl-client (jaas/sasl-client conf c fqdn)]
-
-                     (jaas/with-auth c                      ;;need to run handshake inside the subject doAs method
-                                     #(jaas/sasl-handshake! tcp-client sasl-client 30000 :kafka-version kafka-version))
-                     (->SASLCtx c sasl-client)))]
-
-    (assoc tcp-client :sasl-ctx sasl-ctx)))
+    (check-sasl conf fqdn tcp-client)))
 
 (defn ^ByteBuf wrap-bts
   "Wrap a byte array in a ByteBuf"
@@ -97,26 +110,6 @@
 
 
 (def ^"[B" read-response kafka-clj.tcp-api/read-response)
-
-(defn closed-exception?
-  "Return true if the exception contains the word closed, otherwise nil"
-  [^Exception e]
-  (.contains (.toString e) "closed"))
-
-(defn read-async-loop!
-  "Only call this once on the tcp-client, it will create a background thread that exits when the socket is closed.
-   The message must always be [4 bytes size N][N bytes]"
-  [{:keys [^Socket socket ^DataInputStream input] :as conn} handler]
-  {:pre [socket input (fn? handler)]}
-  (future
-    (try
-      (while (not (closed? conn))
-        (try
-          (handler (read-response conn))
-          (catch Exception e
-            ;;only print out exceptions during debug
-            (debug "Timeout while reading response from producer broker " e))))
-      (catch SocketException e nil))))
 
 (def write! kafka-clj.tcp-api/write!)
 
@@ -146,21 +139,6 @@
   (.write ^BufferedOutputStream (:output tcp-client) bts))
 
 
-(defn tcp-pool
-  "Note that objects returned from this pool are PoolObj instances and to get at the tcp-conn we
-   need to use pool-obj-val"
-  [conf]
-  (pool-keyed/create-keyed-obj-pool conf
-                                    (fn [conf [host port]] (wrap-exception #(tcp-client host port conf))) ;;create-f
-                                    (fn [_ _ v] (try
-                                                  (not (closed? (pool-api/pool-obj-val v)))
-                                                  (catch Exception e (do
-                                                                       (error (str "Ignored Exception " e) e)
-                                                                       false)))) ;;validate-f
-                                    (fn [_ _ v]
-                                      (wrap-exception close! (pool-api/pool-obj-val v))) ;;destroy-f
-                                    ))
-
 (defn borrow
   ([obj-pool host port]
    (borrow obj-pool host port 10000))
@@ -172,20 +150,11 @@
   [pooled-obj]
   (pool-api/pool-obj-val pooled-obj))
 
-(defn invalidate! [obj-pool host port v]
-  (let [k (tuple host port)]
-    (pool-api/return obj-pool k v)
-    (pool-api/close-all obj-pool k)))
-
-
 (defn release [obj-pool host port v]
   (pool-api/return obj-pool (tuple host port) v))
 
 (defn close-pool! [obj-pool]
   (pool-api/close-all obj-pool))
-
-(defn ^ByteBuf empty-byte-buff []
-  (Unpooled/buffer))
 
 (extend-protocol kafka-clj.tcp-api/TCPWritable
 
@@ -203,3 +172,60 @@
   (-write! [obj tcp-client]
     (_write-bytes tcp-client (.getBytes ^String obj "UTF-8"))))
 
+;;(defprotocol ITCPConn
+;(-input-stream [this])
+;(-output-stream [this])
+;(-close [this])
+;(-valid? [this]))
+
+;(defrecord TCPClient [host port conf socket ^BufferedInputStream input ^BufferedOutputStream output sasl-ctx])
+
+(extend-protocol tcp-conn/ITCPConn
+
+  ;;driver returns a pool that returns IPool
+  PoolObj
+  (-input-stream [this]
+    (tcp-conn/-input-stream (pool-obj-val this)))
+
+  (-output-stream [this]
+    (tcp-conn/-output-stream (pool-obj-val this)))
+
+  (-close [this]
+    (tcp-conn/-close (pool-obj-val this)))
+
+  (-valid? [this]
+    (tcp-conn/-valid? (pool-obj-val this)))
+
+  TCPClient
+  (-input-stream [this]
+    (:input this))
+
+  (-output-stream [this]
+    (:output this))
+
+  (-close [this]
+    (close! this))
+
+  (-valid? [this]
+    (not (closed? this))))
+
+(defn fqn [^Socket socket]
+  (.getCanonicalHostName
+    (.getInetAddress socket)))
+
+(defn init-tcp-conn [conf conn]
+  (check-sasl conf (fqn (:socket conn)) conn))
+
+(defn driver
+  "
+     if jaas is specified in pool-conf it must point to a configuration section on the jaas and kerberos files defined as env properties
+        -Djava.security.auth.login.config=/vagrant/vagrant/config/kafka_client_jaas.conf
+        -Djava.security.krb5.conf=/vagrant/vagrant/config/krb5.conf
+
+        if jaas is specified and kafka 0.9.0 is used add :kafka-version \"0.9.0\" to the conf
+  "
+  [hosts & {:keys [routing-conf pool-conf retry-limit] :or {retry-limit 2 routing-conf {} pool-conf {}}}]
+  (tcp-driver/create-default hosts
+                             :pool-conf (merge pool-conf {:post-create-fn #(init-tcp-conn pool-conf (:conn %))})
+                             :routing-conf routing-conf
+                             :retry-limit retry-limit))

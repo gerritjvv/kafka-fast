@@ -56,14 +56,10 @@
    The topics can be polled from a configuration service like zookeeper or even a DB"
   [org topics & {:keys [freq] :or {freq 10000}}]
   {:pre [org topics]}
+
   (fixdelay-thread
     freq
     (safe-call work-calculate-delegate! org @topics)))
-
-(defn filter-is-map [wu]
-  (if (map? wu) true (do
-                       (error "Non map found in queue item: " wu)
-                       false)))
 
 (defn copy-redis-queue
   "This function copies data from one list/queue to another
@@ -147,6 +143,7 @@
         redis-conn (:redis-conn org)
         msg-ch (chan msg-ch-buff-size)
         consumer (consume! (assoc intermediate-conf
+                             :metadata-connector (:metadata-connector org) ;;re-use the connector pool and managed connections from the organiser
                              :redis-conn redis-conn
                              :msg-ch msg-ch
                              :work-unit-event-ch work-unit-event-ch))

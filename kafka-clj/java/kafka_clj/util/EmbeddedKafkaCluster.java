@@ -14,6 +14,7 @@ import scala.collection.mutable.ArraySeq;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Used for unit testing against kafka.<br/>
@@ -24,8 +25,6 @@ public class EmbeddedKafkaCluster {
     private final List<Integer> ports;
     private final String zkConnection;
     private final Properties baseProperties;
-
-    private final String brokerList;
 
     private final List<KafkaServer> brokers;
     private final List<File> logDirs;
@@ -57,10 +56,8 @@ public class EmbeddedKafkaCluster {
         this.zkConnection = zkConnection;
         this.ports = resolvePorts(ports);
         this.baseProperties = baseProperties;
-        this.brokers = new ArrayList<KafkaServer>();
-        this.logDirs = new ArrayList<File>();
-
-        this.brokerList = constructBrokerList(this.ports);
+        this.brokers = new CopyOnWriteArrayList<>();
+        this.logDirs = new CopyOnWriteArrayList<>();
     }
 
 
@@ -118,7 +115,7 @@ public class EmbeddedKafkaCluster {
         for (Integer port : ports) {
             resolvedPorts.add(resolvePort(port));
         }
-        return resolvedPorts;
+        return new CopyOnWriteArrayList<>(resolvedPorts);
     }
 
     /**
@@ -149,31 +146,8 @@ public class EmbeddedKafkaCluster {
      */
     public void startup() {
         for (int i = 0; i < ports.size(); i++) {
-            Integer port = ports.get(i);
-            File logDir = TestUtils.constructTempDir("kafka-local");
-
-            Properties properties = new Properties();
-            properties.putAll(baseProperties);
-            properties.setProperty("zookeeper.connect", zkConnection);
-            properties.setProperty("broker.id", String.valueOf(i + 1));
-            properties.setProperty("host.name", "localhost");
-            properties.setProperty("port", Integer.toString(port));
-            properties.setProperty("log.dir", logDir.getAbsolutePath());
-            System.out.println("EmbeddedKafkaCluster: local directory: " + logDir.getAbsolutePath());
-            properties.setProperty("log.flush.interval.messages", String.valueOf(1));
-
-            KafkaServer broker = startBroker(properties);
-
-            brokers.add(broker);
-            logDirs.add(logDir);
+            _addBroker(i);
         }
-    }
-
-
-    private KafkaServer startBroker(Properties props) {
-        KafkaServer server = new KafkaServer(new KafkaConfig(props), new SystemTime(), Option$.MODULE$.empty(), new ArraySeq<>(0));
-        server.startup();
-        return server;
     }
 
     /**
@@ -183,7 +157,7 @@ public class EmbeddedKafkaCluster {
     public Properties getProps() {
         Properties props = new Properties();
         props.putAll(baseProperties);
-        props.put("metadata.broker.list", brokerList);
+        props.put("metadata.broker.list", constructBrokerList(ports));
         props.put("zookeeper.connect", zkConnection);
         return props;
     }
@@ -193,7 +167,7 @@ public class EmbeddedKafkaCluster {
      * @return
      */
     public String getBrokerList() {
-        return brokerList;
+        return constructBrokerList(ports);
     }
 
     /**
@@ -201,7 +175,7 @@ public class EmbeddedKafkaCluster {
      * @return
      */
     public List<Integer> getPorts() {
-        return ports;
+        return Collections.unmodifiableList(ports);
     }
 
     /**
@@ -215,12 +189,25 @@ public class EmbeddedKafkaCluster {
     /**
      * Shutdown a random broker, used for testing
      */
-    public void shutdownRandom(){
+    public KafkaServer shutdownRandom(){
         int i = new Random().nextInt(brokers.size());
         KafkaServer broker = brokers.get(i);
         shutdownBroker(broker);
         broker.awaitShutdown();
+
+        return broker;
     }
+
+    /**
+     * Add a new broker at the first available port to the
+     * current cluster.
+     */
+    public void addBroker()
+    {
+        ports.add(resolvePort(-1));
+        _addBroker(ports.size()-1);
+    }
+
 
     private void shutdownBroker(KafkaServer broker){
         try {
@@ -250,8 +237,42 @@ public class EmbeddedKafkaCluster {
     @Override
     public String toString() {
         final StringBuilder sb = new StringBuilder("EmbeddedKafkaCluster{");
-        sb.append("brokerList='").append(brokerList).append('\'');
+        sb.append("brokerList='").append(constructBrokerList(ports)).append('\'');
         sb.append('}');
         return sb.toString();
     }
+
+
+    private void _addBroker(int i) {
+        Integer port = ports.get(i);
+        File logDir = TestUtils.constructTempDir("kafka-local");
+
+        Properties properties = getProperties(i, port, logDir);
+
+        KafkaServer broker = startBroker(properties);
+
+        brokers.add(broker);
+        logDirs.add(logDir);
+    }
+
+    private Properties getProperties(int i, Integer port, File logDir) {
+        Properties properties = new Properties();
+        properties.putAll(baseProperties);
+        properties.setProperty("zookeeper.connect", zkConnection);
+        properties.setProperty("broker.id", String.valueOf(i + 1));
+        properties.setProperty("host.name", "localhost");
+        properties.setProperty("port", Integer.toString(port));
+        properties.setProperty("log.dir", logDir.getAbsolutePath());
+        System.out.println("EmbeddedKafkaCluster: local directory: " + logDir.getAbsolutePath());
+        properties.setProperty("log.flush.interval.messages", String.valueOf(1));
+        return properties;
+    }
+
+
+    private KafkaServer startBroker(Properties props) {
+        KafkaServer server = new KafkaServer(new KafkaConfig(props), new SystemTime(), Option$.MODULE$.empty(), new ArraySeq<>(0));
+        server.startup();
+        return server;
+    }
+
 }

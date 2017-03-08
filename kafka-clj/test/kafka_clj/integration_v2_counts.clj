@@ -48,7 +48,7 @@
                                           [test-topic]))
                        (setup-test-data test-topic msg-count)))
     (after :facts (do
-                    (close @client-ref)
+                    ;(close @client-ref)
                     (shutdown-node! @node-ref)
                     (shutdown-resources @state-ref)))]
 
@@ -56,12 +56,19 @@
 
 
         ;allows us to wait till the work assignment has started
-        (wait-on-work-assigned-flag (:org @node-ref) 30000)
+        (wait-on-work-assigned-flag (:org @node-ref) 60000)
         (prn ">>>>>>>>>>>>>>>>>>> completed wait-on-work-assignment")
 
-        (let [msgs (read-messages @node-ref)]
-          (prn "->>>>>>>>>>>>>> got messages " (count msgs))
-          (count msgs) => msg-count)
+
+        (let [read-cnt (loop [cnt 0 i 0]
+                         (Thread/sleep 1000)
+                         (prn "Got " cnt " messages")
+                         (if (and
+                               (< cnt msg-count)
+                               (< i 30))
+                           (recur (+ cnt (count (read-messages @node-ref))) (inc i))
+                           cnt))]
+          read-cnt => msg-count)
 
 
         ;;test monitoring options

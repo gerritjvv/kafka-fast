@@ -26,8 +26,10 @@
   kafka-clj.topics
   (:require [kafka-clj.tcp-api :as tcp-api]
             [kafka-clj.buff-utils :as buff-utils]
-            [kafka-clj.protocol :as protocol])
-  (:import (io.netty.buffer ByteBuf Unpooled)))
+            [kafka-clj.protocol :as protocol]
+            [tcp-driver.io.stream :as tcp-stream])
+  (:import (io.netty.buffer ByteBuf Unpooled)
+           (kafka_clj.util Util)))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -78,27 +80,33 @@
    response => ( {:topic \"mytopic123\", :error_code 0})
 
    "
-  [client topics timeout-ms]
-  {:pre [(:output client)]}
+  [conn topics timeout-ms]
   (when (pos? (count topics))
     (let [create-structures (reduce #(conj %1 (create-topic-request-package %2)) [] topics)
 
-          ^ByteBuf buff (Unpooled/buffer)]
+          ^ByteBuf buff (Unpooled/buffer)
 
-      ;;; mutate buff:ByteBuff by writing requests to it, and
-      ;;; updating the first 4 bytes with the final size
-      (buff-utils/with-size buff
-                            (fn [^ByteBuf buff]
-                              (.writeShort buff (short protocol/API_CREATE_TOPICS))
-                              (.writeShort buff (short protocol/API_VERSION))
-                              (.writeInt buff (int (protocol/unique-corrid!)))
-                              (buff-utils/write-short-string buff nil)
+          _ (do
+              ;;; mutate buff:ByteBuff by writing requests to it, and
+              ;;; updating the first 4 bytes with the final size
+              (buff-utils/with-size buff
+                                    (fn [^ByteBuf buff]
+                                      (.writeShort buff (short protocol/API_CREATE_TOPICS))
+                                      (.writeShort buff (short protocol/API_VERSION))
+                                      (.writeInt buff (int (protocol/unique-corrid!)))
+                                      (buff-utils/write-short-string buff nil)
 
-                              (.writeInt buff (int (count create-structures)))
+                                      (.writeInt buff (int (count create-structures)))
 
-                              (doseq [create-structure create-structures]
-                                (create-topic-request buff create-structure timeout-ms))))
+                                      (doseq [create-structure create-structures]
+                                        (create-topic-request buff create-structure timeout-ms)))))
+
+          bts (Util/toBytes buff)]
 
 
-      (tcp-api/write! client buff :flush true)
-      (read-create-topics-response (Unpooled/wrappedBuffer (tcp-api/read-response nil client timeout-ms))))))
+
+
+      (tcp-stream/write-bytes conn bts)
+
+      (let [len (tcp-stream/read-int conn timeout-ms)]
+            (read-create-topics-response (Unpooled/wrappedBuffer (tcp-stream/read-bytes conn len timeout-ms)))))))

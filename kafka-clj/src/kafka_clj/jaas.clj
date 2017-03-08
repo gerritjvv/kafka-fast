@@ -25,10 +25,14 @@
            (io.netty.buffer ByteBuf Unpooled)
            (javax.security.auth.kerberos KerberosTicket)
            (java.io InputStream ByteArrayInputStream ByteArrayOutputStream)
-           (sun.misc HexDumpEncoder))
+
+           (sun.misc HexDumpEncoder)
+           (kafka_clj.util Util))
   (:require [clojure.tools.logging :refer [info error debug]]
             [kafka-clj.tcp-api :as tcp-api]
             [kafka-clj.protocol :as protocol]
+            [tcp-driver.driver :as tcp-driver]
+            [tcp-driver.io.stream :as tcp-stream]
             [kafka-clj.buff-utils :as buff-utils]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -46,6 +50,10 @@
                 (reify PrivilegedExceptionAction
                   (run [_]
                     (f)))))
+
+(defn readp-resp [conn timeout-ms]
+  (let [len (tcp-stream/read-int conn timeout-ms)]
+    (tcp-stream/read-bytes conn len timeout-ms)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;; public functions
@@ -129,18 +137,20 @@
 
 (defn send-read-data
   "Write [int size][client-resp] then read [int size][server resp]"
-  [client ^"[B" client-resp should-read]
+  [conn ^"[B" client-resp should-read timeout-ms]
   (debug "gssapi send to broker : " (as-hex client-resp))
 
-  (tcp-api/write-request! client client-resp)
+  (tcp-stream/write-int conn (count client-resp))
+  (tcp-stream/write-bytes conn client-resp)
+  (tcp-stream/flush-out conn)
 
   (when should-read
-    (let [resp (tcp-api/read-response client)]
+    (let [resp (readp-resp conn timeout-ms)]
       (debug "gssapi read from broker : " (as-hex resp))
       resp)))
 
-(defn handshake-loop! [client ^SaslClient sasl-client timeout-ms]
-  {:pre [client sasl-client (number? timeout-ms)]}
+(defn handshake-loop! [conn ^SaslClient sasl-client timeout-ms]
+  {:pre [conn sasl-client (number? timeout-ms)]}
 
   (let [current-ms (System/currentTimeMillis)]
 
@@ -158,7 +168,7 @@
                     ]
 
                 (if client-resp                             ;;if any client-resp data, send, but only if sasl-client is not complete
-                  (recur (send-read-data client client-resp (not (.isComplete sasl-client))) false)
+                  (recur (send-read-data conn client-resp (not (.isComplete sasl-client)) timeout-ms) false)
                   (recur server-resp false)))))))
 
 
@@ -172,22 +182,26 @@
     5. client_id => NULLABLE_STRING
     6. mechanism => String  \"GSSAPI\" or \"PLAIN\";
   "
-  [client]
-  (let [corr-id (protocol/unique-corrid!)]
+  [conn]
+  (let [corr-id (protocol/unique-corrid!)
+        buff (Unpooled/buffer)
+
+        _ (do
+            (buff-utils/with-size buff
+                                  (fn [^ByteBuf buff]
+                                    (.writeShort buff (short protocol/API_KEY_SASL_HANDSHAKE))
+                                    (.writeShort buff (short protocol/API_VERSION))
+                                    (.writeInt buff (int corr-id))
+                                    (buff-utils/write-short-string buff nil)
+                                    (buff-utils/write-short-string buff (str (first MECHS))))))]
+
     (info "Write request: " (short protocol/API_KEY_SASL_HANDSHAKE)
            " version " (int protocol/API_VERSION)
            " mechs " (str (first MECHS))
            " corr-id " corr-id)
 
-    (tcp-api/write! client
-                    (buff-utils/with-size (Unpooled/buffer)
-                                          (fn [^ByteBuf buff]
-                                            (.writeShort buff (short protocol/API_KEY_SASL_HANDSHAKE))
-                                            (.writeShort buff (short protocol/API_VERSION))
-                                            (.writeInt buff (int corr-id))
-                                            (buff-utils/write-short-string buff nil)
-                                            (buff-utils/write-short-string buff (str (first MECHS)))))
-                    :flush true)))
+    (tcp-stream/write-bytes conn (Util/toBytes ^ByteBuf buff))
+    (tcp-stream/flush-out conn)))
 
 (defn handshake-response!
   ";Response:
@@ -196,8 +210,9 @@
     3. error_code => INT16
        0 => None, 34 => InvalidSaslState, 35 => UnsupportedVersion
     4. enabled_mechanisms => [STRING]"
-  [client]
-  (let [buff (Unpooled/wrappedBuffer (tcp-api/read-response client))
+  [conn timeout-ms]
+  (let [len  (tcp-stream/read-int conn timeout-ms)
+        buff (Unpooled/wrappedBuffer (tcp-stream/read-bytes conn len timeout-ms))
 
         corr-id (.readInt buff)
         error-code (.readShort buff)
@@ -212,11 +227,14 @@
   "client: kafka-clj/tcp client
    sasl-client: jaas/sasl-client
    timeout-ms: timeout in milliseconds"
-  [client ^SaslClient sasl-client timeout-ms & {:keys [kafka-version] :or {kafka-version "0.10.0"}}]
+  [conn ^SaslClient sasl-client timeout-ms & {:keys [kafka-version] :or {kafka-version "0.10.0"}}]
+
+  (debug "sasl-handshake!: >>>>>>>>>>>>>>>>>>>>>>>>kafka-version: " kafka-version)
+
   (when (not (.contains (str kafka-version) "0.9"))
-    (handshake-request! client)
-    (handshake-response! client))
+    (handshake-request! conn)
+    (handshake-response! conn timeout-ms))
 
   ;;no exception means handshake is complete
-  (handshake-loop! client sasl-client timeout-ms))
+  (handshake-loop! conn sasl-client timeout-ms))
 

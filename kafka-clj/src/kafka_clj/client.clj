@@ -4,6 +4,7 @@
     [fun-utils.threads :as fthreads]
     [fun-utils.cache :as cache]
     [kafka-clj.produce :as produce]
+    [kafka-clj.buff-utils :refer [write-short-string with-size compression-code-mask]]
     [kafka-clj.response :as kafka-resp]
     [kafka-clj.tcp :as tcp]
     [kafka-clj.metadata :as meta]
@@ -12,22 +13,25 @@
     [clojure.tools.logging :refer [error info debug warn]]
     [com.stuartsierra.component :as component]
     [clj-tuple :refer [tuple]]
-    [clojure.core.async :as async])
+    [clojure.core.async :as async]
+    [kafka-clj.metadata :as kafka-metadata]
+    [tcp-driver.io.stream :as tcp-stream]
+    [tcp-driver.driver :as tcp-driver]
+    [schema.core :as s])
   (:import [java.util.concurrent.atomic AtomicLong AtomicBoolean]
            (java.util.concurrent Executors ScheduledExecutorService TimeUnit ThreadFactory ExecutorService CountDownLatch)
-           (java.io IOException ByteArrayInputStream DataInputStream)))
-
-(defonce ^Long PRODUCER_ERROR_BACKOFF_DEFAULT 2000)
+           (java.io ByteArrayInputStream DataInputStream)
+           (io.netty.buffer ByteBuf Unpooled)
+           (kafka_clj.util Util)
+           (java.util Map)))
 
 (defrecord ErrorCtx [code topic msgs])
 (defrecord ProducerState [conf
                           ^AtomicLong activity-counter
                           send-cache
                           retry-cahe
-                          producers-cache-ref
-                          metadata-producers-ref
-                          blacklisted-producers-ref
-                          brokers-metadata-ref
+                          metadata-connector
+                          ;send-connector
                           producer-error-ch])
 
 (declare handle-async-topic-messages)
@@ -43,71 +47,89 @@
     (dissoc m k)
     (assoc m k (dissoc-in (m k) ks))))
 
-(defn- healthy-partition-rc? [^ProducerState state {:keys [host port error-code]}]
+(defn- no-error-status [{:keys [error-code]}]
+  (if (number? error-code)
+    (let [error-code' (int error-code)]
+      (not
+        (or
+          (= error-code' 5)
+          (= error-code' 9))))
+    true))
+
+(defn- healthy-partition-rc? [{:keys [metadata-connector] :as state} node-data]
   (try
     ;we can have host and port nil here if the connection failed via an exception condition
+    ;(info "healthy-partition-rc? is-black-listed; " (kafka-metadata/blacklisted? metadata-connector (select-keys node-data [:host :port])) " host " (select-keys node-data [:host :port]))
     (and
-      host
-      port
-      (not (-> @(:blacklisted-producers-ref state) (get host) (get port)))
-      (not= error-code 5)
-      (not= error-code -1))
+      (:host node-data)
+      (:port node-data)
+      (no-error-status (:error-code node-data)))
+      (not (kafka-metadata/blacklisted? metadata-connector (select-keys node-data [:host :port])))
     (catch Exception e (do
-                         (error "NPE while querying " (:blacklisted-producers-ref state) " keys " (keys state) " host " host " port " port)
+                         (error (str "Error while querying keys " (keys state) " data " node-data) e)
                          false))))
 
 (defn create-topic-request
-  "Send a create topic request to the broker at host port and return true,
-   otherwise throw an exception"
-  [conf topic host port]
-  (let [client (tcp/tcp-client host port conf)]
-    (try
-      (let [resp (first (topics/create-topics client
-                                              [{:topic topic
-                                                :partitions (:default-partitions conf)
-                                                :replication-factor (:default-replication-factor conf)}]
-                                              10000))]
+  "Send a create topic request to a random broker and return true,
+   otherwise throw an exception
+   connector == kafka-clj.metadata/connector
+   "
+  [{:keys [metadata-connector]} topic]
 
-        (when-not (#{0 36} (:error_code resp))
-          (throw (RuntimeException. (str "Failed to create topic " topic " response " resp)))))
-      (finally
-        (tcp/close! client)))
+  {:pre [metadata-connector (:conf metadata-connector)]}
 
-    true))
+  (let [conf (:conf metadata-connector)
+        resp (tcp-driver/select-send! (:driver metadata-connector)
+                                      (fn [conn]
+                                        (first (topics/create-topics conn
+                                                                     [{:topic              topic
+                                                                       :partitions         (:default-partitions conf 1)
+                                                                       :replication-factor (:default-replication-factor conf 1)}]
+                                                                     10000)))
+                                      30000)]
+
+    (prn "create-topic-request resp " resp)
+    (when-not (#{0 36} (:error_code resp))
+      (throw (RuntimeException. (str "Failed to create topic " topic " response " resp))))))
 
 (defn try-create-topic
   "Return true if create-topic was called, otherwise an exception is thrown"
   [{:keys [state] :as connector} topic]
-  (let [topic-auto-create (get-in state [:conf :topic-auto-create])
-        {:keys [host port]} (rand-nth                       ;;get the host/port for any metadata producer
-                              (keys
-                                @(get state :metadata-producers-ref)))]
+  (let [topic-auto-create (get-in state [:conf :topic-auto-create])]
+
+    (prn "try-create-topic : topic-auto-create: " topic-auto-create)
 
     (if topic-auto-create
-      (create-topic-request (:conf state) topic host port)
+      (create-topic-request connector topic)
       (throw (RuntimeException. (str "No healthy brokers available for topic " topic " " connector))))))
 
 (defn send-msg
   "Sends a message async and returns false if the connection is closed
   Any errors uncrecoverable errors shuold be readh from the producer-error-ch"
-  [{:keys [state] :as connector} topic ^bytes bts]
+  [{:keys [state metadata-connector msg-ch] :as connector} topic ^bytes bts]
+
   (loop [retry 0]
     (if (and (-> state :conf :batch-fail-message-over-limit) (>= (count bts) ^long (-> state :conf :batch-byte-limit)))
       (throw (RuntimeException. (str "The message size [ " (count bts) " ] is larger than the configured batch-byte-limit [ " (get-in state [:conf :batch-byte-limit]) "]")))
+
       (if (first
             (filter
-              (partial healthy-partition-rc? state)
-              (get @(:brokers-metadata-ref state) topic)))
+              (partial healthy-partition-rc? connector)
+              (kafka-metadata/get-cached-metadata metadata-connector topic)))
         ;;checkin for boolean false here, aparently some code generated by clojure async in some versions and situations
         ;;always return nil so it is not matter if its closed or not nil is returned, later versions return TRUE
-        (when (= (async/>!! (:msg-ch connector) (produce/message topic -1 bts)) Boolean/FALSE)
+        (when (= (async/>!! msg-ch (produce/message topic -1 bts)) Boolean/FALSE)
           (throw (RuntimeException. "The client has been shutdown")))
 
         (if (pos? retry)
           (throw (RuntimeException. (str "No healthy brokers available for topic " topic " " connector)))
           (do
-            (try-create-topic connector topic)
-            ((:update-metadata connector))                  ;;reload the metadata and retry send
+            (kafka-metadata/update-metadata! metadata-connector (:conf state))
+            (when (empty? (kafka-metadata/get-cached-metadata metadata-connector topic))
+              (try-create-topic connector topic)
+              (let [new-meta (kafka-metadata/update-metadata! metadata-connector (:conf state))]
+                (debug "New metadata after try-create-topic: " new-meta)))
+
             (recur (inc retry))))))))
 
 (defn close
@@ -115,8 +137,7 @@
 
   [{{:keys [^AtomicBoolean shutdown-flag
             ^AtomicLong activity-counter
-            metadata-producers-ref
-            producers-cache-ref
+            metadata-connector
             scheduled-service
             retry-cache]} :state
     msg-ch                :msg-ch
@@ -134,18 +155,9 @@
     (if (not= v (.get activity-counter))
       (recur (.get activity-counter))))
 
-  (doseq [producers (->> @producers-cache-ref vals (map vals) flatten)]
-    (doseq [producer @producers]
-      (try
-        (produce/shutdown producer)
-        (catch Exception e (error e e)))))
-
   (.shutdownNow ^ScheduledExecutorService scheduled-service)
-
-  (doseq [[_ producer] @metadata-producers-ref]
-    (try
-      (produce/shutdown @producer)
-      (catch Exception e (error e e))))
+  (kafka-metadata/close metadata-connector)
+  ;(kafka-metadata/close send-connector)
 
   ;;before we close the retry-cache we need to close
   ;; persist-delay-thread and wait for async-latch
@@ -168,12 +180,6 @@
 (defn get-metadata-error-ch [connector]
   (:metadata-error-ch connector))
 
-(defn- blacklist!
-  "Add the host+port to the blacklisted-producers-ref and returns the ref"
-  [blacklisted-producers-ref {:keys [host port] :as partition-rc}]
-  (dosync (commute blacklisted-producers-ref assoc-in [host port] partition-rc))
-  blacklisted-producers-ref)
-
 (defn- ^ProducerState unrecoverable-error
   "At this point we can only notify the producer-error-ch and save the messages to disk"
   [^ProducerState producer-state {:keys [code topic msgs] :as error-ctx}]
@@ -192,21 +198,20 @@
 (defn- rand-nth' [v] (when-not (empty? v) (rand-nth v)))
 
 (defn select-partition-rc
-  "Returns a partition-rc {:host :port :error-code} otherwise nil"
-  [^ProducerState state topic]
-  (if-let [partition-rc (rand-nth' (get @(:brokers-metadata-ref state) topic))]
-    (if (healthy-partition-rc? state partition-rc)
-      partition-rc
-      (rand-nth' (filter (partial healthy-partition-rc? state) (get @(:brokers-metadata-ref state) topic))))))
-
-(defn- null-safe-deref [d] (when d @d))
+  "Returns a partition-rc {:host :port} that has not been blacklisted otherwise nil"
+  [{:keys [metadata-connector]} topic]
+  (rand-nth'
+    (filterv (complement (partial kafka-metadata/blacklisted? metadata-connector))
+             (kafka-metadata/get-cached-metadata
+               metadata-connector
+               topic))))
 
 (defn kafka-response
   "Handles the response input stream for each producer.
    Takes the state and resp:ProduceResponse.
    If the error-code > 0 and a send-cache is in state, the messages are retrieved from the persist and if still in persist,
    the messages are sent using handle-async-topic-messages."
-  [^ProducerState state resp]
+  [^ProducerState state send-cache resp]
   (let [error-code (:error-code resp)                       ;;dont use {:keys []} here some weirdness was seend that caused
         topic (:topic resp)                                 ;;java.lang.IllegalArgumentException: No value supplied for key: kafka_clj.response.ProduceResponse
         partition (:partition resp)                         ;;unrolling creates a hashmap and for some reason doesn't get the supplied keys
@@ -214,89 +219,94 @@
 
     (if (and (number? error-code) topic partition)
       (when (> (long error-code) 0)
-        (if (:send-cache state)
-          (when-let [msg (persist/get-sent-message state topic partition correlation-id)]
+        (if send-cache
+          (when-let [msg (persist/get-sent-message {:send-cache send-cache} topic partition correlation-id)]
             (handle-async-topic-messages state topic (if (coll? msg) msg [msg])))
           (error (str "Message received event though acks < 1 msg " resp))))
       (error (str "Message cannot contain nil values topic " topic " partition " partition " error-code " error-code " resp: " resp " keys " (keys resp))))))
 
-(defn- create-producer
-  "Create a producer instance and add a read-async-loop instance that will listen
-   on the InputStream and read responses.
-   "
-  [^ProducerState state host port]
-  (let [producer (produce/producer host port (:conf state))]
-    (tcp/read-async-loop! (:client producer)
-                          (fn [^"[B" bts]
-                            (when (> (count bts) 4)
-                              (let [^DataInputStream in (DataInputStream. (ByteArrayInputStream. bts))]
-                                (try
-                                  (doseq [resp (kafka-resp/in->kafkarespseq in)]
-                                    (kafka-response state resp))
-                                  (finally
-                                    (.close in)))))))
-    producer))
 
-(defn- get-or-create-producers!
-  "If a producer is not present use dosync and commute to create a delayed producer
-   returns [producers-cache-ref producer]  note producer can be nil"
-  [^ProducerState state {:keys [host port]}]
-  (let [producers-cache-ref (:producers-cache-ref state)]
-    (try
-      (if-let [prods (null-safe-deref (-> producers-cache-ref deref (get host) (get port)))]
-        [producers-cache-ref prods]
-        (do
-          (dosync
-            (commute
-              producers-cache-ref
-              (fn [prod-cache]
-                (if-not (get-in prod-cache [host port])
-                  (assoc-in prod-cache [host port] (delay
-                                                     (do
-                                                       (info "Creating producer " host " " port)
-                                                       [(create-producer state host port) (create-producer state host port)])))
-                  prod-cache))))
-          [producers-cache-ref (null-safe-deref (-> producers-cache-ref deref (get host) (get port)))]))
-      (catch Exception e
-        (do
-          (blacklist! (:blacklisted-producers-ref state) {:host host :port port})
-          (.printStackTrace e)
-          (error e e)
-          [producers-cache-ref nil])))))
+(defn read-response [^ProducerState state send-cache conn]
+  (try
+    (let [len (tcp-stream/read-int conn 1000)
+          bts (tcp-stream/read-bytes conn len 10000)
+          resp (kafka-resp/in->kafkarespseq (DataInputStream. (ByteArrayInputStream. ^"[B" bts)))]
+      (kafka-response state send-cache resp))
+    (catch Exception e (error (str "Error while waiting for ack response from " conn) e))))
 
-(defn- send-data [^ProducerState state partition-rc topic msgs]
-  (let [[producers-cache-ref prods] (get-or-create-producers! state partition-rc)
-        prod (rand-nth prods)]
-    (if prod
-      (try
-        (do
-          (.incrementAndGet ^AtomicLong (:activity-counter state))
-          (produce/send-messages prod (:conf state) msgs)
-          (assoc state :producers-cache-ref producers-cache-ref))
-        (catch Exception e
-          (.printStackTrace e)
-          (comment
-            (do
-              (if (instance? IOException e)
-                (try
-                  (doseq [prod prods] (produce/shutdown prod))
-                  (dosync (alter producers-cache-ref dissoc-in [(:host partition-rc) (:port partition-rc)]))
-                  (catch Exception e (error e e)))
-                (error e e))
+;this is only used with the single message producer api where ack > 0
+(def global-message-ack-cache (delay (kafka-clj.msg-persist/create-send-cache {})))
 
-              (Thread/sleep PRODUCER_ERROR_BACKOFF_DEFAULT)
-              (handle-async-topic-messages (assoc state :blacklisted-producers-ref (blacklist! (:blacklisted-producers-ref state) partition-rc)) topic msgs)))
+(defn- ^ByteBuf unpooled-buff []
+  (Unpooled/buffer))
 
-          ))
-      (handle-async-topic-messages (assoc state :blacklisted-producers-ref (blacklist! (:blacklisted-producers-ref state) partition-rc)) topic msgs))))
+(defn- ^ByteBuf write-request [conf message-ack-cache msgs acks]
+  (let [^ByteBuf buff (unpooled-buff)]
+    (with-size buff produce/write-request conf msgs)
+    ;(if (pos? acks)
+    ;  (produce/write-message-for-ack message-ack-cache conf msgs buff)
+    ;  (with-size buff produce/write-request conf msgs))
+    ;
+    buff))
+
+(defn- send-rcv-messages
+  "Send messages by writing them to the tcp client.
+  The write is async.
+  If the conf properties acks is > 0 the messages will also be written to an inmemory cache,
+  the cache expires and has a maximum size, but it allows us to retry failed messages."
+
+  ([^ProducerState state host-address msgs]
+   (send-rcv-messages state host-address @global-message-ack-cache msgs))
+
+  ([{:keys [metadata-connector] :as state}
+    host-address
+    message-ack-cache
+    msgs]
+   {:pre [metadata-connector
+          host-address
+          (or (nil? message-ack-cache) (instance? Map message-ack-cache))
+          msgs]}
+
+   (let [conf (:conf state)
+         acks (get conf :acks 0)
+
+         ^ByteBuf byte-buff (write-request conf message-ack-cache msgs acks)]
+
+     (tcp-driver/send-f (:driver metadata-connector)
+                        host-address
+                        (fn [conn]
+                          (locking conn
+                            (tcp-stream/write-bytes conn (Util/toBytes byte-buff))
+
+                            (tcp-stream/flush-out conn)
+
+                            ))
+                        5000))))
+
+(defn- send-data [state partition-rc _ msgs]
+  (try
+    (.incrementAndGet ^AtomicLong (:activity-counter state))
+    (send-rcv-messages state partition-rc msgs)
+    (catch Throwable t (do
+                         (.printStackTrace t)
+                         (throw t)))))
 
 
 (defn handle-async-topic-messages
   "Send messages from the same topic to a producer"
   [^ProducerState state topic msgs]
-  (if-let [partition-rc (select-partition-rc state topic)]
-    (send-data state partition-rc topic (mapv #(assoc % :partition (:id partition-rc)) msgs))
-    (error-no-partition state topic msgs)))
+  (try
+
+    (if-let [partition-rc (select-partition-rc state topic)]
+      (do
+        (info "send-data partition-rc " partition-rc)
+        (send-data state partition-rc topic (mapv #(assoc % :partition (:id partition-rc)) msgs)))
+      (do
+        (error-no-partition state topic msgs)))
+    (catch Exception e (do
+                         (.printStackTrace e)
+                         (error e e)
+                         (clojure.core.async/>!! (:producer-error-ch state) (->ErrorCtx :error topic msgs))))))
 
 
 (defn- async-handler
@@ -332,28 +342,34 @@
                              queue-buffering-max-ms
                              default-replication-factor
                              default-partitions
-                             batch-fail-message-over-limit batch-byte-limit blacklisted-expire topic-auto-create flush-on-write]
-                      :or   {batch-num-messages     25
-                             queue-buffering-max-ms 500
-                             io-threads             10
+                             batch-fail-message-over-limit
+                             batch-byte-limit
+                             topic-auto-create
+                             flush-on-write]
+                      :or   {batch-num-messages         25
+                             queue-buffering-max-ms     500
+                             io-threads                 10
                              default-replication-factor 1
-                             default-partitions 2
-                             blacklisted-expire     10000 acks 0 batch-fail-message-over-limit true batch-byte-limit 10485760
-                             topic-auto-create      true flush-on-write false}
+                             default-partitions         2
+                             acks                       0
+                             batch-fail-message-over-limit true
+                             batch-byte-limit 10485760
+                             topic-auto-create          true
+                             flush-on-write false}
                       :as   conf}]
 
+  s/Int
   (let [^ScheduledExecutorService scheduled-service (Executors/newSingleThreadScheduledExecutor (daemon-thread-factory))
-        async-ctx (fthreads/create-exec-service io-threads) ;(fthreads/shared-threads (inc io-threads))
-        metadata-producers-ref (ref (meta/bootstrap->producermap bootstrap-brokers conf))
+        async-ctx (fthreads/create-exec-service io-threads)
+        metadata-connector (kafka-clj.metadata/connector bootstrap-brokers conf)
 
-        ;blacklist producers and no use them in metdata updates or sending, they expire after a few seconds
-        blacklisted-producers-ref (ref (cache/create-cache :expire-after-write blacklisted-expire))
-        blacklisted-metadata-producers-ref (ref (cache/create-cache :expire-after-write blacklisted-expire))
+        ;;TODO implement acks
 
-        producers-cache-ref (ref {})
+        ;send-connector (kafka-clj.metadata/connector bootstrap-brokers conf)
+
+        producer-error-ch (async/chan (async/dropping-buffer 10))
 
         metadata-error-ch (async/chan (async/dropping-buffer 10))
-        producer-error-ch (async/chan (async/dropping-buffer 10))
 
         send-cache (if (> acks 0) (persist/create-send-cache conf))
         retry-cache (persist/create-retry-cache conf)
@@ -365,40 +381,38 @@
         ^AtomicBoolean shutdown-flag (AtomicBoolean. false)
 
         state {
-               :shutdown-flag                      shutdown-flag
-               :activity-counter                   activity-counter
-               :retry-cache                        retry-cache
-               :metadata-producers-ref             metadata-producers-ref
-               :blacklisted-metadata-producers-ref blacklisted-metadata-producers-ref
-               :producers-cache-ref                producers-cache-ref
-               :producer-error-ch                  producer-error-ch
-               :blacklisted-producers-ref          blacklisted-producers-ref
-               :scheduled-service                  scheduled-service
-               :conf                               (assoc conf
-                                                     :batch-fail-message-over-limit batch-fail-message-over-limit
-                                                     :batch-byte-limit batch-byte-limit
-                                                     :default-replication-factor default-replication-factor
-                                                     :default-partitions default-partitions
-                                                     :topic-auto-create topic-auto-create)}
+               :metadata-connector metadata-connector
 
-        brokers-metadata-ref (ref (exception-if-nil! bootstrap-brokers (meta/get-metadata! state conf)))
-
-        update-metadata (fn []
-                          (if-let [metadata (meta/get-metadata! state conf)]
-                            (dosync (ref-set brokers-metadata-ref metadata))
-                            (error (str "No metadata found"))))
+               :shutdown-flag      shutdown-flag
+               :activity-counter   activity-counter
+               :retry-cache        retry-cache
+               :producer-error-ch  producer-error-ch
+               :metadata-error-ch  metadata-error-ch
+               :scheduled-service  scheduled-service
+               :conf               (assoc conf
+                                     :batch-fail-message-over-limit batch-fail-message-over-limit
+                                     :batch-byte-limit batch-byte-limit
+                                     :default-replication-factor default-replication-factor
+                                     :default-partitions default-partitions
+                                     :topic-auto-create topic-auto-create)}
 
 
-        connector {:metadata-producers-ref metadata-producers-ref :send-cache send-cache :retry-cache retry-cache
-                   :producers-cache-ref    producers-cache-ref
-                   :flush-on-write         flush-on-write
-                   :state                  (assoc state :brokers-metadata-ref brokers-metadata-ref)}
+        connector {:metadata-error-ch metadata-error-ch
+                   :send-cache send-cache
+                   :retry-cache retry-cache
+                   :flush-on-write flush-on-write
+                   :metadata-connector metadata-connector
+                   ;:send-connector send-connector
+                   :state state}
 
         msg-ch (async/chan 100)
         msg-buff (futils/buffered-chan msg-ch batch-num-messages queue-buffering-max-ms 5 (produce/flush-on-byte->fn batch-byte-limit))
 
         ;;every 5 seconds check for any data in the retry cache and resend the messages
-        connector2 (assoc connector :msg-ch msg-ch :metadata-error-ch metadata-error-ch :update-metadata update-metadata)
+        connector2 (assoc connector :msg-ch msg-ch)
+
+        _ (do "calling update-metadata!: " bootstrap-brokers " conf " conf)
+        update-metadata #(kafka-metadata/update-metadata! metadata-connector conf)
 
         persist-delay-thread (futils/fixdelay-thread 1000
                                                      (try
@@ -427,10 +441,8 @@
                                     activity-counter
                                     send-cache
                                     retry-cache
-                                    producers-cache-ref
-                                    metadata-producers-ref
-                                    blacklisted-producers-ref
-                                    brokers-metadata-ref
+                                    metadata-connector
+                                    ;send-connector
                                     producer-error-ch)
                    msg-buff
                    async-latch)

@@ -44,11 +44,9 @@
             msgs1 [{:partition 1 :topic "a"} {:partition 1 :topic "a"}]
             msgs2 [{:partition 4 :topic "b"} {:partition 4 :topic "b"}]]
         (cache-sent-messages cache [[corr1 msgs1] [corr2 msgs2]])
-        ;{:keys [send-cache]} topic partition corr-id
+
         (get-sent-message cache "a" 1 corr1) => [{:partition 1, :topic "a"} {:partition 1, :topic "a"}]
-        (get-sent-message cache "b" 4 corr2) => [{:partition 4, :topic "b"} {:partition 4, :topic "b"}]
-        
-      ))
+        (get-sent-message cache "b" 4 corr2) => [{:partition 4, :topic "b"} {:partition 4, :topic "b"}]))
 
        (fact "Test NO NPE on reading from closed send cache"
 
