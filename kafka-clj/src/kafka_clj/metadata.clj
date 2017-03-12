@@ -168,6 +168,9 @@
                          (locking conn
                            (try
                              (send-recv-metadata-request conn conf)
+                             (catch IndexOutOfBoundsException ie (do
+                                                                   (warn "Error in reading medata from producer " conn " error: " ie)
+                                                                   nil))
                              (catch Exception e (do
                                                   (error "Error retreiving metadata " e)
                                                   (throw e))))))
@@ -218,7 +221,6 @@
 
   (defn blacklisted? [{:keys [driver] :as st} host-address]
     {:pre [driver (:host host-address) (:port host-address)]}
-    (info "blacklisted from " (keys st))
     (tcp-driver/blacklisted? driver host-address))
 
   (defn connector

@@ -5,7 +5,7 @@
             [clojure.tools.logging :refer [info error]])
   (:import [kafka_clj.util Util]
            [org.redisson.api RedissonClient RBucket RLock RScript$Mode RScript$ReturnType]
-           [org.redisson.config ClusterServersConfig Config]
+           [org.redisson.config ClusterServersConfig Config SentinelServersConfig]
            [org.redisson Redisson]
            [java.nio ByteBuffer]
            (java.util Queue List)
@@ -95,6 +95,35 @@
     (getValueEncoder [this]
       (nippy-encoder))))
 
+(defn ^"[String" as-array [v]
+  (cond
+    (nil? v) (into-array String [])
+    (string? v) (into-array String [v])
+    :else (into-array String v)))
+
+(defn ^Config create-sentinal-config [redis-conf]
+  {:pre [(vector (:sentinel-addresses redis-conf)) (:master-name redis-conf)]}
+
+  (let [
+        ^Config conf (.setCodec (Config.) (codec))
+
+        ^SentinelServersConfig config (-> (.useSentinelServers conf)
+                                          (.setMasterName (:master-name redis-conf))
+                                          (.addSentinelAddress (as-array (:sentinel-addresses redis-conf))))
+
+
+        password (:password redis-conf)]
+
+    (when password
+      (.setPassword config (str password)))
+
+    (.setScanInterval config (int 2000))
+    (.setSlaveConnectionPoolSize config (clojure.core/get redis-conf :slave-connection-pool-size 100))
+    (.setMasterConnectionPoolSize config (clojure.core/get redis-conf :master-connection-pool-size 100))
+    (.setSlaveSubscriptionConnectionPoolSize config (clojure.core/get redis-conf :slave-subscription-connection-pool-size 500))
+
+    conf))
+
 (defn ^Config create-config [redis-conf]
   {:pre [(vector (:host redis-conf))]}
 
@@ -118,7 +147,9 @@
 
 (defn ^RedissonClient connect
   ([redis-conf]
-    (Redisson/create (create-config redis-conf))))
+    (Redisson/create (if (:sentinel-addresses redis-conf)
+                       (create-sentinal-config redis-conf)
+                       (create-config redis-conf)))))
 
 (defn set [^RedissonClient cmd ^String k v]
   (->
