@@ -169,7 +169,7 @@
                            (try
                              (send-recv-metadata-request conn conf)
                              (catch IndexOutOfBoundsException ie (do
-                                                                   (warn "Error in reading medata from producer " conn " error: " ie)
+                                                                   (warn "Error in reading medata from producer " (dissoc conn :error) " error: " ie)
                                                                    nil))
                              (catch Exception e (do
                                                   (error "Error retreiving metadata " e)
