@@ -88,7 +88,7 @@
                                                                      10000)))
                                       30000)]
 
-    (prn "create-topic-request resp " resp)
+    (info "create-topic-request resp " resp)
     (when-not (#{0 36} (:error_code resp))
       (throw (RuntimeException. (str "Failed to create topic " topic " response " resp))))))
 
@@ -97,7 +97,7 @@
   [{:keys [state] :as connector} topic]
   (let [topic-auto-create (get-in state [:conf :topic-auto-create])]
 
-    (prn "try-create-topic : topic-auto-create: " topic-auto-create)
+    (info "try-create-topic : topic-auto-create: " topic-auto-create)
 
     (if topic-auto-create
       (create-topic-request connector topic)
@@ -298,9 +298,7 @@
   (try
 
     (if-let [partition-rc (select-partition-rc state topic)]
-      (do
-        (info "send-data partition-rc " partition-rc)
-        (send-data state partition-rc topic (mapv #(assoc % :partition (:id partition-rc)) msgs)))
+      (send-data state partition-rc topic (mapv #(assoc % :partition (:id partition-rc)) msgs))
       (do
         (error-no-partition state topic msgs)))
     (catch Exception e (do
