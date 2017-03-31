@@ -1,4 +1,4 @@
-(defproject kafka-clj "4.0.2-SNAPSHOT"
+(defproject kafka-clj "4.0.3-SNAPSHOT"
   :description "fast kafka library implemented in clojure"
   :url "https://github.com/gerritjvv/kafka-fast"
   :license {:name "Eclipse Public License"
@@ -51,7 +51,7 @@
   :test-paths ["test" "test-java"]
 
   :dependencies [
-                 [tcp-driver "0.1.2-SNAPSHOT"]
+                 [tcp-driver "0.1.3-SNAPSHOT"]
 
                  [com.taoensso/carmine "2.15.0" :exclusions [org.clojure/clojure]]
                  [org.redisson/redisson "3.2.2" :exclusions [io.netty/netty-buffer]]
