@@ -102,7 +102,7 @@
   (with-size buff write-fetch-request-header topics state))
 
 
-(defn write-offset-request-message [^ByteBuf buff {:keys [topics max-offsets] :or {max-offsets 10}}]
+(defn write-offset-request-message [^ByteBuf buff {:keys [topics use-earliest max-offsets] :or {max-offsets 10 use-earliest false}}]
   "
 	OffsetRequest => ReplicaId [TopicName [Partition Time MaxNumberOfOffsets]]
 	  ReplicaId => int32
@@ -122,7 +122,7 @@
       (do
         (-> buff
             (.writeInt (int partition))
-            (.writeLong -1)
+            (.writeLong (if use-earliest -2 -1))
             (.writeInt (int max-offsets))))))
 
   buff)
