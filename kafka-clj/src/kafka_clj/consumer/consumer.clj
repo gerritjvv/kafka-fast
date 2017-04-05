@@ -162,6 +162,7 @@
   (io!
     (fetchstate->state-tuple                                ;convert FetchState to [status offset discarded min max]
       (Fetch/readFetchResponse
+        wu
         (tcp/wrap-bts bts)
         (fetch-state delegate-f wu)                         ;mutable FetchState
         handle-msg-event))))
@@ -182,6 +183,16 @@
           resp (tcp-stream/read-bytes conn msg-len timeout-ms)]
 
       (read-process-resp! delegate-f wu ^"[B" resp))))
+
+(defn work-unit-ack!
+  "Used with conf :work-unit-ack :user
+   Marks the work-unit as consumed and remove it from the working queue
+   offset should be the max offset seen by the processing system, this is important,
+   most of the times a consumer will not see all of the offsets for a work unit, which means
+   the work unit needs to be marked consumed up to offset"
+  [state wu offset]
+  {:pre [state wu (number? offset)]}
+  (wu-api/publish-consumed-wu! state wu offset))
 
 (defn process-wu!
   " Borrow a connection
@@ -209,7 +220,8 @@
         (do
           (if (zero? (long offsets-read))
             (wu-api/publish-zero-consumed-wu! state wu)     ;of no offsets were read, we need to mark the wu as zero consumed
-            (wu-api/publish-consumed-wu! state wu (if (pos? offset) offset (:offset wu))))
+            (when (= (get-in state [:conf :work-unit-ack] :auto) :auto)
+              (wu-api/publish-consumed-wu! state wu (if (pos? offset) offset (:offset wu)))))
           v)
         (do
           (wu-api/publish-error-wu! state wu status offset)
@@ -350,6 +362,8 @@
     reporting: if (get :consumer-reporting conf) is true then messages consumed metrics will be written every 10 seconds to stdout
 
     :pool-limit 20 ; number of tcp pool connections to create
+
+    :work-unit-ack :auto => on successfull read, wu is removed  :user => the user will ack and cause the wu to be removed
 
     :jaas if set the jaas authentication will be used with each tcp connection
           this value should point to the jaas config file.

@@ -3,7 +3,7 @@
            (org.openjdk.jol.info GraphLayout))
   (:require
     [kafka-clj.consumer.work-organiser :refer [create-organiser! close-organiser! calculate-new-work]]
-    [kafka-clj.consumer.consumer :refer [consume! close-consumer! consumer-pool-stats]]
+    [kafka-clj.consumer.consumer :refer [consume! close-consumer! consumer-pool-stats work-unit-ack!]]
     [kafka-clj.redis.core :as redis]
     [com.stuartsierra.component :as component]
     [fun-utils.core :refer [fixdelay-thread stop-fixdelay buffered-chan]]
@@ -124,10 +124,13 @@
   (let [host-name (.getHostName (InetAddress/getLocalHost))
         topics-ref (ref (into #{} topics))
         group-name (get-in conf [:redis-conf :group-name] "default")
-        working-queue-name (str group-name "-kafka-working-queue/" host-name)
+        working-queue-prefix (str group-name "-kafka-working-queue/")
+
+        working-queue-name (str working-queue-prefix host-name)
         work-queue-name (str group-name "-kafka-work-queue")
         intermediate-conf (assoc conf
                             :group-name group-name
+                            :working-queue-prefix working-queue-prefix
                             :work-queue work-queue-name
                             :working-queue working-queue-name
                             :error-queue (str group-name "-kafka-erorr-queue")
@@ -222,14 +225,17 @@
   [{:keys [msg-ch]} n timeout-ms]
   (buffered-chan msg-ch n 1000))
 
-
-(defn- add-msg-seq-state [state {:keys [topic partition offset]}]
-  (assoc! state (str topic partition) offset))
-
 (defn msg-seq!
   ([node]
    (cons (read-msg! node)
          (lazy-seq (msg-seq! node)))))
+
+(defn msg-seq-batches!
+  "Partition messages by work unit, effectively creating a batch delivery system, where each bach is N messages long.
+   This function is used with consumer/consume! :work-unit-ack => :user and consumer work-unit-ack!
+  "
+  [node]
+  (partition-all :wu (msg-seq! node)))
 
 (defn msg-seq-buffered!
   "Will always return a sequence of sequence of messages i.e [ [msg1, msg2, msg3] .. ]
@@ -237,6 +243,16 @@
   [node & {:keys [step] :or {step 1000}}]
   (partition-all step (msg-seq! node)))
 
+(defn batch-ack!
+  "
+   Used with msg-seq-batches!
+   Acks a single batch of msgs where msgs must all have the same :wu item
+   Note that this invariant is not checked but assumed.
+
+   use msg-seq-batches! to consume mssages partitioned by :wu"
+  [node msgs]
+  (when-let [max-msg (apply max-key :offset msgs)]
+    (work-unit-ack! (:consumer node) (:wu max-msg) (:offset max-msg))))
 
 (defrecord KafkaNodeService [conf topics]
   component/Lifecycle

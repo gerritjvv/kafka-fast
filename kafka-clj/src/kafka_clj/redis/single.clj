@@ -194,6 +194,8 @@
   (-conn-pool-idle [this] (.getNumIdle (get-object-pool this)))
   (-conn-pool-active [this] (.getNumActive (get-object-pool this)))
 
+  (-keys [_ pattern] (car/keys pattern))
+
   (-lpush* [_ queue obj-coll]
     (apply car/lpush queue obj-coll))
   (-lpush [_ queue obj]

@@ -169,6 +169,11 @@
     ^Queue (.getQueue queue)
     (.offer v)))
 
+
+(defn redis-keys [^RedissonClient cmd ^String pattern]
+  (.getKeysByPattern (.getKeys cmd) pattern))
+
+
 (defn llen [^RedissonClient cmd ^String queue]
   (-> cmd ^Queue (.getQueue queue) .size))
 
@@ -233,6 +238,9 @@
 
   (-conn-pool-idle [_] -1)
   (-conn-pool-active [_] -1)
+
+  (-keys [_ pattern]
+    (redis-keys (:pool pool) (str pattern)))
 
   (-lpush* [pool queue obj-coll]
     (doseq [obj obj-coll]

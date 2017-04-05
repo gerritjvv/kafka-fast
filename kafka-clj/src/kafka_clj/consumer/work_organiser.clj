@@ -37,10 +37,12 @@
     [clojure.tools.logging :refer [info debug error warn]]
     [kafka-clj.redis.core :as redis]
     [kafka-clj.metadata :as kafka-metadata]
+    [kafka-clj.consumer.workunits :as workunits]
     [fun-utils.cache :as cache]
     [kafka-clj.consumer.workunits :refer [wait-on-work-unit!]]
     [schema.core :as s]
-    [kafka-clj.schemas :as schemas])
+    [kafka-clj.schemas :as schemas]
+    [kafka-clj.consumer.node :as node])
   (:import [java.util.concurrent Executors ExecutorService CountDownLatch TimeUnit]
            (java.util.concurrent.atomic AtomicBoolean)
            (java.util HashMap Map Date)))
@@ -123,6 +125,39 @@
     (work-complete-ok! state w-unit)))
 
 
+(defn- expired? [wu timeout-ms]
+  (>=
+    (- (System/currentTimeMillis) (long (:ts wu)))
+    (long timeout-ms)))
+
+(defn- ^Runnable work-unit-timeout-loop
+  "Returns a Function that will loop and check for expired work units in all working queues for the group"
+  [{:keys [working-queue-prefix redis-conn workunit-expire-ms] :as state}]
+  {:pre [working-queue-prefix redis-conn]}
+  (fn []
+    (try
+      (let [working-queues (redis/wcar
+                             redis-conn
+                             (redis/redis-keys redis-conn (str working-queue-prefix "*")))
+
+            expired-wus (for [working-queue working-queues
+                              wus (redis/wcar
+                                    redis-conn
+                                    (redis/lrange redis-conn working-queue -100 -1))
+                              wu wus
+                              :when (expired? wu workunit-expire-ms)]
+                          wu)]
+
+        ;;;working queues are always lpushed, which means the oldest work units are at the tail
+        ;;; we can select the tail and inspect the oldest values (no need for sorting)
+        (doseq [wu expired-wus]
+          (warn "Expired workunit " wu)
+          (workunits/publish-zero-consumed-wu! state wu)))
+
+      (catch Exception e
+        (do (error e e)
+            (.printStackTrace e))))))
+
 (defn- ^Runnable work-complete-loop
   "Returns a Function that will loop continueously and wait for work on the complete queue"
   [{:keys [redis-conn complete-queue working-queue ^AtomicBoolean shutdown-flag ^CountDownLatch shutdown-confirm] :as state}]
@@ -150,8 +185,9 @@
   "Creates a ExecutorService and starts the work-complete-loop running in a background thread
    Returns the ExecutorService"
   [state]
-  (doto (Executors/newSingleThreadExecutor)
-    (.submit (work-complete-loop state))))
+  (doto (Executors/newCachedThreadPool)
+    (.submit (work-complete-loop state))
+    (.submit (work-unit-timeout-loop state))))
 
 (defn calculate-work-units
   "Returns '({:topic :partition :offset :len :max-offset}) Len is exclusive"
@@ -171,7 +207,7 @@
    get the earliest offset and start from there"
   [state min-kafka-offset topic partition saved-offset]
 
-  (let [earliest-offset  min-kafka-offset]
+  (let [earliest-offset min-kafka-offset]
 
     (if (> earliest-offset saved-offset)
       (do
@@ -243,17 +279,6 @@
                       (redis/lpush* redis-conn work-queue (map #(assoc (into (sorted-map) %) :producer broker :ts ts) work-units))
                       (redis/set redis-conn (str "/" group-name "/offsets/" topic "/" partition) max-offset)))))))
 
-;(defn get-offset-from-meta [{:keys [metadata-connector conf]} topic partition]
-;  {:pre [metadata-connector conf (string? topic) (number? partition)]}
-;
-;  (let [partition-offsets (:all-offsets (kafka-metadata/get-cached-metadata metadata-connector topic partition))]
-;
-;    (if (empty? partition-offsets)
-;      (throw (ex-info "No offset data found" {:topic topic :partition partition :offsets partition-offsets})))
-;
-;    (debug "get-offset-from-meta: conf: " (keys conf) " use-earliest: " (:use-earliest conf) " partition-offsets " partition-offsets)
-;
-;    (if (= true (:use-earliest conf)) (apply min partition-offsets) (apply max partition-offsets))))
 
 (defn- topic-partition? [m topic partition] (filter (fn [[t partition-data]] (and (= topic t) (not-empty (filter #(= (:partition %) partition) partition-data)))) m))
 
@@ -391,7 +416,7 @@
       (try
         (close-organiser! state)
         (catch Exception e (error e e)))
-      (throw (ex-info (str "No metadata could be found from any of the bootstrap brokers provided " bootstrap-brokers) {:type :metadata-exception
+      (throw (ex-info (str "No metadata could be found from any of the bootstrap brokers provided " bootstrap-brokers) {:type              :metadata-exception
                                                                                                                         :bootstrap-brokers bootstrap-brokers})))
     state))
 

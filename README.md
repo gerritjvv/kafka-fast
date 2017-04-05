@@ -418,6 +418,9 @@ Note that the SASL mechanism in kafka 0.9.0 is not compatible with that of 0.10.
 |:conf :work-unit-event-ch-buff-size | The buffer (sliding window) of work unit events |
 |:conf :jaas | The name to use inside the jaas file configuration |
 |:conf :kafka-version | The kafka version used e.g 0.9.0 will indicate that the SASL 0.9.0 compatible handshake should be used |
+|:conf :work-unit-ack | if :auto the background fetch thread will mark work units as consumed, :user means the user should use msg-seq-batches! and work-unit-ack!
+|:conf :workunit-expire-ms | milliseconds a work unit can be in the node's working queue, on expire the message is moved back into the work queue |
+
 
 ### Performance configuration for consuming
 

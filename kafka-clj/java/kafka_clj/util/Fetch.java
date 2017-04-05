@@ -15,6 +15,7 @@ public class Fetch {
 
     /**
      * Read the kafka fetch response
+     * @param wu Object the workunit passed to each message. The primary reason for this is the consumer work-unit-ack! function
      * @param buffer
      * @param state State passed through to onMessage as onMessage.apply(state, message), note that this state is no pure and expected to be mutated by the onMessage.<br/>
      *              It is handled in a thread safe manner inside this class.
@@ -22,10 +23,10 @@ public class Fetch {
      * @return State is returned
      * @throws UnsupportedEncodingException
      */
-    public static final Object readFetchResponse(ByteBuf buffer, Object state, IFn onMessage) throws UnsupportedEncodingException{
+    public static final Object readFetchResponse(Object wu, ByteBuf buffer, Object state, IFn onMessage) throws UnsupportedEncodingException{
         int corrId = buffer.readInt();
 
-        readTopicArray(buffer, state, onMessage);
+        readTopicArray(wu, new Counter(), buffer, state, onMessage);
         return state;
     }
 
@@ -36,13 +37,13 @@ public class Fetch {
      * @param onMessage Function called when a message is found
      * @throws UnsupportedEncodingException
      */
-    public static final void readTopicArray(ByteBuf buffer, Object state, IFn onMessage) throws UnsupportedEncodingException{
+    public static final void readTopicArray(Object wu, Counter counter, ByteBuf buffer, Object state, IFn onMessage) throws UnsupportedEncodingException{
         int topicLen = buffer.readInt();
         if(topicLen == 1){
-            readTopic(buffer, state, onMessage);
+            readTopic(wu, counter, buffer, state, onMessage);
         }else{
             for(int i = 0; i < topicLen; i++)
-                readTopic(buffer, state, onMessage);
+                readTopic(wu, counter, buffer, state, onMessage);
         }
     }
 
@@ -53,9 +54,9 @@ public class Fetch {
      * @param onMessage
      * @throws UnsupportedEncodingException
      */
-    private static final void readTopic(ByteBuf buffer, Object state, IFn onMessage) throws UnsupportedEncodingException{
+    private static final void readTopic(Object wu, Counter counter, ByteBuf buffer, Object state, IFn onMessage) throws UnsupportedEncodingException{
         String topicName = readShortString(buffer);
-        readPartitionArray(topicName, buffer, state, onMessage);
+        readPartitionArray(wu, counter, topicName, buffer, state, onMessage);
     }
 
     /**
@@ -65,13 +66,13 @@ public class Fetch {
      * @param state
      * @param onMessage
      */
-    private static final void readPartitionArray(String topicName, ByteBuf buffer, Object state, IFn onMessage){
+    private static final void readPartitionArray(Object wu, Counter counter, String topicName, ByteBuf buffer, Object state, IFn onMessage){
         int partitionLen = buffer.readInt();
         if(partitionLen == 1){
-            readPartition(topicName, buffer, state, onMessage);
+            readPartition(wu, counter, topicName, buffer, state, onMessage);
         }else{
             for(int i = 0; i < partitionLen; i++)
-                readPartition(topicName, buffer, state, onMessage);
+                readPartition(wu, counter, topicName, buffer, state, onMessage);
         }
     }
 
@@ -82,7 +83,7 @@ public class Fetch {
      * @param state
      * @param onMessage
      */
-    private static final void readPartition(String topicName, ByteBuf buffer, Object state, IFn onMessage){
+    private static final void readPartition(Object wu, Counter counter, String topicName, ByteBuf buffer, Object state, IFn onMessage){
         int partition = buffer.readInt();
         int errorCode = buffer.readShort();
         buffer.readLong(); //HighwaterMarkOffset
@@ -91,7 +92,7 @@ public class Fetch {
         if(errorCode > 0)
             onMessage.invoke(state, FetchError.create(topicName, partition, errorCode));
         else if(buffer.readableBytes() >= messageSetByteSize)
-            readMessageSet(topicName, partition, buffer.readSlice(messageSetByteSize), state, onMessage);
+            readMessageSet(wu, counter, topicName, partition, buffer.readSlice(messageSetByteSize), state, onMessage);
     }
 
     /**
@@ -102,13 +103,13 @@ public class Fetch {
      * @param state
      * @param onMessage
      */
-    private static final void readMessageSet(String topicName, int partition, ByteBuf buffer, Object state, IFn onMessage) {
+    private static final void readMessageSet(Object wu, Counter counter, String topicName, int partition, ByteBuf buffer, Object state, IFn onMessage) {
         while(buffer.readableBytes() > 12){
             long offset = buffer.readLong();
             int messageByteSize = buffer.readInt();
 
             if (messageByteSize > 10 && buffer.readableBytes() >= messageByteSize)
-                readMessage(topicName, partition, offset, buffer.readSlice(messageByteSize), state, onMessage);
+                readMessage(wu, counter, topicName, partition, offset, buffer.readSlice(messageByteSize), state, onMessage);
             else
                 break;
         }
@@ -123,22 +124,22 @@ public class Fetch {
      * @param state
      * @param onMessage
      */
-    private static void readMessage(String topicName, int partition, long offset, ByteBuf buffer, Object state, IFn onMessage) {
+    private static void readMessage(Object wu, Counter counter, String topicName, int partition, long offset, ByteBuf buffer, Object state, IFn onMessage) {
 
-        int crc = buffer.readInt();  //crc
-        byte magic = buffer.readByte(); //magic byte
+        buffer.readInt();  //crc
+        buffer.readByte(); //magic byte
         int codec = buffer.readByte() & 0x07;
 
         if(buffer.readableBytes() > 4){
-            byte[] key = readBytes(buffer); //key
+            readBytes(buffer); //key
             byte[] bts = readBytes(buffer); //value
 
             if(bts != null){
                 if(codec > 0){
                     byte[] deCompBts = Util.decompress(codec, bts);
-                    readMessageSet(topicName, partition, Unpooled.wrappedBuffer(deCompBts), state, onMessage);
+                    readMessageSet(wu, counter, topicName, partition, Unpooled.wrappedBuffer(deCompBts), state, onMessage);
                 }else
-                    onMessage.invoke(state, Message.create(topicName, partition, offset, bts));
+                    onMessage.invoke(state, Message.create(topicName, partition, offset, bts, wu, counter.i++));
             }
         }
     }
@@ -173,7 +174,7 @@ public class Fetch {
 
     /**
      * This is the message passed into the onMessage calling code.<br/>
-     * It implements ILookup so can be used like (:topic msg), (:partition msg), (:offset msg), (:bts msg)
+     * It implements ILookup so can be used like (:topic msg), (:partition msg), (:offset msg), (:bts msg) (:wu msg) (:bi msg)
      */
     public static final class Message implements ILookup {
         private static final Keyword KW_TOPIC = Keyword.intern("topic");
@@ -181,17 +182,50 @@ public class Fetch {
         private static final Keyword KW_OFFSET = Keyword.intern("offset");
         private static final Keyword KW_BTS = Keyword.intern("bts");
 
+        /**
+         * Work unit that this message belongs to
+         */
+        private static final Keyword KW_WU = Keyword.intern("wu");
+
+        /**
+         * The index of the message in the workunit
+         */
+        private static final Keyword KW_BI = Keyword.intern("bi");
+
 
         private String topic;
         private int partition;
         private long offset;
         private byte[] bts;
 
-        public Message(String topic, int partition, long offset, byte[] bts) {
+        private int bi;
+        private Object wu;
+
+
+        public Message(String topic, int partition, long offset, byte[] bts, Object wu, int bi) {
             this.topic = topic;
             this.partition = partition;
             this.offset = offset;
             this.bts = bts;
+            this.wu = wu;
+            this.bi = bi;
+        }
+
+
+        public int getBi() {
+            return bi;
+        }
+
+        public void setBi(int bi) {
+            this.bi = bi;
+        }
+
+        public Object getWu() {
+            return wu;
+        }
+
+        public void setWu(Object wu) {
+            this.wu = wu;
         }
 
         public String getTopic() {
@@ -237,6 +271,10 @@ public class Fetch {
                 return new Long(offset);
             else if(KW_BTS.equals(key))
                 return bts;
+            else if(KW_BI.equals(key))
+                return Integer.valueOf(bi);
+            else if(KW_WU.equals(key))
+                return wu;
             else
                 return null;
         }
@@ -248,11 +286,11 @@ public class Fetch {
         }
 
         public String toString(){
-            return "Message[" + topic + "," + partition + "," + offset + "]";
+            return "Message[" + topic + "," + partition + "," + offset + "," + bi + "," + wu + "]";
         }
 
-        public static final Message create(String topic, int partition, long offset, byte[] bts){
-            return new Message(topic, partition, offset, bts);
+        public static final Message create(String topic, int partition, long offset, byte[] bts, Object wu, int bi){
+            return new Message(topic, partition, offset, bts, wu, bi);
         }
     }
 
@@ -327,5 +365,13 @@ public class Fetch {
         public static final FetchError create(String topic, int partition, int errorCode){
             return new FetchError(topic, partition, errorCode);
         }
+    }
+
+    /**
+     * Non threadsafe counter.
+     */
+    private static class Counter
+    {
+        int i = 0;
     }
 }

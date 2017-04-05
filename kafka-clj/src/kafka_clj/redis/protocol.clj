@@ -12,6 +12,7 @@
 
   (-lua [_ script-str])
 
+  (-keys   [_ pattern])
   (-lpush* [_ queue obj-coll])
   (-lpush [_ queue obj])
   (-llen  [_ queue])
