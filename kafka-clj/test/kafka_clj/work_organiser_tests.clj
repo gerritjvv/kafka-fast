@@ -35,7 +35,7 @@
                        {:host "abc2" :port 9092} {"abc" [{:offset 50 :all-offsets '(100 10 0) :partition 0}
                                                          {:offset 200 :all-offsets '(200 100 0) :partition 1}]}}
 
-              saved-offset-f (fn [_ _ partition]
+              saved-offset-f (fn [_ _ _ partition]
                                (case (int partition)
                                  0 150
                                  1 10))]

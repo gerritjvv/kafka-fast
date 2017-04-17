@@ -5,7 +5,7 @@
             [clojure.tools.logging :refer [info error]])
   (:import [kafka_clj.util Util]
            [org.redisson.api RedissonClient RBucket RLock RScript$Mode RScript$ReturnType]
-           [org.redisson.config ClusterServersConfig Config SentinelServersConfig]
+           [org.redisson.config ClusterServersConfig Config SentinelServersConfig ReadMode]
            [org.redisson Redisson]
            [java.nio ByteBuffer]
            (java.util Queue List)
@@ -141,7 +141,7 @@
     (.setSlaveSubscriptionConnectionPoolSize config (clojure.core/get redis-conf :slave-subscription-connection-pool-size 500))
 
     ;;we need read from slaves to be false, this otherwise produces connection issues
-    (.setReadFromSlaves config false)
+    (.setReadMode config ReadMode/MASTER)
     (.addNodeAddress config (into-array String (mapv #(Util/correctURI (str %)) hosts)))
     conf))
 
