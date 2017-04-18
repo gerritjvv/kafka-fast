@@ -1,9 +1,9 @@
-#Redis Cluster
+# Redis Cluster
 
 Home: https://github.com/gerritjvv/kafka-fast
 
 
-#Overview
+# Overview
 
 Since: `3.0.0-SNAPSHOT`
 
@@ -71,7 +71,7 @@ The `redis-cluster-init` script reads ports from the `/etc/redis-nodes` file and
 
 
 
-#The Code
+# The Code
 
 The redis namespaces have been divided into:
 
