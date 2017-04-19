@@ -99,7 +99,7 @@ Consumer
 (<!! msg-ch)
 ```
 
-#Integration Testing
+# Integration Testing
 
 
 The namespace in test ```kafka-clj.util``` contain helper functions to launch  
@@ -113,7 +113,7 @@ Note that Redis must be installed locally.
 All integration tests must be labeled with ```:it```  
 see http://www.jayway.com/2014/09/09/integration-testing-setup-with-midje-and-leiningen/
 
-###To run all integration tests type:  
+### To run all integration tests type:  
 
 ```lein midje :filters it```
 
@@ -121,7 +121,7 @@ see http://www.jayway.com/2014/09/09/integration-testing-setup-with-midje-and-le
 
 ```lein midje :filters -it```
 
-###To run a specific namespace type:
+### To run a specific namespace type:
 
 ```lein midje <namespace>```
 

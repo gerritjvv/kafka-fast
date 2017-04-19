@@ -22,7 +22,7 @@ See https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/vagrant.md
 *  0.10.0.0
 *  0.10.1.0
 
-#Usage
+# Usage
 
 ## Leiningen
 
@@ -280,7 +280,7 @@ For testing this is one of the best things you can do and makes testing kafka + 
 
 See: https://github.com/gerritjvv/kafka-fast/blob/master/kafka-clj/doc/vagrant.md
 
-##Monitoring
+## Monitoring
 
 A kafka consumer can have a considerable memory footprint due to buffering and background fetching going on (all done for the sake of performance).  
 To see where and how memory is used several functions are provided in the consumer namespace.   
@@ -341,7 +341,7 @@ To monitor how many active and idle connections are alive in the system use:
 
 ```
 
-###Consumer Work Units and monitoring
+### Consumer Work Units and monitoring
 
 Each consumer will process work units as they become available on the work queue. 
 When a work unit has been completed by the consumer an event is sent to the work-unit-event-ch channel (core.async channel).
