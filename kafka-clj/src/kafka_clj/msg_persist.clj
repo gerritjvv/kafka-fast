@@ -122,15 +122,14 @@
    db is the DBMaker newMemoryDirectDB result
    and cach is a HTreeMap cache"
    (let [^DB db (-> (DBMaker/memoryDirectDB)
-                 (.sizeLimit (int send-cache-size-limit))     ;limit store size to 4GB
-                 (.transactionDisable)    ;better performance
                  (.make))
          
          ^HTreeMap cache  (-> db
-				                (.createHashMap "kafka-send-cache")
+				                (.hashMap "kafka-send-cache")
 				                (.expireMaxSize send-cache-max-entries)
-				                (.expireAfterWrite send-cache-expire-after-write TimeUnit/SECONDS)
-				                (.expireAfterAccess send-cache-expire-after-access  TimeUnit/SECONDS)
+				                (.expireAfterCreate send-cache-expire-after-write TimeUnit/SECONDS)
+				                (.expireAfterGet send-cache-expire-after-access  TimeUnit/SECONDS)
+                        (.expireAfterUpdate send-cache-expire-after-access  TimeUnit/SECONDS)
 				                (.make))
          
          ]
