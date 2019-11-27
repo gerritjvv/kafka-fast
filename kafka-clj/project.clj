@@ -14,8 +14,7 @@
 
   :java-source-paths ["java"]
 
-  :profiles {:test {:jvm-opts ["-Xmx1g" "-server"
-
+  :profiles {:test {:jvm-opts ["-Xmx1g" "-server" "--add-modules" "java.xml.bind"
                                ;;------- Properties for kerberos authentication
                                ;"-Dsun.security.krb5.debug=true"
                                ;"-Djava.security.debug=gssloginconfig,configfile,configparser,logincontext"
@@ -26,6 +25,7 @@
              :uberjar {:aot :all}
 
              :repl {:jvm-opts [
+                               "--add-modules" "java.xml.bind"
                                "-Xmx512m"
                                "-Dsun.security.krb5.debug=true"
                                "-Djava.security.debug=gssloginconfig,configfile,configparser,logincontext"
@@ -35,6 +35,7 @@
 
              :vagrant-digital {
                                :jvm-opts [
+                                          "--add-modules" "java.xml.bind"
                                           ;"-Dcom.sun.management.jmxremote.port=8855"
                                           "-Dcom.sun.management.jmxremote.authenticate=false"
                                           "-Dcom.sun.management.jmxremote.ssl=false"
