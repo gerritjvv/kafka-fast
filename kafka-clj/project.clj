@@ -6,6 +6,8 @@
 
   :javac-options ["-target" "1.8" "-source" "1.8" "-Xlint:-options"]
 
+  :jvm-opts ["--add-modules" "java.xml.bind"]
+
   :global-vars {*warn-on-reflection* true
                *assert* true}
 
