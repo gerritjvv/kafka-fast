@@ -1,5 +1,5 @@
 (ns kafka-clj.pool-impl-tests
-  (require
+  (:require
            [kafka-clj.pool.api :refer :all]
            [kafka-clj.pool.keyed :refer :all]
            [kafka-clj.pool.util :refer :all]
