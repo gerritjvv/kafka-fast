@@ -58,8 +58,7 @@
   (let [^DB db (:db retry-cache)
          ^Map m (:cache retry-cache)]
     (.remove m key-val);remove key
-    (.commit db)
-    (.compact db)))
+    (.commit db)))
 
 (defn write-to-retry-cache [{:keys [retry-cache]} topic v]
   ;here v can be a function, that when called should return the msg sent, or a sequence of messages
@@ -73,14 +72,14 @@
 
 (defn _create-retry-cache [{:keys [retry-cache-file retry-cache-delete-on-exit] :or {retry-cache-delete-on-exit false retry-cache-file "/tmp/kafka-retry-cache"}}]
  (let [file (clojure.java.io/file  retry-cache-file)
-       ^DBMaker dbmaker (DBMaker/newFileDB file)
+       ^DBMaker dbmaker (DBMaker/fileDB file)
        _ (if retry-cache-delete-on-exit (.deleteFilesAfterClose dbmaker)) ;for testing
        db (->   dbmaker 
                 .closeOnJvmShutdown
                 .cacheDisable
                 .compressionEnable
                 .make)
-       map (-> db (.getTreeMap "kafka-retry-cache"))]
+       map (-> db (.treeMap "kafka-retry-cache"))]
       {:db db :file file :cache map}))
 
 (defn create-retry-cache [{:keys [retry-cache-file] :or {retry-cache-file (str (tmp-dir) "/kafka-retry-cache")} :as conf}]
@@ -122,16 +121,15 @@
   "Returns {:db db :cache cache}
    db is the DBMaker newMemoryDirectDB result
    and cach is a HTreeMap cache"
-   (let [^DB db (-> (DBMaker/newMemoryDirectDB)
-                 (.sizeLimit (int send-cache-size-limit))     ;limit store size to 4GB
-                 (.transactionDisable)    ;better performance
+   (let [^DB db (-> (DBMaker/memoryDirectDB)
                  (.make))
          
          ^HTreeMap cache  (-> db
-				                (.createHashMap "kafka-send-cache")
+				                (.hashMap "kafka-send-cache")
 				                (.expireMaxSize send-cache-max-entries)
-				                (.expireAfterWrite send-cache-expire-after-write TimeUnit/SECONDS)
-				                (.expireAfterAccess send-cache-expire-after-access  TimeUnit/SECONDS)
+				                (.expireAfterCreate send-cache-expire-after-write TimeUnit/SECONDS)
+				                (.expireAfterGet send-cache-expire-after-access  TimeUnit/SECONDS)
+                        (.expireAfterUpdate send-cache-expire-after-access  TimeUnit/SECONDS)
 				                (.make))
          
          ]

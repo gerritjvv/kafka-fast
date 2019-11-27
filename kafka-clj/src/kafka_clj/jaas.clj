@@ -26,8 +26,7 @@
            (javax.security.auth.kerberos KerberosTicket)
            (java.io InputStream ByteArrayInputStream ByteArrayOutputStream)
 
-           (sun.misc HexDumpEncoder)
-           (kafka_clj.util Util))
+           (kafka_clj.util Util HexDumpEncoder))
   (:require [clojure.tools.logging :refer [info error debug]]
             [kafka-clj.tcp-api :as tcp-api]
             [kafka-clj.protocol :as protocol]
