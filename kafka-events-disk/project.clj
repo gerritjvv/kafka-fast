@@ -11,7 +11,7 @@
   :scm {:name "git"
         :url "https://github.com/gerritjvv/kafka-fast.git"}
   :java-source-paths ["java"]
-  :jvm-opts ["-Xmx3g"]
+  :jvm-opts ["-Xmx3g" "--add-modules" "java.xml.bind”]
   :plugins [
              [lein-midje "3.0.1"] [lein-marginalia "0.7.1"]
              [lein-cloverage "1.0.2"]
